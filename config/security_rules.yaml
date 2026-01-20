@@ -1,0 +1,1242 @@
+# config/security_rules.yaml
+# ============================================================================
+# CYBERGUARD SECURITY RULES CONFIGURATION
+# ============================================================================
+# This file defines security rules, detection patterns, and response actions
+# for the CyberGuard system. Rules are organized by threat category and severity.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# RULE ENGINE CONFIGURATION
+# ----------------------------------------------------------------------------
+rule_engine:
+  # Rule processing engine
+  engine: "drools"  # drools, easy-rules, custom
+  
+  # Rule evaluation mode
+  evaluation_mode: "sequential"  # sequential, parallel
+  
+  # Rule conflict resolution
+  conflict_resolution: "priority"  # priority, order, specificity
+  
+  # Rule caching
+  caching:
+    enabled: true
+    cache_size: 1000
+    ttl_seconds: 3600
+  
+  # Performance optimization
+  optimization:
+    rule_indexing: true
+    rete_algorithm: true
+    lazy_evaluation: true
+
+# ----------------------------------------------------------------------------
+# INJECTION ATTACK RULES
+# ----------------------------------------------------------------------------
+injection_rules:
+  # SQL Injection rules
+  sql_injection:
+    # Detection rules
+    detection:
+      - id: "SQLI-001"
+        name: "Basic SQL Injection Pattern"
+        description: "Detects common SQL injection patterns like ' OR '1'='1"
+        severity: "CRITICAL"
+        patterns:
+          - "' OR '1'='1"
+          - "' OR '1'='1' --"
+          - "' UNION SELECT"
+          - "'; DROP TABLE"
+          - "' OR 1=1 --"
+        condition: "request_parameter CONTAINS pattern"
+        action: "block_request"
+        confidence: 0.95
+        
+      - id: "SQLI-002"
+        name: "Blind SQL Injection"
+        description: "Detects time-based blind SQL injection attempts"
+        severity: "HIGH"
+        patterns:
+          - "' AND sleep("
+          - "' AND pg_sleep("
+          - "'; WAITFOR DELAY"
+        condition: "request_parameter CONTAINS pattern AND response_time > 5000"
+        action: "block_request"
+        confidence: 0.85
+        
+      - id: "SQLI-003"
+        name: "Error-based SQL Injection"
+        description: "Detects SQL injection attempts that generate database errors"
+        severity: "HIGH"
+        patterns:
+          - "' AND 1=CONVERT(int, @@version) --"
+          - "' AND extractvalue("
+          - "' AND updatexml("
+        condition: "request_parameter CONTAINS pattern AND response CONTAINS 'SQL'"
+        action: "block_request"
+        confidence: 0.90
+    
+    # Prevention rules
+    prevention:
+      - id: "SQLI-PREV-001"
+        name: "Parameterized Queries Enforcement"
+        description: "Enforce use of parameterized queries in application code"
+        severity: "MEDIUM"
+        condition: "code_analysis FIND 'execute(.*%s)'"
+        action: "require_parameterized_queries"
+        remediation: "Use prepared statements with parameter binding"
+        
+      - id: "SQLI-PREV-002"
+        name: "Input Validation"
+        description: "Validate and sanitize all user inputs"
+        severity: "MEDIUM"
+        condition: "user_input NOT VALIDATED"
+        action: "implement_input_validation"
+        remediation: "Use allow-list validation for all inputs"
+  
+  # Cross-Site Scripting (XSS) rules
+  xss:
+    # Reflected XSS
+    reflected:
+      - id: "XSS-001"
+        name: "Script Tag Injection"
+        description: "Detects <script> tag injection attempts"
+        severity: "HIGH"
+        patterns:
+          - "<script>"
+          - "javascript:"
+          - "onload="
+          - "onerror="
+        condition: "request_parameter CONTAINS pattern"
+        action: "block_request"
+        confidence: 0.90
+        
+      - id: "XSS-002"
+        name: "Event Handler Injection"
+        description: "Detects event handler attribute injection"
+        severity: "MEDIUM"
+        patterns:
+          - "onclick="
+          - "onmouseover="
+          - "onfocus="
+          - "onblur="
+        condition: "request_parameter CONTAINS pattern"
+        action: "sanitize_input"
+        confidence: 0.80
+    
+    # Stored XSS
+    stored:
+      - id: "XSS-003"
+        name: "Persistent XSS in Database"
+        description: "Detects XSS payloads being stored in database"
+        severity: "CRITICAL"
+        patterns:
+          - "<iframe"
+          - "<object"
+          - "<embed"
+          - "<svg"
+        condition: "database_query CONTAINS pattern"
+        action: "block_request AND alert_admin"
+        confidence: 0.95
+    
+    # DOM-based XSS
+    dom_based:
+      - id: "XSS-004"
+        name: "DOM Manipulation"
+        description: "Detects unsafe DOM manipulation"
+        severity: "HIGH"
+        patterns:
+          - "innerHTML"
+          - "outerHTML"
+          - "document.write"
+          - "eval("
+        condition: "javascript_code CONTAINS pattern AND uses_user_input"
+        action: "require_output_encoding"
+        confidence: 0.85
+  
+  # Command Injection rules
+  command_injection:
+    detection:
+      - id: "CMD-001"
+        name: "System Command Injection"
+        description: "Detects system command injection attempts"
+        severity: "CRITICAL"
+        patterns:
+          - "; ls"
+          - "| cat"
+          - "`whoami`"
+          - "$(id)"
+          - "&& cat"
+          - "|| rm"
+        condition: "request_parameter CONTAINS pattern"
+        action: "block_request"
+        confidence: 0.98
+        
+      - id: "CMD-002"
+        name: "Directory Traversal"
+        description: "Detects directory traversal attempts"
+        severity: "HIGH"
+        patterns:
+          - "../"
+          - "..\\"
+          - "/etc/passwd"
+          - "C:\\Windows\\"
+          - "../../"
+        condition: "request_parameter CONTAINS pattern"
+        action: "block_request"
+        confidence: 0.90
+    
+    prevention:
+      - id: "CMD-PREV-001"
+        name: "Command Whitelisting"
+        description: "Use command whitelisting instead of blacklisting"
+        severity: "MEDIUM"
+        condition: "uses_system_commands"
+        action: "implement_command_whitelist"
+        remediation: "Only allow specific, pre-approved commands"
+        
+      - id: "CMD-PREV-002"
+        name: "Input Sanitization for Commands"
+        description: "Sanitize all inputs used in system commands"
+        severity: "MEDIUM"
+        condition: "user_input IN system_command"
+        action: "sanitize_command_inputs"
+        remediation: "Use proper escaping and validation"
+
+# ----------------------------------------------------------------------------
+# AUTHENTICATION & AUTHORIZATION RULES
+# ----------------------------------------------------------------------------
+auth_rules:
+  # Broken Authentication rules
+  broken_authentication:
+    - id: "AUTH-001"
+      name: "Weak Password Policy"
+      description: "Detects weak or missing password policies"
+      severity: "MEDIUM"
+      conditions:
+        - "password_length < 8"
+        - "NOT password_complexity"
+        - "password_expiration_days > 90"
+      action: "enforce_password_policy"
+      policy:
+        min_length: 12
+        require_uppercase: true
+        require_lowercase: true
+        require_numbers: true
+        require_special: true
+        expiration_days: 90
+        history_size: 5
+        
+    - id: "AUTH-002"
+      name: "Missing Multi-Factor Authentication"
+      description: "Detects missing MFA for sensitive operations"
+      severity: "HIGH"
+      conditions:
+        - "sensitive_operation"
+        - "NOT mfa_required"
+      action: "require_mfa"
+      sensitive_operations:
+        - "admin_login"
+        - "password_change"
+        - "financial_transaction"
+        - "sensitive_data_access"
+        
+    - id: "AUTH-003"
+      name: "Session Fixation"
+      description: "Detects session fixation vulnerabilities"
+      severity: "HIGH"
+      conditions:
+        - "session_id NOT regenerated ON login"
+        - "session_id IN url"
+      action: "regenerate_session_on_auth"
+      remediation: "Always regenerate session ID after authentication"
+  
+  # Broken Authorization rules
+  broken_authorization:
+    - id: "AUTHZ-001"
+      name: "Insecure Direct Object Reference (IDOR)"
+      description: "Detects IDOR vulnerabilities"
+      severity: "HIGH"
+      conditions:
+        - "direct_object_reference"
+        - "NOT access_control_check"
+      action: "implement_access_control"
+      examples:
+        - "/api/user/123/profile"  # User can access other users' data
+        - "/download?file=../../../etc/passwd"
+        
+    - id: "AUTHZ-002"
+      name: "Missing Function Level Access Control"
+      description: "Detects missing authorization checks"
+      severity: "HIGH"
+      conditions:
+        - "admin_functionality"
+        - "NOT role_based_access"
+      action: "implement_rbac"
+      required_checks:
+        - "user_has_role"
+        - "user_has_permission"
+        - "resource_belongs_to_user"
+        
+    - id: "AUTHZ-003"
+      name: "Excessive Privileges"
+      description: "Detects users with excessive privileges"
+      severity: "MEDIUM"
+      conditions:
+        - "user_has_admin_role"
+        - "user_needs_readonly_access"
+      action: "apply_least_privilege"
+      principle: "Users should have minimum necessary privileges"
+
+# ----------------------------------------------------------------------------
+# SENSITIVE DATA EXPOSURE RULES
+# ----------------------------------------------------------------------------
+data_exposure_rules:
+  # Data at rest
+  data_at_rest:
+    - id: "DATA-001"
+      name: "Unencrypted Sensitive Data"
+      description: "Detects unencrypted sensitive data storage"
+      severity: "CRITICAL"
+      sensitive_data_types:
+        - "passwords"
+        - "credit_card_numbers"
+        - "social_security_numbers"
+        - "api_keys"
+        - "encryption_keys"
+      conditions:
+        - "sensitive_data_stored"
+        - "NOT encrypted"
+      action: "encrypt_data"
+      encryption_requirements:
+        algorithm: "AES-256-GCM"
+        key_management: "HSM or KMS"
+        key_rotation: "30 days"
+        
+    - id: "DATA-002"
+      name: "Weak Encryption Algorithms"
+      description: "Detects use of weak or deprecated encryption algorithms"
+      severity: "HIGH"
+      weak_algorithms:
+        - "DES"
+        - "3DES"
+        - "RC4"
+        - "MD5"
+        - "SHA1"
+      conditions:
+        - "encryption_used"
+        - "algorithm IN weak_algorithms"
+      action: "upgrade_encryption"
+      recommended_algorithms:
+        symmetric: "AES-256-GCM"
+        asymmetric: "RSA-4096 or ECC-384"
+        hash: "SHA-256 or SHA-3"
+  
+  # Data in transit
+  data_in_transit:
+    - id: "DATA-003"
+      name: "Missing TLS/SSL"
+      description: "Detects unencrypted data transmission"
+      severity: "CRITICAL"
+      conditions:
+        - "sensitive_data_transmitted"
+        - "NOT using_tls"
+      action: "require_tls"
+      tls_requirements:
+        version: "TLS 1.2 or higher"
+        certificates: "valid and trusted"
+        cipher_suites: "strong ciphers only"
+        
+    - id: "DATA-004"
+      name: "Weak TLS Configuration"
+      description: "Detects weak TLS configuration"
+      severity: "HIGH"
+      conditions:
+        - "using_tls"
+        - "tls_version < 1.2"
+        - "OR weak_cipher_suite"
+      action: "strengthen_tls_config"
+      secure_configuration:
+        protocols: ["TLS 1.2", "TLS 1.3"]
+        cipher_suites:
+          - "TLS_AES_256_GCM_SHA384"
+          - "TLS_CHACHA20_POLY1305_SHA256"
+          - "TLS_AES_128_GCM_SHA256"
+  
+  # Data exposure in logs
+  logging:
+    - id: "DATA-005"
+      name: "Sensitive Data in Logs"
+      description: "Detects sensitive data being written to logs"
+      severity: "MEDIUM"
+      sensitive_patterns:
+        - "password=[^&]*"
+        - "credit_card=\\d{16}"
+        - "ssn=\\d{3}-\\d{2}-\\d{4}"
+        - "api_key=\\w{32}"
+      conditions:
+        - "log_entry CONTAINS sensitive_pattern"
+      action: "sanitize_logs"
+      sanitization_methods:
+        - "masking: password=***"
+        - "truncation: credit_card=************1234"
+        - "removal: Remove entire field"
+        
+    - id: "DATA-006"
+      name: "Excessive Debug Information"
+      description: "Detects excessive debug information exposure"
+      severity: "LOW"
+      conditions:
+        - "debug_mode_enabled IN production"
+        - "stack_trace_exposed TO users"
+      action: "disable_debug_mode"
+      production_requirements:
+        debug_mode: false
+        error_details: "Generic error messages only"
+        stack_traces: "Internal logging only"
+
+# ----------------------------------------------------------------------------
+# XML EXTERNAL ENTITY (XXE) RULES
+# ----------------------------------------------------------------------------
+xxe_rules:
+  detection:
+    - id: "XXE-001"
+      name: "XXE Injection"
+      description: "Detects XML External Entity injection attempts"
+      severity: "CRITICAL"
+      patterns:
+        - "<!ENTITY"
+        - "SYSTEM"
+        - "PUBLIC"
+        - "DOCTYPE"
+        - "%"
+      conditions:
+        - "xml_input CONTAINS pattern"
+        - "xml_parser ALLOWS external_entities"
+      action: "block_request"
+      confidence: 0.95
+      
+    - id: "XXE-002"
+      name: "Billion Laughs Attack"
+      description: "Detects XML exponential entity expansion attacks"
+      severity: "HIGH"
+      patterns:
+        - "&entity;"
+        - "&lol9;"
+      conditions:
+        - "xml_input CONTAINS nested_entities > 10"
+        - "memory_usage > 100MB"
+      action: "block_request"
+      confidence: 0.90
+  
+  prevention:
+    - id: "XXE-PREV-001"
+      name: "Disable External Entities"
+      description: "Disable XML external entity processing"
+      severity: "MEDIUM"
+      conditions:
+        - "xml_processing_enabled"
+      action: "disable_external_entities"
+      configuration:
+        feature: "http://xml.org/sax/features/external-general-entities"
+        value: false
+        feature: "http://xml.org/sax/features/external-parameter-entities"
+        value: false
+        
+    - id: "XXE-PREV-002"
+      name: "Use SAX Parsers Safely"
+      description: "Configure SAX parsers to prevent XXE"
+      severity: "MEDIUM"
+      conditions:
+        - "using_sax_parser"
+      action: "secure_sax_parser"
+      secure_configuration:
+        setFeature: "http://apache.org/xml/features/disallow-doctype-decl", true
+        setFeature: "http://xml.org/sax/features/external-general-entities", false
+        setFeature: "http://xml.org/sax/features/external-parameter-entities", false
+        setXIncludeAware: false
+        setExpandEntityReferences: false
+
+# ----------------------------------------------------------------------------
+# INSECURE DESERIALIZATION RULES
+# ----------------------------------------------------------------------------
+deserialization_rules:
+  detection:
+    - id: "DESER-001"
+      name: "Insecure Deserialization"
+      description: "Detects insecure deserialization of untrusted data"
+      severity: "CRITICAL"
+      dangerous_classes:
+        - "java.io.ObjectInputStream"
+        - "pickle.loads"
+        - "yaml.load"
+        - "Marshal.load"
+        - "BinaryFormatter.Deserialize"
+      conditions:
+        - "deserialization_from_untrusted_source"
+        - "using dangerous_class"
+      action: "block_deserialization"
+      confidence: 0.95
+      
+    - id: "DESER-002"
+      name: "Remote Code Execution via Deserialization"
+      description: "Detects RCE attempts through deserialization"
+      severity: "CRITICAL"
+      patterns:
+        - "Runtime.exec"
+        - "ProcessBuilder"
+        - "invoke"
+        - "getRuntime"
+      conditions:
+        - "deserialized_object CONTAINS pattern"
+      action: "block_request AND alert_admin"
+      confidence: 0.98
+  
+  prevention:
+    - id: "DESER-PREV-001"
+      name: "Use Safe Deserialization Methods"
+      description: "Use safe deserialization alternatives"
+      severity: "MEDIUM"
+      conditions:
+        - "needs_deserialization"
+      action: "use_safe_alternatives"
+      alternatives:
+        java: "JSON, XML, Protocol Buffers"
+        python: "JSON, msgpack, ORM"
+        .net: "JSON, XML, Protobuf"
+        
+    - id: "DESER-PREV-002"
+      name: "Implement Deserialization Whitelist"
+      description: "Whitelist allowed classes for deserialization"
+      severity: "MEDIUM"
+      conditions:
+        - "must_use_deserialization"
+      action: "implement_class_whitelist"
+      implementation:
+        java: "Override ObjectInputStream.resolveClass()"
+        python: "Use pickle with restricted unpickler"
+        .net: "Use SerializationBinder"
+
+# ----------------------------------------------------------------------------
+# SECURITY MISCONFIGURATION RULES
+# ----------------------------------------------------------------------------
+misconfiguration_rules:
+  # Server configuration
+  server_config:
+    - id: "MISC-001"
+      name: "Default Credentials"
+      description: "Detects use of default or weak credentials"
+      severity: "CRITICAL"
+      default_credentials:
+        - "admin:admin"
+        - "root:root"
+        - "administrator:password"
+        - "guest:guest"
+      conditions:
+        - "credentials IN default_credentials"
+      action: "require_password_change"
+      remediation: "Change all default passwords immediately"
+      
+    - id: "MISC-002"
+      name: "Unnecessary Services Enabled"
+      description: "Detects unnecessary services running"
+      severity: "MEDIUM"
+      unnecessary_services:
+        - "ftp"
+        - "telnet"
+        - "snmp"
+        - "rpc"
+        - "finger"
+      conditions:
+        - "service IN unnecessary_services"
+        - "service_enabled"
+      action: "disable_service"
+      principle: "Disable all unnecessary services"
+      
+    - id: "MISC-003"
+      name: "Debug Endpoints Enabled"
+      description: "Detects debug or testing endpoints in production"
+      severity: "HIGH"
+      debug_endpoints:
+        - "/debug"
+        - "/console"
+        - "/phpinfo"
+        - "/test"
+        - "/adminer"
+      conditions:
+        - "endpoint IN debug_endpoints"
+        - "endpoint_accessible"
+      action: "disable_endpoint"
+      remediation: "Remove or secure all debug endpoints"
+  
+  # Application configuration
+  app_config:
+    - id: "MISC-004"
+      name: "Verbose Error Messages"
+      description: "Detects verbose error messages exposed to users"
+      severity: "MEDIUM"
+      conditions:
+        - "error_message CONTAINS stack_trace"
+        - "error_message CONTAINS sql_query"
+        - "error_message CONTAINS file_path"
+      action: "generic_error_messages"
+      secure_messages:
+        production: "An error occurred. Please try again later."
+        development: "Detailed errors for developers only"
+        
+    - id: "MISC-005"
+      name: "Missing Security Headers"
+      description: "Detects missing security HTTP headers"
+      severity: "MEDIUM"
+      required_headers:
+        - "Content-Security-Policy"
+        - "X-Frame-Options"
+        - "X-Content-Type-Options"
+        - "Strict-Transport-Security"
+        - "Referrer-Policy"
+      conditions:
+        - "header NOT IN response_headers"
+        - "header IN required_headers"
+      action: "add_security_header"
+      header_values:
+        Content-Security-Policy: "default-src 'self'"
+        X-Frame-Options: "DENY"
+        X-Content-Type-Options: "nosniff"
+        Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+        Referrer-Policy: "strict-origin-when-cross-origin"
+        
+    - id: "MISC-006"
+      name: "Insecure CORS Configuration"
+      description: "Detects insecure Cross-Origin Resource Sharing configuration"
+      severity: "HIGH"
+      conditions:
+        - "Access-Control-Allow-Origin: *"
+        - "Access-Control-Allow-Credentials: true WITH wildcard origin"
+      action: "restrict_cors"
+      secure_configuration:
+        allowed_origins: ["https://trusted-domain.com"]
+        allowed_methods: ["GET", "POST"]
+        allowed_headers: ["Content-Type", "Authorization"]
+        allow_credentials: false
+
+# ----------------------------------------------------------------------------
+# VULNERABLE COMPONENTS RULES
+# ----------------------------------------------------------------------------
+components_rules:
+  # Known vulnerabilities
+  known_vulnerabilities:
+    - id: "COMP-001"
+      name: "Known Vulnerable Libraries"
+      description: "Detects libraries with known vulnerabilities"
+      severity: "HIGH"
+      sources:
+        - "nvd"
+        - "cve"
+        - "oss_index"
+        - "snyk"
+        - "dependabot"
+      conditions:
+        - "library_version HAS known_vulnerability"
+        - "vulnerability_severity >= 7.0"  # CVSS score
+      action: "update_library"
+      update_policy:
+        critical: "Update immediately"
+        high: "Update within 7 days"
+        medium: "Update within 30 days"
+        low: "Update in next release"
+        
+    - id: "COMP-002"
+      name: "Outdated Software"
+      description: "Detects outdated software components"
+      severity: "MEDIUM"
+      conditions:
+        - "software_version NOT latest"
+        - "version_age_days > 365"
+      action: "update_software"
+      update_schedule:
+        security_updates: "Apply within 30 days"
+        feature_updates: "Evaluate quarterly"
+        major_updates: "Plan annually"
+  
+  # Dependency management
+  dependencies:
+    - id: "COMP-003"
+      name: "Unmaintained Dependencies"
+      description: "Detects dependencies that are no longer maintained"
+      severity: "MEDIUM"
+      conditions:
+        - "dependency NOT maintained"
+        - "last_update_days > 365"
+      action: "replace_dependency"
+      evaluation_criteria:
+        last_commit: "Within last 6 months"
+        issues_resolved: "Recent issue activity"
+        community_size: "Active community"
+        
+    - id: "COMP-004"
+      name: "Transitive Dependency Vulnerabilities"
+      description: "Detects vulnerabilities in transitive dependencies"
+      severity: "HIGH"
+      conditions:
+        - "transitive_dependency HAS vulnerability"
+        - "vulnerability_exploitable"
+      action: "analyze_dependency_tree"
+      tools:
+        - "OWASP Dependency Check"
+        - "Snyk"
+        - "GitHub Dependabot"
+        - "WhiteSource"
+
+# ----------------------------------------------------------------------------
+# INSUFFICIENT LOGGING & MONITORING RULES
+# ----------------------------------------------------------------------------
+logging_rules:
+  # Logging requirements
+  requirements:
+    - id: "LOG-001"
+      name: "Missing Security Events Logging"
+      description: "Detects missing logging of security events"
+      severity: "MEDIUM"
+      security_events:
+        - "authentication_success"
+        - "authentication_failure"
+        - "access_denied"
+        - "data_access"
+        - "configuration_changes"
+        - "privilege_escalation"
+      conditions:
+        - "event IN security_events"
+        - "event NOT logged"
+      action: "implement_logging"
+      log_requirements:
+        timestamp: "ISO 8601 format"
+        user_id: "Authenticated user"
+        event_type: "Specific event"
+        outcome: "Success/failure"
+        details: "Relevant details"
+        
+    - id: "LOG-002"
+      name: "Insufficient Log Retention"
+      description: "Detects insufficient log retention period"
+      severity: "LOW"
+      conditions:
+        - "log_retention_days < 90"
+      action: "increase_retention"
+      retention_requirements:
+        compliance: "As per regulatory requirements"
+        investigation: "Minimum 90 days"
+        forensics: "1 year minimum"
+  
+  # Log integrity
+  integrity:
+    - id: "LOG-003"
+      name: "Unprotected Log Files"
+      description: "Detects log files without proper protection"
+      severity: "MEDIUM"
+      conditions:
+        - "log_file_permissions != 600"
+        - "log_file_owned_by_root != true"
+        - "log_file_world_readable = true"
+      action: "secure_log_files"
+      security_measures:
+        permissions: "600 (rw-------)"
+        ownership: "root:root or dedicated user"
+        location: "Protected directory"
+        encryption: "For sensitive logs"
+        
+    - id: "LOG-004"
+      name: "Missing Log Integrity Protection"
+      description: "Detects missing integrity protection for logs"
+      severity: "MEDIUM"
+      conditions:
+        - "logs_not_tamper_evident"
+        - "logs_not_immutable"
+      action: "implement_log_integrity"
+      protection_methods:
+        - "Write-once media"
+        - "Digital signatures"
+        - "Hash chains"
+        - "Immutable storage"
+        - "SIEM integration"
+
+# ----------------------------------------------------------------------------
+# API SECURITY RULES
+# ----------------------------------------------------------------------------
+api_rules:
+  # API authentication
+  authentication:
+    - id: "API-001"
+      name: "Missing API Authentication"
+      description: "Detects APIs without authentication"
+      severity: "CRITICAL"
+      conditions:
+        - "api_endpoint"
+        - "NOT requires_authentication"
+      action: "implement_api_auth"
+      auth_methods:
+        - "API keys"
+        - "JWT tokens"
+        - "OAuth 2.0"
+        - "mTLS"
+        
+    - id: "API-002"
+      name: "API Key in URL"
+      description: "Detects API keys exposed in URLs"
+      severity: "HIGH"
+      patterns:
+        - "api_key="
+        - "token="
+        - "access_token="
+      conditions:
+        - "url CONTAINS pattern"
+      action: "move_to_headers"
+      secure_locations:
+        headers: "Authorization: Bearer <token>"
+        body: "For POST requests only"
+        cookies: "HttpOnly, Secure cookies"
+  
+  # API authorization
+  authorization:
+    - id: "API-003"
+      name: "Broken Object Level Authorization"
+      description: "Detects BOLA vulnerabilities in APIs"
+      severity: "HIGH"
+      conditions:
+        - "api_accesses_object"
+        - "NOT object_level_auth_check"
+      action: "implement_object_auth"
+      checks_required:
+        - "user_owns_object"
+        - "user_has_permission"
+        - "object_in_user_scope"
+        
+    - id: "API-004"
+      name: "Broken Function Level Authorization"
+      description: "Detects BFLA vulnerabilities in APIs"
+      severity: "HIGH"
+      conditions:
+        - "api_performs_function"
+        - "NOT function_level_auth_check"
+      action: "implement_function_auth"
+      implementation:
+        rbac: "Role-based access control"
+        abac: "Attribute-based access control"
+        pbac: "Policy-based access control"
+  
+  # API input validation
+  input_validation:
+    - id: "API-005"
+      name: "Missing Input Validation"
+      description: "Detects missing input validation in APIs"
+      severity: "MEDIUM"
+      conditions:
+        - "api_accepts_input"
+        - "NOT input_validated"
+      action: "implement_validation"
+      validation_types:
+        - "Type checking"
+        - "Range validation"
+        - "Pattern matching"
+        - "Business logic validation"
+        
+    - id: "API-006"
+      name: "Mass Assignment"
+      description: "Detects mass assignment vulnerabilities"
+      severity: "MEDIUM"
+      conditions:
+        - "api_binds_json_to_object"
+        - "NOT property_whitelist"
+      action: "implement_whitelist"
+      prevention:
+        whitelist: "Only allow known properties"
+        blacklist: "Block dangerous properties"
+        mapping: "Use DTOs (Data Transfer Objects)"
+
+# ----------------------------------------------------------------------------
+# RATE LIMITING & THROTTLING RULES
+# ----------------------------------------------------------------------------
+rate_limiting_rules:
+  # Detection of abuse
+  abuse_detection:
+    - id: "RATE-001"
+      name: "Excessive Request Rate"
+      description: "Detects excessive request rates indicating abuse"
+      severity: "MEDIUM"
+      conditions:
+        - "requests_per_minute > 100"
+        - "from_single_ip"
+      action: "throttle_requests"
+      thresholds:
+        anonymous: "10 requests/minute"
+        authenticated: "100 requests/minute"
+        premium: "1000 requests/minute"
+        
+    - id: "RATE-002"
+      name: "Credential Stuffing Detection"
+      description: "Detects credential stuffing attacks"
+      severity: "HIGH"
+      conditions:
+        - "failed_logins > 10"
+        - "from_single_ip"
+        - "within_5_minutes"
+      action: "block_ip_temporarily"
+      responses:
+        temporary_block: "15 minutes"
+        captcha: "After 5 failed attempts"
+        alert: "After 10 failed attempts"
+  
+  # Rate limiting implementation
+  implementation:
+    - id: "RATE-003"
+      name: "Missing Rate Limiting"
+      description: "Detects missing rate limiting on sensitive endpoints"
+      severity: "MEDIUM"
+      sensitive_endpoints:
+        - "/api/login"
+        - "/api/register"
+        - "/api/password/reset"
+        - "/api/payment"
+      conditions:
+        - "endpoint IN sensitive_endpoints"
+        - "NOT rate_limited"
+      action: "implement_rate_limiting"
+      strategies:
+        token_bucket: "Flexible rate limiting"
+        fixed_window: "Simple implementation"
+        sliding_window: "Smooth rate limiting"
+        
+    - id: "RATE-004"
+      name: "Insufficient Rate Limits"
+      description: "Detects rate limits that are too permissive"
+      severity: "LOW"
+      conditions:
+        - "rate_limit > reasonable_threshold"
+      action: "adjust_rate_limits"
+      reasonable_limits:
+        login: "5 attempts per 15 minutes"
+        registration: "3 per hour per IP"
+        api_calls: "Based on user tier"
+        file_uploads: "Based on file size"
+
+# ----------------------------------------------------------------------------
+# BUSINESS LOGIC RULES
+# ----------------------------------------------------------------------------
+business_logic_rules:
+  # Price manipulation
+  price_manipulation:
+    - id: "BUS-001"
+      name: "Negative Price Manipulation"
+      description: "Detects attempts to set negative prices"
+      severity: "HIGH"
+      conditions:
+        - "price < 0"
+        - "in_checkout_process"
+      action: "reject_transaction"
+      validation:
+        min_price: 0.01
+        max_price: "Based on product"
+        decimal_places: 2
+        
+    - id: "BUS-002"
+      name: "Quantity Manipulation"
+      description: "Detects attempts to manipulate quantities"
+      severity: "MEDIUM"
+      conditions:
+        - "quantity < 0"
+        - "quantity > max_allowed"
+        - "fractional_quantity NOT allowed"
+      action: "validate_quantity"
+      rules:
+        min_quantity: 1
+        max_quantity: "Per product limits"
+        integer_only: "For most products"
+  
+  # Workflow bypass
+  workflow_bypass:
+    - id: "BUS-003"
+      name: "Checkout Bypass"
+      description: "Detects attempts to bypass checkout steps"
+      severity: "HIGH"
+      conditions:
+        - "skipped_checkout_step"
+        - "direct_access_to_confirmation"
+      action: "enforce_workflow"
+      required_steps:
+        - "cart"
+        - "shipping"
+        - "payment"
+        - "confirmation"
+        
+    - id: "BUS-004"
+      name: "Authorization Bypass"
+      description: "Detects attempts to bypass authorization checks"
+      severity: "CRITICAL"
+      conditions:
+        - "access_without_proper_role"
+        - "elevated_privileges_without_auth"
+      action: "enforce_authorization"
+      checks:
+        - "Pre-authorization"
+        - "Post-authorization"
+        - "Context-aware authorization"
+
+# ----------------------------------------------------------------------------
+# RESPONSE ACTIONS & REMEDIATION
+# ----------------------------------------------------------------------------
+response_actions:
+  # Immediate actions
+  immediate:
+    - id: "ACT-001"
+      name: "Block Request"
+      description: "Immediately block malicious request"
+      severity: "CRITICAL"
+      triggers:
+        - "sql_injection_detected"
+        - "command_injection_detected"
+        - "authentication_bypass_detected"
+      implementation:
+        waf: "Block at WAF level"
+        application: "Return 403 Forbidden"
+        ips: "Block IP at firewall"
+      logging:
+        log_block: true
+        alert_admin: true
+        notify_user: false
+        
+    - id: "ACT-002"
+      name: "Temporary Block"
+      description: "Temporarily block source IP"
+      severity: "HIGH"
+      triggers:
+        - "brute_force_detected"
+        - "rate_limit_exceeded"
+        - "credential_stuffing_detected"
+      duration:
+        first_offense: "15 minutes"
+        repeat_offense: "1 hour"
+        persistent_offense: "24 hours"
+      implementation:
+        iptables: "Add to block list"
+        waf: "Temporary rule"
+        cloudflare: "Challenge page"
+  
+  # Investigative actions
+  investigative:
+    - id: "ACT-003"
+      name: "Log and Alert"
+      description: "Log event and alert security team"
+      severity: "MEDIUM"
+      triggers:
+        - "suspicious_activity"
+        - "policy_violation"
+        - "unusual_behavior"
+      actions:
+        - "log_event"
+        - "send_alert"
+        - "create_ticket"
+      alert_channels:
+        email: "security-team@company.com"
+        slack: "#security-alerts"
+        pagerduty: "High priority"
+        
+    - id: "ACT-004"
+      name: "Collect Forensic Data"
+      description: "Collect data for forensic analysis"
+      severity: "HIGH"
+      triggers:
+        - "confirmed_breach"
+        - "malware_detected"
+        - "data_exfiltration"
+      data_to_collect:
+        - "network_logs"
+        - "system_logs"
+        - "memory_dump"
+        - "disk_image"
+        - "process_list"
+      chain_of_custody:
+        hash_all_data: true
+        digital_signatures: true
+        secure_storage: true
+  
+  # Remediation actions
+  remediation:
+    - id: "ACT-005"
+      name: "Patch Vulnerability"
+      description: "Apply security patch"
+      severity: "HIGH"
+      triggers:
+        - "vulnerability_detected"
+        - "patch_available"
+      process:
+        testing: "Test in staging"
+        deployment: "Deploy to production"
+        verification: "Verify patch applied"
+      timeline:
+        critical: "24 hours"
+        high: "7 days"
+        medium: "30 days"
+        low: "Next release"
+        
+    - id: "ACT-006"
+      name: "Rotate Credentials"
+      description: "Rotate compromised credentials"
+      severity: "CRITICAL"
+      triggers:
+        - "credential_leak"
+        - "password_exposure"
+        - "suspected_compromise"
+      credentials_to_rotate:
+        - "user_passwords"
+        - "api_keys"
+        - "database_passwords"
+        - "encryption_keys"
+        - "ssl_certificates"
+      process:
+        notification: "Notify affected users"
+        forced_reset: "Require password change"
+        audit: "Log all rotations"
+
+# ----------------------------------------------------------------------------
+# RULE PRIORITIES & ORDERING
+# ----------------------------------------------------------------------------
+rule_priorities:
+  # Priority levels
+  levels:
+    - level: 100
+      name: "Critical"
+      description: "Immediate threat requiring instant action"
+      rules:
+        - "SQLI-001"
+        - "CMD-001"
+        - "XXE-001"
+        - "DESER-001"
+      
+    - level: 80
+      name: "High"
+      description: "Serious threat requiring prompt action"
+      rules:
+        - "XSS-001"
+        - "XSS-003"
+        - "DATA-001"
+        - "DATA-003"
+        - "AUTH-002"
+        - "AUTHZ-001"
+      
+    - level: 60
+      name: "Medium"
+      description: "Moderate threat requiring scheduled action"
+      rules:
+        - "XSS-002"
+        - "DATA-002"
+        - "DATA-004"
+        - "MISC-001"
+        - "MISC-003"
+        - "LOG-001"
+      
+    - level: 40
+      name: "Low"
+      description: "Minor issue for awareness"
+      rules:
+        - "DATA-006"
+        - "MISC-002"
+        - "LOG-002"
+        - "RATE-004"
+  
+  # Rule execution order
+  execution_order:
+    - phase: "Pre-processing"
+      rules:
+        - "RATE-001"
+        - "RATE-002"
+        - "BLOCKLIST-001"
+      
+    - phase: "Input validation"
+      rules:
+        - "SQLI-001"
+        - "XSS-001"
+        - "CMD-001"
+        - "XXE-001"
+      
+    - phase: "Business logic"
+      rules:
+        - "BUS-001"
+        - "BUS-002"
+        - "BUS-003"
+        - "BUS-004"
+      
+    - phase: "Output validation"
+      rules:
+        - "DATA-005"
+        - "DATA-006"
+        - "MISC-004"
+      
+    - phase: "Post-processing"
+      rules:
+        - "LOG-001"
+        - "LOG-003"
+        - "ACT-003"
+
+# ----------------------------------------------------------------------------
+# RULE UPDATES & MAINTENANCE
+# ----------------------------------------------------------------------------
+rule_maintenance:
+  # Update sources
+  update_sources:
+    - name: "OWASP"
+      url: "https://owasp.org/www-project-top-ten/"
+      frequency: "annually"
+      
+    - name: "MITRE ATT&CK"
+      url: "https://attack.mitre.org/"
+      frequency: "quarterly"
+      
+    - name: "CVE"
+      url: "https://cve.mitre.org/"
+      frequency: "daily"
+      
+    - name: "SANS Top 20"
+      url: "https://www.sans.org/top20/"
+      frequency: "annually"
+  
+  # Automatic updates
+  automatic_updates:
+    enabled: true
+    schedule: "daily"
+    sources:
+      - "cve"
+      - "exploit_db"
+      - "threat_intel_feeds"
+    
+    # Update validation
+    validation:
+      checksum_verification: true
+      signature_verification: true
+      test_in_sandbox: true
+    
+    # Rollback capability
+    rollback:
+      enabled: true
+      keep_versions: 5
+      auto_rollback_on_failure: true
+  
+  # Rule testing
+  testing:
+    unit_tests:
+      enabled: true
+      test_cases: "config/rules/test_cases.yaml"
+      coverage_threshold: 90
+      
+    integration_tests:
+      enabled: true
+      environment: "staging"
+      frequency: "weekly"
+      
+    penetration_tests:
+      enabled: true
+      frequency: "quarterly"
+      scope: "all_rules"
+
+# ============================================================================
+# END OF SECURITY RULES CONFIGURATION
+# ============================================================================

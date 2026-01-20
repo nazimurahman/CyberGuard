@@ -1,0 +1,105 @@
+# CyberGuard Web Security AI System - Dependencies
+# ===============================================
+
+# 🐍 Core Python
+python>=3.10,<3.12                    # Python version requirements
+
+# 🔥 Core Machine Learning & AI
+torch==2.0.1                          # PyTorch for deep learning
+torchvision==0.15.2                   # Computer vision extensions
+transformers==4.31.0                  # Hugging Face transformers
+sentence-transformers==2.2.2          # Sentence embeddings
+accelerate==0.21.0                    # Distributed training
+
+# 🤖 AI & LLM Integration
+openai==0.27.8                        # OpenAI API client
+anthropic==0.3.11                     # Claude API client
+langchain==0.0.240                    # LLM application framework
+llama-index==0.8.9                    # LLM data framework
+
+# 🌐 Web Security & Scanning
+requests==2.31.0                      # HTTP library for API calls
+aiohttp==3.8.5                        # Async HTTP client
+beautifulsoup4==4.12.2                # HTML parsing
+lxml==4.9.3                           # Fast XML/HTML processing
+selenium==4.11.2                      # Browser automation for JS-heavy sites
+scrapy==2.10.0                        # Web crawling framework
+
+# 🛡️ Security Libraries
+cryptography==41.0.3                  # Cryptography primitives
+pyopenssl==23.2.0                     # SSL/TLS toolkit
+paramiko==3.2.0                       # SSH2 protocol library
+ssdeep==3.4                           # Fuzzy hashing for malware detection
+yara-python==4.2.3                    # YARA rule matching
+
+# 📊 Data Processing & Analysis
+numpy==1.24.3                         # Numerical computing
+pandas==2.0.3                         # Data manipulation and analysis
+scipy==1.11.1                         # Scientific computing
+scikit-learn==1.3.0                   # Machine learning algorithms
+networkx==3.1                         # Graph analysis for attack chains
+
+# 🗄️ Database & Storage
+sqlalchemy==2.0.19                    # SQL toolkit and ORM
+psycopg2-binary==2.9.7                # PostgreSQL adapter
+redis==4.6.0                          # Redis client
+elasticsearch==8.10.0                 # Elasticsearch client
+chromadb==0.4.10                      # Vector database for embeddings
+
+# 🚀 Web Framework & API
+fastapi==0.100.1                      # Modern, fast web framework
+uvicorn[standard]==0.23.2             # ASGI server
+pydantic==2.3.0                       # Data validation and settings management
+python-multipart==0.0.6               # Multipart form parsing
+python-jose[cryptography]==3.3.0      # JWT implementation
+passlib[bcrypt]==1.7.4                # Password hashing
+
+# 📈 Dashboard & UI
+streamlit==1.27.0                     # Web app framework for data apps
+plotly==5.16.1                        # Interactive graphing library
+dash==2.14.0                          # Analytical web applications
+flask==2.3.3                          # Web microframework
+jinja2==3.1.2                         # Templating engine
+
+# 🔧 Utilities & Helpers
+python-dotenv==1.0.0                  # Environment variable management
+pyyaml==6.0.1                         # YAML parsing
+colorama==0.4.6                       # Cross-platform colored terminal text
+tqdm==4.65.0                          # Progress bars
+loguru==0.7.2                         # Logging made simple
+rich==13.5.2                          # Rich text and beautiful formatting
+
+# 📡 Network & Protocols
+dnspython==2.4.2                      # DNS toolkit
+whois==0.9.27                         # WHOIS parsing
+ipaddress==1.0.23                     # IP address manipulation
+netaddr==0.8.0                        # Network address manipulation
+
+# 🧪 Testing & Quality Assurance
+pytest==7.4.2                         # Testing framework
+pytest-asyncio==0.21.1                # Async test support
+pytest-cov==4.1.0                     # Coverage reporting
+httpx==0.25.1                         # HTTP client for testing
+factory-boy==3.3.0                    # Test fixtures replacement
+freezegun==1.2.2                      # Time mocking
+
+# 🛠️ Development Tools
+black==23.7.0                         # Code formatter
+flake8==6.1.0                         # Style guide enforcement
+mypy==1.5.1                           # Static type checking
+pre-commit==3.4.0                     # Git hook management
+pylint==3.0.1                         # Python code analyzer
+bandit==1.7.5                         # Security linter
+
+# 📦 Packaging & Distribution
+setuptools==68.1.2                    # Package development
+wheel==0.41.2                         # Built-package format
+twine==4.0.2                          # Package upload to PyPI
+build==0.10.0                         # Simple, correct PEP 517 package builder
+
+# 🐳 Containerization
+docker==6.1.3                         # Docker SDK for Python
+kubernetes==26.1.0                    # Kubernetes client
+
+# Note: This file should be updated regularly with `pip freeze > requirements.txt`
+# For production, consider using constraints files or poetry/pipenv

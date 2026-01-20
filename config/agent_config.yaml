@@ -1,0 +1,2620 @@
+# config/agent_config.yaml
+# ============================================================================
+# CYBERGUARD AGENT CONFIGURATION
+# ============================================================================
+# This file contains detailed configurations for each security agent
+# in the CyberGuard multi-agent system. Each agent is specialized for
+# specific security tasks and follows mHC coordination principles.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# AGENT REGISTRY & COORDINATION
+# ----------------------------------------------------------------------------
+agent_registry:
+  # Registry settings
+  registry_type: "dynamic"  # static, dynamic, hybrid
+  auto_discovery: true
+  discovery_interval: 60  # seconds
+  
+  # Agent lifecycle management
+  lifecycle:
+    # Heartbeat interval (seconds)
+    heartbeat_interval: 30
+    
+    # Heartbeat timeout (seconds)
+    heartbeat_timeout: 90
+    
+    # Graceful shutdown timeout (seconds)
+    shutdown_timeout: 30
+    
+    # Auto-restart failed agents
+    auto_restart: true
+    
+    # Maximum restart attempts
+    max_restart_attempts: 3
+    
+    # Restart delay (seconds)
+    restart_delay: 5
+  
+  # Agent coordination
+  coordination:
+    # Coordination strategy
+    strategy: "mhc"  # mhc, voting, consensus, hierarchical
+    
+    # Coordination interval (seconds)
+    coordination_interval: 1
+    
+    # Maximum coordination time (seconds)
+    max_coordination_time: 5
+    
+    # Enable parallel coordination
+    parallel_coordination: true
+    
+    # Number of coordination workers
+    coordination_workers: 4
+
+# ----------------------------------------------------------------------------
+# WEB THREAT DETECTION AGENT (OWASP Top-10 Specialist)
+# ----------------------------------------------------------------------------
+web_threat_detection:
+  # Agent metadata
+  metadata:
+    agent_id: "threat_detection_001"
+    name: "Web Threat Detection Agent"
+    description: "Specialized in detecting OWASP Top-10 web vulnerabilities"
+    version: "1.0.0"
+    author: "CyberGuard Security Team"
+    created: "2024-01-15"
+    last_updated: "2024-01-15"
+  
+  # Detection capabilities
+  capabilities:
+    primary:
+      - "cross_site_scripting"
+      - "sql_injection"
+      - "cross_site_request_forgery"
+      - "server_side_request_forgery"
+      - "command_injection"
+      - "path_traversal"
+      - "xml_external_entity"
+      - "insecure_deserialization"
+      - "broken_access_control"
+      - "security_misconfiguration"
+    
+    secondary:
+      - "open_redirect"
+      - "server_side_template_injection"
+      - "file_upload_vulnerabilities"
+      - "http_parameter_pollution"
+      - "insecure_cors"
+    
+    advanced:
+      - "jwt_attacks"
+      - "graphql_injection"
+      - "websocket_attacks"
+      - "prototype_pollution"
+  
+  # Detection rules and patterns
+  detection_rules:
+    xss:
+      # Reflected XSS patterns
+      reflected_patterns:
+        - "<script>.*</script>"
+        - "javascript:"
+        - "onload="
+        - "onerror="
+        - "onclick="
+        - "onmouseover="
+        - "eval("
+        - "alert("
+        - "document.cookie"
+        - "window.location"
+      
+      # Stored XSS patterns
+      stored_patterns:
+        - "data:text/html"
+        - "<iframe"
+        - "<object"
+        - "<embed"
+        - "<svg"
+        - "<math"
+      
+      # DOM-based XSS indicators
+      dom_indicators:
+        - "innerHTML"
+        - "outerHTML"
+        - "document.write"
+        - "eval("
+        - "setTimeout"
+        - "setInterval"
+        - "Function("
+    
+    sql_injection:
+      # SQL injection patterns
+      patterns:
+        - "' OR '1'='1"
+        - "' OR '1'='1' --"
+        - "' UNION SELECT"
+        - "'; DROP TABLE"
+        - "' OR 1=1 --"
+        - "' OR 1=1 #"
+        - "' OR 'a'='a"
+        - "') OR ('a'='a"
+        - "1' ORDER BY"
+        - "admin' --"
+        - "' AND 1=1"
+        - "' AND 1=0"
+      
+      # Blind SQLi patterns
+      blind_patterns:
+        - "waitfor delay"
+        - "pg_sleep"
+        - "sleep("
+        - "benchmark("
+      
+      # Time-based detection
+      time_based:
+        enabled: true
+        threshold_ms: 5000
+        test_payloads:
+          - "' AND sleep(5) --"
+          - "' AND pg_sleep(5) --"
+          - "'; WAITFOR DELAY '00:00:05' --"
+    
+    csrf:
+      # CSRF detection rules
+      detection_methods:
+        # Check for CSRF tokens
+        token_check: true
+        
+        # Check SameSite cookies
+        samesite_check: true
+        
+        # Check Origin/Referer headers
+        origin_check: true
+        
+        # Check for state-changing methods without protection
+        state_changing_check: true
+      
+      # State-changing methods
+      state_changing_methods:
+        - "POST"
+        - "PUT"
+        - "DELETE"
+        - "PATCH"
+      
+      # CSRF token patterns
+      token_patterns:
+        - "csrf_token"
+        - "csrfmiddlewaretoken"
+        - "authenticity_token"
+        - "X-CSRF-Token"
+        - "X-XSRF-Token"
+    
+    ssrf:
+      # SSRF detection patterns
+      internal_ip_patterns:
+        - "127.0.0.1"
+        - "localhost"
+        - "0.0.0.0"
+        - "169.254.169.254"  # AWS metadata
+        - "192.168."
+        - "10."
+        - "172.16."
+        - "172.31."
+      
+      # Dangerous protocols
+      dangerous_protocols:
+        - "file://"
+        - "gopher://"
+        - "dict://"
+        - "ldap://"
+        - "tftp://"
+      
+      # AWS/Azure/GCP metadata endpoints
+      cloud_metadata:
+        aws: "169.254.169.254"
+        azure: "169.254.169.254"
+        gcp: "metadata.google.internal"
+        digitalocean: "169.254.169.254"
+  
+  # Confidence thresholds
+  confidence_thresholds:
+    xss:
+      certain: 0.9
+      high: 0.7
+      medium: 0.5
+      low: 0.3
+    
+    sql_injection:
+      certain: 0.95
+      high: 0.8
+      medium: 0.6
+      low: 0.4
+    
+    csrf:
+      certain: 0.85
+      high: 0.6
+      medium: 0.4
+      low: 0.2
+    
+    ssrf:
+      certain: 0.9
+      high: 0.7
+      medium: 0.5
+      low: 0.3
+  
+  # Performance settings
+  performance:
+    # Request analysis timeout (seconds)
+    analysis_timeout: 10
+    
+    # Maximum concurrent analyses
+    max_concurrent: 5
+    
+    # Cache analyzed patterns
+    enable_caching: true
+    
+    # Cache TTL (seconds)
+    cache_ttl: 3600
+    
+    # Pattern matching engine
+    matching_engine: "regex"  # regex, aho_corasick, boyer_moore
+    
+    # Enable parallel pattern matching
+    parallel_matching: true
+
+# ----------------------------------------------------------------------------
+# TRAFFIC ANOMALY DETECTION AGENT
+# ----------------------------------------------------------------------------
+traffic_anomaly:
+  metadata:
+    agent_id: "traffic_anomaly_001"
+    name: "Traffic Anomaly Detection Agent"
+    description: "Detects anomalous patterns in web traffic using statistical methods"
+    version: "1.0.0"
+  
+  # Statistical detection methods
+  statistical_methods:
+    # Moving average
+    moving_average:
+      enabled: true
+      window_size: 100
+      sensitivity: 2.0  # Standard deviations
+    
+    # Exponential smoothing
+    exponential_smoothing:
+      enabled: true
+      alpha: 0.3
+      beta: 0.1
+      gamma: 0.1
+    
+    # Z-score normalization
+    z_score:
+      enabled: true
+      threshold: 3.0
+    
+    # Percentile-based detection
+    percentile:
+      enabled: true
+      upper_percentile: 99
+      lower_percentile: 1
+  
+  # Time series analysis
+  time_series:
+    # Seasonality detection
+    seasonality:
+      enabled: true
+      periods:
+        - 86400  # Daily (seconds)
+        - 604800  # Weekly (seconds)
+        - 2592000  # Monthly (approx, seconds)
+    
+    # Trend analysis
+    trend:
+      enabled: true
+      method: "holt_winters"  # linear, exponential, holt_winters
+    
+    # Change point detection
+    change_points:
+      enabled: true
+      method: "pelt"  # pelt, binseg, window
+      penalty: "bic"
+  
+  # Feature extraction
+  features:
+    # Request features
+    request_features:
+      - "request_rate"
+      - "unique_ips"
+      - "request_size_mean"
+      - "request_size_std"
+      - "response_time_mean"
+      - "response_time_std"
+      - "status_code_distribution"
+      - "user_agent_entropy"
+      - "referrer_entropy"
+      - "path_depth_mean"
+    
+    # Session features
+    session_features:
+      - "session_duration"
+      - "requests_per_session"
+      - "unique_endpoints_per_session"
+      - "session_interval_mean"
+      - "session_interval_std"
+    
+    # Behavioral features
+    behavioral_features:
+      - "click_rate"
+      - "scroll_depth"
+      - "form_submission_rate"
+      - "ajax_request_ratio"
+      - "api_to_html_ratio"
+  
+  # Anomaly detection models
+  models:
+    # Isolation Forest
+    isolation_forest:
+      enabled: true
+      n_estimators: 100
+      contamination: 0.1
+      max_features: 1.0
+    
+    # One-Class SVM
+    one_class_svm:
+      enabled: true
+      kernel: "rbf"
+      nu: 0.1
+      gamma: "auto"
+    
+    # Autoencoder
+    autoencoder:
+      enabled: true
+      encoding_dim: 32
+      hidden_layers: [64, 32]
+      activation: "relu"
+      reconstruction_threshold: 0.95
+    
+    # LSTM-based anomaly detection
+    lstm:
+      enabled: false
+      sequence_length: 10
+      lstm_units: 50
+      dropout: 0.2
+  
+  # Alert thresholds
+  alert_thresholds:
+    # Anomaly score thresholds
+    anomaly_score:
+      critical: 0.9
+      high: 0.7
+      medium: 0.5
+      low: 0.3
+    
+    # Rate change thresholds
+    rate_change:
+      critical: 5.0  # 500% increase
+      high: 3.0     # 300% increase
+      medium: 2.0   # 200% increase
+      low: 1.5      # 150% increase
+
+# ----------------------------------------------------------------------------
+# BOT & ABUSE DETECTION AGENT
+# ----------------------------------------------------------------------------
+bot_detection:
+  metadata:
+    agent_id: "bot_detection_001"
+    name: "Bot & Abuse Detection Agent"
+    description: "Identifies automated bots, scrapers, and abusive traffic"
+    version: "1.0.0"
+  
+  # Bot signatures database
+  bot_signatures:
+    # Known bot user agents
+    user_agents:
+      - "Googlebot"
+      - "Bingbot"
+      - "Slurp"
+      - "DuckDuckBot"
+      - "Baiduspider"
+      - "YandexBot"
+      - "facebookexternalhit"
+      - "Twitterbot"
+      - "LinkedInBot"
+      - "WhatsApp"
+      - "TelegramBot"
+      - "Discordbot"
+      - "Slackbot"
+      - "Alexa"
+      - "PetalBot"
+    
+    # Malicious bot patterns
+    malicious_patterns:
+      - "masscan"
+      - "nmap"
+      - "sqlmap"
+      - "nikto"
+      - "dirbuster"
+      - "gobuster"
+      - "ffuf"
+      - "wpscan"
+      - "joomscan"
+      - "acunetix"
+      - "nessus"
+      - "openvas"
+      - "zap"
+      - "burp"
+    
+    # Headers analysis
+    header_analysis:
+      # Missing or suspicious headers
+      suspicious_headers:
+        - missing: "User-Agent"
+          weight: 0.8
+        - missing: "Accept"
+          weight: 0.3
+        - missing: "Accept-Language"
+          weight: 0.2
+        - missing: "Accept-Encoding"
+          weight: 0.1
+      
+      # Header consistency checks
+      consistency_checks:
+        user_agent_consistency: true
+        accept_header_consistency: true
+        language_header_consistency: true
+  
+  # Behavioral analysis
+  behavioral_analysis:
+    # Rate limiting analysis
+    rate_limiting:
+      enabled: true
+      requests_per_minute: 100
+      requests_per_hour: 1000
+      requests_per_day: 10000
+      
+      # Burst detection
+      burst_detection: true
+      burst_window: 10  # seconds
+      burst_threshold: 50  # requests
+    
+    # Request pattern analysis
+    request_patterns:
+      # Sequential scanning
+      sequential_scanning:
+        enabled: true
+        threshold: 0.8  # 80% sequential requests
+        
+      # Directory traversal patterns
+      directory_traversal:
+        enabled: true
+        depth_threshold: 5
+        
+      # Parameter fuzzing
+      parameter_fuzzing:
+        enabled: true
+        unique_params_threshold: 50
+        
+      # Missing referrer (often indicates automated requests)
+      missing_referrer:
+        enabled: true
+        threshold: 0.7  # 70% requests without referrer
+    
+    # Timing analysis
+    timing_analysis:
+      # Request interval consistency (bots are often too consistent)
+      interval_consistency:
+        enabled: true
+        threshold: 0.1  # Max allowed std deviation in seconds
+        
+      # Human-like delays
+      human_like_delays:
+        enabled: true
+        min_delay: 0.1  # seconds
+        max_delay: 5.0  # seconds
+        required_percentage: 0.7  # 70% of requests should have human-like delays
+  
+  # Machine learning models
+  ml_models:
+    # Feature extraction
+    features:
+      - "requests_per_second"
+      - "unique_endpoints"
+      - "request_entropy"
+      - "parameter_variety"
+      - "header_completeness"
+      - "timing_consistency"
+      - "geolocation_diversity"
+      - "asn_diversity"
+      - "session_duration"
+      - "inter_request_time_mean"
+      - "inter_request_time_std"
+    
+    # Classification models
+    classifiers:
+      random_forest:
+        enabled: true
+        n_estimators: 100
+        max_depth: 10
+        
+      gradient_boosting:
+        enabled: true
+        n_estimators: 100
+        learning_rate: 0.1
+        
+      neural_network:
+        enabled: false
+        layers: [64, 32, 16]
+        activation: "relu"
+        dropout: 0.2
+  
+  # Challenge-response mechanisms
+  challenges:
+    # CAPTCHA challenges
+    captcha:
+      enabled: true
+      type: "recaptcha_v3"  # recaptcha_v2, recaptcha_v3, hcaptcha
+      score_threshold: 0.5
+      site_key: "your_recaptcha_site_key"
+      secret_key: "your_recaptcha_secret_key"
+    
+    # JavaScript challenges
+    javascript:
+      enabled: true
+      challenge_types:
+        - "cookie_setting"
+        - "dom_manipulation"
+        - "ajax_request"
+        - "canvas_rendering"
+      
+      # Challenge difficulty
+      difficulty: "medium"  # easy, medium, hard
+    
+    # Behavioral challenges
+    behavioral:
+      enabled: true
+      mouse_movement: true
+      keystroke_dynamics: true
+      scroll_behavior: true
+      touch_gestures: true
+
+# ----------------------------------------------------------------------------
+# MALWARE PAYLOAD DETECTION AGENT
+# ----------------------------------------------------------------------------
+malware_payload:
+  metadata:
+    agent_id: "malware_agent_001"
+    name: "Malware Payload Detection Agent"
+    description: "Detects malicious payloads, file uploads, and code injections"
+    version: "1.0.0"
+  
+  # YARA rules configuration
+  yara_rules:
+    # Rule categories
+    categories:
+      - "webshells"
+      - "backdoors"
+      - "ransomware"
+      - "trojans"
+      - "spyware"
+      - "cryptominers"
+      - "botnets"
+      - "exploit_kits"
+      - "obfuscated_code"
+      - "suspicious_patterns"
+    
+    # Rule update settings
+    update:
+      enabled: true
+      interval: 3600  # seconds
+      sources:
+        - "https://rules.yara-signatures.org/"
+        - "https://github.com/Yara-Rules/rules"
+        - "https://github.com/Neo23x0/signature-base"
+    
+    # Rule compilation
+    compilation:
+      optimize: true
+      stack_size: 16384
+      max_strings_per_rule: 10000
+      max_match_data: 512
+  
+  # File type analysis
+  file_types:
+    # Dangerous file extensions
+    dangerous_extensions:
+      - ".php"
+      - ".php3"
+      - ".php4"
+      - ".php5"
+      - ".phtml"
+      - ".asp"
+      - ".aspx"
+      - ".jsp"
+      - ".jspx"
+      - ".war"
+      - ".jar"
+      - ".exe"
+      - ".dll"
+      - ".bat"
+      - ".cmd"
+      - ".ps1"
+      - ".sh"
+      - ".py"
+      - ".pl"
+      - ".rb"
+    
+    # Suspicious MIME types
+    suspicious_mime_types:
+      - "application/x-php"
+      - "application/x-httpd-php"
+      - "application/x-msdownload"
+      - "application/x-msdos-program"
+      - "application/x-dosexec"
+      - "application/x-executable"
+      - "application/x-shellscript"
+    
+    # File magic number analysis
+    magic_numbers:
+      enabled: true
+      database: "config/magic_numbers.db"
+      max_file_size: 10485760  # 10MB
+  
+  # Heuristic analysis
+  heuristics:
+    # Code obfuscation detection
+    obfuscation:
+      enabled: true
+      techniques:
+        - "base64_encoding"
+        - "hex_encoding"
+        - "rot13"
+        - "gzinflate"
+        - "str_rot13"
+        - "eval_base64_decode"
+        - "gzinflate_base64_decode"
+      
+      # Obfuscation patterns
+      patterns:
+        - "eval\(base64_decode"
+        - "gzinflate\(base64_decode"
+        - "str_rot13\(base64_decode"
+        - "preg_replace.*\/e"
+        - "create_function"
+        - "assert\("
+        - "system\("
+        - "shell_exec\("
+        - "passthru\("
+        - "exec\("
+        - "proc_open"
+        - "popen"
+    
+    # Web shell detection
+    webshells:
+      enabled: true
+      common_functions:
+        - "phpinfo"
+        - "system"
+        - "shell_exec"
+        - "exec"
+        - "passthru"
+        - "proc_open"
+        - "popen"
+        - "curl_exec"
+        - "file_get_contents"
+        - "fopen"
+        - "fwrite"
+      
+      # Common web shell patterns
+      patterns:
+        - "<?php @eval"
+        - "<?php system"
+        - "<?php shell_exec"
+        - "<?php passthru"
+        - "<?php assert"
+        - "<?php create_function"
+    
+    # Ransomware patterns
+    ransomware:
+      enabled: true
+      patterns:
+        - "encrypt"
+        - "decrypt"
+        - "ransom"
+        - "bitcoin"
+        - "payment"
+        - "aes_256"
+        - "rsa_2048"
+        - "your files have been encrypted"
+        - "pay to decrypt"
+  
+  # Sandbox analysis (requires Docker)
+  sandbox:
+    enabled: false  # Requires careful isolation
+    docker_image: "cyberguard/sandbox:latest"
+    timeout: 300  # seconds
+    memory_limit: "512m"
+    cpu_limit: "1.0"
+    network_mode: "none"
+    
+    # Analysis environments
+    environments:
+      - name: "php"
+        version: "8.1"
+        extensions: ["curl", "gd", "mysqli"]
+      
+      - name: "node"
+        version: "18"
+        packages: ["express", "axios"]
+      
+      - name: "python"
+        version: "3.10"
+        packages: ["flask", "requests"]
+  
+  # Threat intelligence integration
+  threat_intelligence:
+    # VirusTotal integration
+    virustotal:
+      enabled: false
+      api_key: "your_virustotal_api_key"
+      query_limit: 4  # requests per minute
+      
+    # Hybrid Analysis
+    hybrid_analysis:
+      enabled: false
+      api_key: "your_hybrid_analysis_api_key"
+      
+    # Abuse.ch
+    abuse_ch:
+      enabled: true
+      feeds:
+        - "https://urlhaus.abuse.ch/downloads/csv_recent/"
+        - "https://feodotracker.abuse.ch/downloads/ipblocklist.csv"
+
+# ----------------------------------------------------------------------------
+# EXPLOIT CHAIN REASONING AGENT
+# ----------------------------------------------------------------------------
+exploit_chain_reasoning:
+  metadata:
+    agent_id: "exploit_chain_001"
+    name: "Exploit Chain Reasoning Agent"
+    description: "Analyzes multi-step attack chains and lateral movement"
+    version: "1.0.0"
+  
+  # Attack graph construction
+  attack_graph:
+    # Node types in attack graph
+    node_types:
+      vulnerabilities:
+        - "initial_access"
+        - "execution"
+        - "persistence"
+        - "privilege_escalation"
+        - "defense_evasion"
+        - "credential_access"
+        - "discovery"
+        - "lateral_movement"
+        - "collection"
+        - "exfiltration"
+        - "command_and_control"
+        - "impact"
+      
+      # Assets
+      assets:
+        - "web_server"
+        - "database"
+        - "api_server"
+        - "load_balancer"
+        - "cdn"
+        - "firewall"
+        - "waf"
+        - "dns_server"
+        - "mail_server"
+        - "file_server"
+    
+    # Edge types (relationships)
+    edge_types:
+      - "exploits"
+      - "requires"
+      - "leads_to"
+      - "depends_on"
+      - "mitigates"
+      - "detects"
+    
+    # Graph algorithms
+    algorithms:
+      path_finding:
+        algorithm: "dijkstra"  # dijkstra, astar, bellman_ford
+        max_path_length: 10
+        
+      community_detection:
+        algorithm: "louvain"  # louvain, girvan_newman, label_propagation
+        
+      centrality:
+        metrics:
+          - "degree_centrality"
+          - "betweenness_centrality"
+          - "closeness_centrality"
+          - "eigenvector_centrality"
+  
+  # MITRE ATT&CK Framework integration
+  mitre_attack:
+    enabled: true
+    version: "13.0"
+    
+    # Tactics mapping
+    tactics:
+      TA0043: "Reconnaissance"
+      TA0042: "Resource Development"
+      TA0001: "Initial Access"
+      TA0002: "Execution"
+      TA0003: "Persistence"
+      TA0004: "Privilege Escalation"
+      TA0005: "Defense Evasion"
+      TA0006: "Credential Access"
+      TA0007: "Discovery"
+      TA0008: "Lateral Movement"
+      TA0009: "Collection"
+      TA0011: "Command and Control"
+      TA0010: "Exfiltration"
+      TA0040: "Impact"
+    
+    # Techniques database
+    techniques_database: "config/mitre_attack.json"
+    update_interval: 86400  # seconds
+  
+  # Chain detection rules
+  chain_detection:
+    # Common exploit chains
+    common_chains:
+      # Web application compromise chain
+      web_app_chain:
+        stages:
+          - "initial_access:sql_injection"
+          - "execution:command_injection"
+          - "persistence:web_shell"
+          - "privilege_escalation:suid_binary"
+          - "lateral_movement:ssh_bruteforce"
+          - "exfiltration:compressed_data"
+        
+      # Phishing to ransomware chain
+      phishing_chain:
+        stages:
+          - "initial_access:phishing"
+          - "execution:macro_enabled_doc"
+          - "persistence:scheduled_task"
+          - "defense_evasion:process_hollowing"
+          - "discovery:network_scanning"
+          - "lateral_movement:psexec"
+          - "impact:ransomware"
+    
+    # Detection sensitivity
+    sensitivity:
+      strict: 0.9  # Require exact chain match
+      moderate: 0.7  # Allow some variations
+      lenient: 0.5  # Detect partial chains
+  
+  # Predictive analysis
+  predictive:
+    # Markov chain for predicting next steps
+    markov_chain:
+      enabled: true
+      order: 2
+      smoothing: "add_one"  # add_one, good_turing, kneser_ney
+    
+    # Machine learning prediction
+    ml_prediction:
+      enabled: true
+      models:
+        lstm:
+          enabled: true
+          sequence_length: 10
+          lstm_units: 128
+          dropout: 0.2
+        
+        transformer:
+          enabled: false
+          n_layers: 4
+          n_heads: 8
+          d_model: 256
+        
+      # Prediction confidence thresholds
+      confidence_thresholds:
+        certain: 0.8
+        high: 0.6
+        medium: 0.4
+        low: 0.2
+
+# ----------------------------------------------------------------------------
+# DIGITAL FORENSICS AGENT
+# ----------------------------------------------------------------------------
+digital_forensics:
+  metadata:
+    agent_id: "forensics_agent_001"
+    name: "Digital Forensics Agent"
+    description: "Collects, preserves, and analyzes digital evidence"
+    version: "1.0.0"
+  
+  # Evidence collection
+  evidence_collection:
+    # What to collect
+    collect:
+      logs: true
+      network_traffic: true
+      memory_dumps: false  # Requires special permissions
+      disk_images: false   # Requires special permissions
+      registry_changes: false  # Windows only
+      process_list: true
+      open_connections: true
+      user_sessions: true
+      file_system_changes: true
+    
+    # Collection methods
+    methods:
+      # Live collection (volatile data)
+      live_collection:
+        enabled: true
+        commands:
+          - "ps aux"
+          - "netstat -tulpn"
+          - "ss -tulpn"
+          - "lsof -i"
+          - "who"
+          - "last"
+          - "history"
+        
+      # File system collection
+      file_system:
+        enabled: true
+        directories:
+          - "/var/log"
+          - "/etc"
+          - "/tmp"
+          - "/root/.bash_history"
+          - "/home/*/.bash_history"
+        
+        # File patterns to collect
+        patterns:
+          - "*.log"
+          - "*.conf"
+          - "*.config"
+          - "access_log*"
+          - "error_log*"
+          - "auth.log*"
+          - "secure*"
+        
+      # Network collection
+      network:
+        enabled: true
+        capture_duration: 300  # seconds
+        capture_filter: "port 80 or port 443 or port 22"
+        max_packets: 10000
+  
+  # Chain of custody
+  chain_of_custody:
+    # Hash algorithms for integrity verification
+    hash_algorithms:
+      - "sha256"
+      - "sha512"
+      - "md5"  # Legacy support
+    
+    # Digital signatures
+    digital_signatures:
+      enabled: true
+      algorithm: "RSA"
+      key_size: 4096
+      certificate_authority: "internal_ca"
+    
+    # Timestamping
+    timestamping:
+      enabled: true
+      service: "rfc3161"  # rfc3161, authenticode, xml_dsig
+      servers:
+        - "http://timestamp.digicert.com"
+        - "http://timestamp.globalsign.com"
+    
+    # Audit trail
+    audit_trail:
+      enabled: true
+      format: "json"  # json, xml, csv
+      retention_days: 365
+  
+  # Timeline analysis
+  timeline:
+    # Time sources for correlation
+    time_sources:
+      system_time: true
+      ntp_time: true
+      log_timestamps: true
+      file_mtimes: true
+      registry_timestamps: false  # Windows only
+    
+    # Time normalization
+    time_normalization:
+      enabled: true
+      timezone: "UTC"
+      format: "ISO8601"
+    
+    # Event correlation
+    correlation:
+      enabled: true
+      window_seconds: 5
+      correlation_methods:
+        - "temporal_proximity"
+        - "causal_relationship"
+        - "statistical_correlation"
+        - "sequence_matching"
+  
+  # Artifact analysis
+  artifacts:
+    # Log analysis
+    logs:
+      syslog:
+        patterns:
+          - "authentication"
+          - "authorization"
+          - "failed login"
+          - "sudo"
+          - "ssh"
+      
+      apache:
+        patterns:
+          - "40[0-9]"
+          - "50[0-9]"
+          - "POST"
+          - "GET"
+          - "HEAD"
+      
+      nginx:
+        patterns: []
+      
+      iis:
+        patterns: []
+    
+    # Memory analysis (if enabled)
+    memory:
+      volatility_profiles:
+        - "LinuxUbuntu2004x64"
+        - "Windows10x64"
+      
+      # Volatility plugins to run
+      plugins:
+        - "pslist"
+        - "psscan"
+        - "dlllist"
+        - "handles"
+        - "netscan"
+        - "connscan"
+        - "sockets"
+    
+    # File system analysis
+    file_system:
+      # Suspicious file locations
+      suspicious_locations:
+        - "/tmp/"
+        - "/dev/shm/"
+        - "/var/tmp/"
+        - "/root/"
+        - "AppData/Local/Temp/"  # Windows
+        
+      # Hidden files and directories
+      hidden_files:
+        enabled: true
+        patterns:
+          - ".*"  # Unix hidden files
+          - "desktop.ini"  # Windows
+          - "Thumbs.db"  # Windows
+
+# ----------------------------------------------------------------------------
+# INCIDENT RESPONSE AGENT
+# ----------------------------------------------------------------------------
+incident_response:
+  metadata:
+    agent_id: "incident_response_001"
+    name: "Incident Response Agent"
+    description: "Automates incident response workflows and playbook execution"
+    version: "1.0.0"
+  
+  # Incident classification
+  classification:
+    # Severity levels
+    severity:
+      critical:
+        criteria: "threat_level > 0.8 AND impact = 'high'"
+        sla_minutes: 15
+        escalation_level: "executive"
+        
+      high:
+        criteria: "threat_level > 0.6 AND impact = 'medium'"
+        sla_minutes: 60
+        escalation_level: "management"
+        
+      medium:
+        criteria: "threat_level > 0.4"
+        sla_minutes: 240
+        escalation_level: "team_lead"
+        
+      low:
+        criteria: "threat_level <= 0.4"
+        sla_minutes: 480
+        escalation_level: "analyst"
+    
+    # Impact assessment
+    impact:
+      high:
+        criteria:
+          - "data_breach = true"
+          - "service_outage = true"
+          - "financial_loss > 10000"
+          - "reputation_damage = true"
+        
+      medium:
+        criteria:
+          - "partial_outage = true"
+          - "financial_loss > 1000"
+          - "data_exposure = true"
+        
+      low:
+        criteria:
+          - "minor_disruption = true"
+          - "financial_loss <= 1000"
+    
+    # Incident categories
+    categories:
+      - "malware"
+      - "phishing"
+      - "denial_of_service"
+      - "data_breach"
+      - "insider_threat"
+      - "advanced_persistent_threat"
+      - "ransomware"
+      - "credential_stuffing"
+      - "web_application_attack"
+      - "api_abuse"
+  
+  # Response playbooks
+  playbooks:
+    # Data breach response
+    data_breach:
+      steps:
+        - name: "contain_breach"
+          action: "isolate_affected_systems"
+          parameters:
+            isolation_method: "network_segmentation"
+          
+        - name: "preserve_evidence"
+          action: "collect_forensic_data"
+          parameters:
+            collect_logs: true
+            collect_memory: false
+          
+        - name: "assess_impact"
+          action: "identify_affected_data"
+          parameters:
+            data_types: ["pii", "phi", "financial"]
+          
+        - name: "notify_stakeholders"
+          action: "send_notifications"
+          parameters:
+            recipients: ["legal", "privacy_officer", "executive_team"]
+            template: "data_breach_notification"
+          
+        - name: "remediate"
+          action: "apply_remediation"
+          parameters:
+            actions: ["reset_passwords", "revoke_tokens", "patch_vulnerabilities"]
+          
+        - name: "post_mortem"
+          action: "conduct_post_mortem"
+          parameters:
+            timeline_days: 30
+    
+    # Ransomware response
+    ransomware:
+      steps:
+        - name: "isolate_infected_systems"
+          action: "disconnect_from_network"
+          
+        - name: "identify_ransomware_family"
+          action: "analyze_malware_samples"
+          
+        - name: "check_for_decryptors"
+          action: "query_threat_intelligence"
+          
+        - name: "restore_from_backup"
+          action: "initiate_disaster_recovery"
+          
+        - name: "report_to_authorities"
+          action: "contact_law_enforcement"
+    
+    # DDoS response
+    ddos:
+      steps:
+        - name: "activate_ddos_protection"
+          action: "enable_mitigation"
+          
+        - name: "identify_attack_vector"
+          action: "analyze_traffic_patterns"
+          
+        - name: "engage_isps"
+          action: "contact_upstream_providers"
+          
+        - name: "monitor_attack"
+          action: "track_attack_metrics"
+          
+        - name: "post_attack_analysis"
+          action: "generate_attack_report"
+  
+  # Automation rules
+  automation:
+    # Auto-containment rules
+    auto_containment:
+      enabled: true
+      rules:
+        - condition: "malware_detected AND confidence > 0.8"
+          action: "quarantine_host"
+          
+        - condition: "brute_force_detected AND attempts > 10"
+          action: "block_ip"
+          
+        - condition: "data_exfiltration_detected"
+          action: "block_outbound_traffic"
+          
+        - condition: "ransomware_encryption_detected"
+          action: "isolate_network_segment"
+    
+    # Auto-remediation
+    auto_remediation:
+      enabled: true
+      rules:
+        - condition: "vulnerability_detected AND patch_available"
+          action: "apply_patch"
+          
+        - condition: "misconfiguration_detected"
+          action: "apply_configuration"
+          
+        - condition: "exposed_credentials_detected"
+          action: "rotate_credentials"
+          
+        - condition: "malicious_file_detected"
+          action: "delete_file"
+    
+    # Escalation rules
+    escalation:
+      enabled: true
+      rules:
+        - condition: "incident_open_hours > 4"
+          escalate_to: "team_lead"
+          
+        - condition: "incident_open_hours > 8"
+          escalate_to: "management"
+          
+        - condition: "incident_open_hours > 24"
+          escalate_to: "executive"
+          
+        - condition: "data_breach_confirmed"
+          escalate_to: "legal_department"
+  
+  # Communication templates
+  communication:
+    # Email templates
+    email_templates:
+      incident_alert:
+        subject: "Security Incident Alert - {incident_id}"
+        body: |
+          A security incident has been detected.
+          
+          Incident ID: {incident_id}
+          Severity: {severity}
+          Category: {category}
+          Description: {description}
+          Detection Time: {detection_time}
+          
+          Please review the incident in the CyberGuard dashboard.
+          
+          This is an automated notification from CyberGuard.
+      
+      escalation_notice:
+        subject: "Incident Escalation - {incident_id}"
+        body: |
+          Incident {incident_id} has been escalated due to {reason}.
+          
+          Current Status: {status}
+          Time Open: {time_open}
+          Assigned To: {assigned_to}
+          
+          Action Required: {required_action}
+      
+      resolution_notice:
+        subject: "Incident Resolved - {incident_id}"
+        body: |
+          Incident {incident_id} has been resolved.
+          
+          Resolution: {resolution}
+          Resolution Time: {resolution_time}
+          Time to Resolve: {time_to_resolve}
+          
+          Root Cause: {root_cause}
+          Lessons Learned: {lessons_learned}
+    
+    # Slack/Teams templates
+    chat_templates:
+      incident_alert:
+        channel: "#security-alerts"
+        message: "🚨 New Incident: {incident_id} | Severity: {severity} | Category: {category}"
+        color: "danger"
+        
+      status_update:
+        channel: "#security-incidents"
+        message: "📊 Incident Update: {incident_id} | Status: {status} | Progress: {progress}%"
+        color: "warning"
+        
+      resolution:
+        channel: "#security-incidents"
+        message: "✅ Incident Resolved: {incident_id} | Time to Resolve: {time_to_resolve}"
+        color: "good"
+
+# ----------------------------------------------------------------------------
+# COMPLIANCE & PRIVACY AGENT
+# ----------------------------------------------------------------------------
+compliance_privacy:
+  metadata:
+    agent_id: "compliance_agent_001"
+    name: "Compliance & Privacy Agent"
+    description: "Ensures compliance with regulatory frameworks and privacy laws"
+    version: "1.0.0"
+  
+  # Regulatory frameworks
+  frameworks:
+    GDPR:
+      # General Data Protection Regulation (EU)
+      enabled: true
+      version: "2018"
+      
+      # Key requirements
+      requirements:
+        data_protection_officer: true
+        data_protection_impact_assessments: true
+        data_breach_notification: true
+        right_to_access: true
+        right_to_be_forgotten: true
+        data_portability: true
+        privacy_by_design: true
+        privacy_by_default: true
+      
+      # Notification timelines
+      notification_timelines:
+        data_breach_notification_hours: 72
+        data_subject_request_days: 30
+      
+      # Fines and penalties
+      penalties:
+        tier_1_percent: 2  # % of global turnover
+        tier_2_percent: 4  # % of global turnover
+        tier_1_max: 10000000  # EUR
+        tier_2_max: 20000000  # EUR
+    
+    HIPAA:
+      # Health Insurance Portability and Accountability Act (US)
+      enabled: true
+      version: "1996"
+      
+      # Protected Health Information (PHI)
+      phi_identifiers:
+        - "name"
+        - "address"
+        - "dates"
+        - "phone_number"
+        - "fax_number"
+        - "email"
+        - "ssn"
+        - "medical_record_number"
+        - "health_plan_beneficiary_number"
+        - "account_number"
+        - "certificate_license_number"
+        - "vehicle_identifiers"
+        - "device_identifiers"
+        - "url"
+        - "ip_address"
+        - "biometric_identifiers"
+        - "full_face_photos"
+        - "any_other_unique_identifying_number"
+      
+      # Security rules
+      security_rules:
+        administrative_safeguards: true
+        physical_safeguards: true
+        technical_safeguards: true
+        
+      # Breach notification
+      breach_notification:
+        individuals: true
+        media: true  # for breaches > 500
+        secretary: true  # HHS Secretary
+        timeline_days: 60
+    
+    PCI_DSS:
+      # Payment Card Industry Data Security Standard
+      enabled: true
+      version: "4.0"
+      
+      # Requirements
+      requirements:
+        build_and_maintain_secure_network: true
+        protect_cardholder_data: true
+        maintain_vulnerability_management: true
+        implement_strong_access_control: true
+        regularly_monitor_and_test_networks: true
+        maintain_information_security_policy: true
+      
+      # Cardholder Data Environment (CDE)
+      cde:
+        network_segmentation: true
+        scope_reduction: true
+        access_controls: true
+        
+      # Compliance validation
+      validation:
+        saq_type: "D"  # A, A-EP, B, B-IP, C, C-VT, D, P2PE
+        qsa_required: true
+        asv_scan_required: true
+    
+    CCPA:
+      # California Consumer Privacy Act
+      enabled: true
+      version: "2020"
+      
+      # Consumer rights
+      consumer_rights:
+        right_to_know: true
+        right_to_delete: true
+        right_to_opt_out: true
+        right_to_non_discrimination: true
+        right_to_correct: true
+        right_to_limit: true
+      
+      # Thresholds
+      thresholds:
+        annual_revenue: 25000000  # USD
+        data_subjects: 50000
+        revenue_from_data_sales_percent: 50
+  
+  # Privacy controls
+  privacy_controls:
+    # Data minimization
+    data_minimization:
+      enabled: true
+      collection_limitation: true
+      purpose_specification: true
+      use_limitation: true
+    
+    # Consent management
+    consent:
+      enabled: true
+      explicit_consent: true
+      consent_records: true
+      consent_withdrawal: true
+      age_verification: true
+      
+      # Cookie consent
+      cookies:
+        essential: true
+        functional: true
+        analytics: true
+        marketing: true
+        third_party: true
+    
+    # Data subject rights
+    data_subject_rights:
+      access_portal: true
+      automated_processing: true
+      objection_right: true
+      rectification_right: true
+      erasure_right: true
+      restriction_right: true
+      data_portability: true
+    
+    # Privacy by design
+    privacy_by_design:
+      default_privacy: true
+      embedded_privacy: true
+      full_functionality: true
+      end_to_end_security: true
+      visibility_and_transparency: true
+      respect_for_user_privacy: true
+  
+  # Compliance monitoring
+  monitoring:
+    # Continuous compliance monitoring
+    continuous:
+      enabled: true
+      check_interval: 3600  # seconds
+      
+      # What to monitor
+      monitor:
+        data_flows: true
+        access_controls: true
+        encryption_status: true
+        logging_completeness: true
+        retention_policies: true
+        third_party_compliance: true
+    
+    # Audit logging
+    audit_logs:
+      enabled: true
+      retention_days: 365
+      immutable_logs: true
+      tamper_evident: true
+      
+      # Events to audit
+      audit_events:
+        - "data_access"
+        - "configuration_changes"
+        - "user_management"
+        - "privilege_escalation"
+        - "data_export"
+        - "consent_changes"
+        - "breach_notifications"
+    
+    # Reporting
+    reporting:
+      enabled: true
+      reports:
+        - name: "compliance_status"
+          frequency: "monthly"
+          recipients: ["compliance_officer", "legal_department"]
+          
+        - name: "privacy_impact_assessment"
+          frequency: "quarterly"
+          recipients: ["data_protection_officer"]
+          
+        - name: "data_breach_report"
+          frequency: "as_needed"
+          recipients: ["executive_team", "legal_department"]
+      
+      # Regulatory reporting
+      regulatory_reports:
+        gdpr:
+          data_protection_impact_assessment: true
+          record_of_processing_activities: true
+          
+        hipaa:
+          security_risk_assessment: true
+          breach_notification_log: true
+          
+        pci_dss:
+          compliance_report: true
+          attestation_of_compliance: true
+
+# ----------------------------------------------------------------------------
+# SECURE CODE REVIEW AGENT
+# ----------------------------------------------------------------------------
+secure_code_review:
+  metadata:
+    agent_id: "code_review_001"
+    name: "Secure Code Review Agent"
+    description: "Static code analysis for security vulnerabilities"
+    version: "1.0.0"
+  
+  # Supported languages
+  languages:
+    python:
+      enabled: true
+      versions: ["3.8", "3.9", "3.10", "3.11"]
+      analyzers: ["bandit", "safety", "pylint", "mypy"]
+      config_file: ".bandit.yml"
+      
+    javascript:
+      enabled: true
+      versions: ["ES6", "ES2020", "ES2022"]
+      analyzers: ["eslint", "njsscan", "snyk"]
+      config_file: ".eslintrc.js"
+      
+    typescript:
+      enabled: true
+      versions: ["4.0", "4.5", "4.9"]
+      analyzers: ["tslint", "typescript-eslint"]
+      config_file: "tslint.json"
+      
+    java:
+      enabled: true
+      versions: ["8", "11", "17"]
+      analyzers: ["spotbugs", "findsecbugs", "checkstyle"]
+      config_file: "findbugs.xml"
+      
+    go:
+      enabled: true
+      versions: ["1.19", "1.20"]
+      analyzers: ["gosec", "staticcheck"]
+      config_file: ".gosec.json"
+      
+    php:
+      enabled: true
+      versions: ["7.4", "8.0", "8.1"]
+      analyzers: ["phpcs", "phpmd", "phpstan"]
+      config_file: "phpcs.xml"
+      
+    csharp:
+      enabled: true
+      versions: ["7.0", "8.0", "9.0"]
+      analyzers: ["securitycode scan", "roslyn"]
+      config_file: ".editorconfig"
+      
+    ruby:
+      enabled: true
+      versions: ["2.7", "3.0", "3.1"]
+      analyzers: ["brakeman", "rubocop"]
+      config_file: ".rubocop.yml"
+  
+  # Vulnerability patterns
+  vulnerability_patterns:
+    # Injection vulnerabilities
+    injection:
+      sql_injection:
+        patterns:
+          - "execute\(.*%s"
+          - "query\(.*\+"
+          - "format\(.*%s"
+          - "f\"SELECT.*{.*}"
+          - "`SELECT.*${.*}`"
+        severity: "CRITICAL"
+        
+      command_injection:
+        patterns:
+          - "os.system"
+          - "subprocess.call"
+          - "subprocess.Popen"
+          - "exec\("
+          - "eval\("
+        severity: "CRITICAL"
+        
+      xss:
+        patterns:
+          - "response.write\(.*request"
+          - "echo.*$_GET"
+          - "print.*request"
+          - "innerHTML.*=.*location"
+        severity: "HIGH"
+    
+    # Authentication and authorization
+    auth:
+      hardcoded_credentials:
+        patterns:
+          - "password\s*=\s*['\"].*['\"]"
+          - "api_key\s*=\s*['\"].*['\"]"
+          - "secret\s*=\s*['\"].*['\"]"
+          - "token\s*=\s*['\"].*['\"]"
+        severity: "CRITICAL"
+        
+      weak_crypto:
+        patterns:
+          - "md5\("
+          - "sha1\("
+          - "DES\."
+          - "RC4"
+          - "base64\("
+        severity: "HIGH"
+        
+      missing_authentication:
+        patterns:
+          - "@app.route.*methods=.*POST.*\ndef.*\n\s*(?!@auth)"
+          - "public.*void.*Post"
+          - "function.*post.*\s*\{[^}]*\}(?!.*auth)"
+        severity: "HIGH"
+    
+    # Data exposure
+    data_exposure:
+      sensitive_data_logging:
+        patterns:
+          - "logger.*password"
+          - "console.log.*token"
+          - "log.*credit_card"
+          - "debug.*ssn"
+        severity: "MEDIUM"
+        
+      information_disclosure:
+        patterns:
+          - "stack_trace.*print"
+          - "error.*details.*response"
+          - "exception.*message.*send"
+        severity: "MEDIUM"
+    
+    # Configuration issues
+    configuration:
+      debug_mode_enabled:
+        patterns:
+          - "DEBUG\s*=\s*True"
+          - "debug.*true"
+          - "development.*mode"
+        severity: "MEDIUM"
+        
+      insecure_headers:
+        patterns:
+          - "Access-Control-Allow-Origin.*\\*"
+          - "X-Frame-Options.*none"
+          - "Strict-Transport-Security.*max-age=0"
+        severity: "MEDIUM"
+  
+  # Analysis settings
+  analysis:
+    # Depth of analysis
+    depth: "deep"  # quick, standard, deep
+    
+    # Timeout per file (seconds)
+    timeout_per_file: 30
+    
+    # Maximum file size (bytes)
+    max_file_size: 1048576  # 1MB
+    
+    # Ignore patterns
+    ignore_patterns:
+      - "*/node_modules/*"
+      - "*/venv/*"
+      - "*/env/*"
+      - "*/dist/*"
+      - "*/build/*"
+      - "*/coverage/*"
+      - "*.min.js"
+      - "*.min.css"
+    
+    # Custom rules
+    custom_rules:
+      enabled: true
+      rules_directory: "config/code_review_rules/"
+      auto_reload: true
+  
+  # Integration with CI/CD
+  cicd:
+    # Pre-commit hooks
+    pre_commit:
+      enabled: true
+      hook_types:
+        - "pre-commit"
+        - "pre-push"
+        - "commit-msg"
+      
+      # Files to check on commit
+      staged_files_only: true
+      minimum_severity: "MEDIUM"
+    
+    # Pull request analysis
+    pull_requests:
+      enabled: true
+      platforms:
+        github:
+          enabled: true
+          app_id: "your_github_app_id"
+          private_key: "path/to/private_key.pem"
+          
+        gitlab:
+          enabled: false
+          token: "your_gitlab_token"
+          
+        bitbucket:
+          enabled: false
+          username: "your_username"
+          app_password: "your_app_password"
+      
+      # PR analysis settings
+      analysis:
+        changed_files_only: true
+        new_code_only: true
+        comment_on_pr: true
+        fail_on_critical: true
+        threshold: "MEDIUM"
+    
+    # Pipeline integration
+    pipeline:
+      enabled: true
+      stages:
+        - name: "security_scan"
+          position: "after_test"
+          fail_on: "CRITICAL"
+          
+        - name: "dependency_check"
+          position: "after_build"
+          fail_on: "HIGH"
+          
+        - name: "container_scan"
+          position: "before_deploy"
+          fail_on: "CRITICAL"
+
+# ----------------------------------------------------------------------------
+# THREAT EDUCATION AGENT
+# ----------------------------------------------------------------------------
+threat_education:
+  metadata:
+    agent_id: "threat_education_001"
+    name: "Threat Education Agent"
+    description: "Provides security education and training to developers"
+    version: "1.0.0"
+  
+  # Learning modules
+  learning_modules:
+    # OWASP Top-10 module
+    owasp_top_10:
+      enabled: true
+      difficulty: "beginner"
+      estimated_time: "2 hours"
+      modules:
+        - id: "a01"
+          title: "Broken Access Control"
+          content: "config/education/owasp/a01.md"
+          exercises: 5
+          quiz: true
+          
+        - id: "a02"
+          title: "Cryptographic Failures"
+          content: "config/education/owasp/a02.md"
+          exercises: 4
+          quiz: true
+          
+        - id: "a03"
+          title: "Injection"
+          content: "config/education/owasp/a03.md"
+          exercises: 6
+          quiz: true
+        
+        # ... all OWASP Top-10 modules
+    
+    # Secure coding practices
+    secure_coding:
+      enabled: true
+      difficulty: "intermediate"
+      estimated_time: "4 hours"
+      languages:
+        - "python"
+        - "javascript"
+        - "java"
+        - "go"
+      
+      topics:
+        - "input_validation"
+        - "output_encoding"
+        - "authentication"
+        - "session_management"
+        - "cryptography"
+        - "error_handling"
+        - "logging"
+    
+    # Incident response training
+    incident_response:
+      enabled: true
+      difficulty: "advanced"
+      estimated_time: "3 hours"
+      scenarios:
+        - "data_breach"
+        - "ransomware"
+        - "ddos"
+        - "insider_threat"
+        - "supply_chain_attack"
+      
+      roles:
+        - "first_responder"
+        - "incident_commander"
+        - "communications_officer"
+        - "technical_lead"
+    
+    # Threat hunting
+    threat_hunting:
+      enabled: true
+      difficulty: "expert"
+      estimated_time: "5 hours"
+      techniques:
+        - "hypothesis_driven"
+        - "indicator_based"
+        - "anomaly_based"
+        - "machine_learning"
+      
+      tools:
+        - "siem"
+        - "edr"
+        - "network_monitoring"
+        - "memory_analysis"
+  
+  # Interactive learning
+  interactive:
+    # Code labs
+    code_labs:
+      enabled: true
+      environment: "docker"
+      image: "cyberguard/codelab:latest"
+      timeout: 1800  # seconds
+      
+      labs:
+        - name: "sql_injection_lab"
+          title: "SQL Injection Exploitation and Prevention"
+          description: "Learn how SQL injection works and how to prevent it"
+          difficulty: "beginner"
+          estimated_time: "30 minutes"
+          
+        - name: "xss_lab"
+          title: "Cross-Site Scripting (XSS)"
+          description: "Understand XSS attacks and defense mechanisms"
+          difficulty: "intermediate"
+          estimated_time: "45 minutes"
+          
+        - name: "csrf_lab"
+          title: "Cross-Site Request Forgery"
+          description: "Learn CSRF attacks and token-based protection"
+          difficulty: "intermediate"
+          estimated_time: "40 minutes"
+    
+    # Capture The Flag (CTF)
+    ctf:
+      enabled: true
+      difficulty_levels:
+        - "easy"
+        - "medium"
+        - "hard"
+        - "expert"
+      
+      categories:
+        - "web"
+        - "crypto"
+        - "forensics"
+        - "reverse_engineering"
+        - "pwn"
+      
+      # CTF platform integration
+      platform:
+        type: "internal"  # internal, ctfd, root-me
+        url: "http://ctf.cyberguard.local"
+        api_key: "your_ctf_api_key"
+    
+    # Gamification
+    gamification:
+      enabled: true
+      points_system:
+        complete_module: 100
+        pass_quiz: 50
+        complete_exercise: 25
+        find_vulnerability: 200
+        report_incident: 150
+      
+      badges:
+        - name: "security_novice"
+          threshold: 500
+          icon: "🥉"
+          
+        - name: "security_pro"
+          threshold: 2000
+          icon: "🥈"
+          
+        - name: "security_expert"
+          threshold: 5000
+          icon: "🥇"
+          
+        - name: "threat_hunter"
+          threshold: 10000
+          icon: "🏆"
+      
+      leaderboards:
+        enabled: true
+        reset_interval: "monthly"  # daily, weekly, monthly, quarterly
+        categories:
+          - "overall"
+          - "by_department"
+          - "by_skill_level"
+  
+  # Assessment and certification
+  assessment:
+    # Knowledge assessments
+    knowledge_assessments:
+      enabled: true
+      frequency: "quarterly"
+      passing_score: 70
+      retake_limit: 3
+      retake_delay_days: 7
+      
+      assessments:
+        - name: "security_fundamentals"
+          questions: 20
+          time_limit: 30  # minutes
+          required_for: ["all_developers"]
+          
+        - name: "secure_coding"
+          questions: 25
+          time_limit: 45
+          required_for: ["senior_developers", "tech_leads"]
+          
+        - name: "incident_response"
+          questions: 30
+          time_limit: 60
+          required_for: ["security_team", "devops"]
+    
+    # Skills assessment
+    skills_assessment:
+      enabled: true
+      methods:
+        - "code_review_exercise"
+        - "vulnerability_identification"
+        - "incident_response_simulation"
+        - "threat_modeling_exercise"
+      
+      evaluators:
+        - "automated"
+        - "peer_review"
+        - "security_team"
+    
+    # Certification
+    certification:
+      enabled: true
+      programs:
+        - name: "cyberguard_developer"
+          level: "foundational"
+          validity_months: 12
+          renewal_requirements: ["annual_assessment", "continuous_learning"]
+          
+        - name: "cyberguard_security_champion"
+          level: "intermediate"
+          validity_months: 18
+          renewal_requirements: ["advanced_training", "mentorship_hours"]
+          
+        - name: "cyberguard_security_expert"
+          level: "advanced"
+          validity_months: 24
+          renewal_requirements: ["research_publication", "conference_presentation"]
+  
+  # Personalized learning paths
+  learning_paths:
+    # Role-based paths
+    by_role:
+      developer:
+        required_modules: ["owasp_top_10", "secure_coding"]
+        recommended_modules: ["threat_hunting"]
+        target_certification: "cyberguard_developer"
+        
+      devops:
+        required_modules: ["incident_response", "secure_coding"]
+        recommended_modules: ["threat_hunting"]
+        target_certification: "cyberguard_security_champion"
+        
+      security_analyst:
+        required_modules: ["threat_hunting", "incident_response"]
+        recommended_modules: ["secure_coding"]
+        target_certification: "cyberguard_security_expert"
+        
+      manager:
+        required_modules: ["owasp_top_10"]
+        recommended_modules: ["incident_response"]
+        target_certification: "cyberguard_developer"
+    
+    # Skill-level based paths
+    by_skill_level:
+      beginner:
+        modules: ["owasp_top_10"]
+        prerequisites: []
+        next_level: "intermediate"
+        
+      intermediate:
+        modules: ["secure_coding", "incident_response"]
+        prerequisites: ["beginner"]
+        next_level: "advanced"
+        
+      advanced:
+        modules: ["threat_hunting"]
+        prerequisites: ["intermediate"]
+        next_level: "expert"
+        
+      expert:
+        modules: ["research_methods", "advanced_threats"]
+        prerequisites: ["advanced"]
+        next_level: "master"
+    
+    # Custom learning paths
+    custom:
+      enabled: true
+      max_modules: 10
+      min_duration_hours: 2
+      max_duration_hours: 40
+
+# ----------------------------------------------------------------------------
+# AGENT PERFORMANCE METRICS
+# ----------------------------------------------------------------------------
+agent_metrics:
+  # Metrics collection
+  collection:
+    enabled: true
+    interval: 60  # seconds
+    retention_days: 90
+    
+    # Metrics to collect
+    metrics:
+      - "response_time"
+      - "accuracy"
+      - "precision"
+      - "recall"
+      - "f1_score"
+      - "false_positives"
+      - "false_negatives"
+      - "confidence_scores"
+      - "memory_usage"
+      - "cpu_usage"
+      - "processing_time"
+  
+  # Performance thresholds
+  thresholds:
+    # Response time thresholds (milliseconds)
+    response_time:
+      excellent: 100
+      good: 500
+      acceptable: 1000
+      poor: 2000
+      critical: 5000
+    
+    # Accuracy thresholds
+    accuracy:
+      excellent: 0.95
+      good: 0.85
+      acceptable: 0.70
+      poor: 0.50
+      critical: 0.30
+    
+    # Resource usage thresholds
+    resource_usage:
+      memory_mb:
+        warning: 512
+        critical: 1024
+        
+      cpu_percent:
+        warning: 70
+        critical: 90
+        
+      disk_mb:
+        warning: 1024
+        critical: 2048
+  
+  # Alerting based on metrics
+  alerting:
+    enabled: true
+    conditions:
+      - metric: "response_time"
+        condition: "> 2000"
+        severity: "warning"
+        action: "investigate_slowdown"
+        
+      - metric: "accuracy"
+        condition: "< 0.70"
+        severity: "critical"
+        action: "retrain_agent"
+        
+      - metric: "memory_usage"
+        condition: "> 1024"
+        severity: "warning"
+        action: "optimize_memory"
+        
+      - metric: "false_positives"
+        condition: "> 10 PER HOUR"
+        severity: "warning"
+        action: "adjust_thresholds"
+  
+  # Performance optimization
+  optimization:
+    # Auto-tuning
+    auto_tuning:
+      enabled: true
+      parameters:
+        - "confidence_thresholds"
+        - "detection_sensitivity"
+        - "cache_size"
+        - "batch_size"
+      
+      # Tuning interval
+      interval: 86400  # seconds (24 hours)
+      
+      # Optimization objective
+      objective: "maximize_f1_score"
+      constraints:
+        - "response_time < 1000"
+        - "memory_usage < 512"
+        - "false_positives < 5"
+    
+    # Load balancing
+    load_balancing:
+      enabled: true
+      strategy: "round_robin"  # round_robin, least_connections, ip_hash
+      health_check_interval: 30
+      failover: true
+      backup_agents: 2
+    
+    # Resource management
+    resource_management:
+      enabled: true
+      limits:
+        cpu_percent: 80
+        memory_mb: 1024
+        disk_mb: 2048
+        network_mbps: 100
+      
+      # Auto-scaling
+      auto_scaling:
+        enabled: true
+        min_instances: 1
+        max_instances: 10
+        scale_up_threshold: 70  # % utilization
+        scale_down_threshold: 30  # % utilization
+        cooldown_seconds: 300
+
+# ----------------------------------------------------------------------------
+# AGENT COMMUNICATION PROTOCOL
+# ----------------------------------------------------------------------------
+agent_communication:
+  # Communication protocol
+  protocol:
+    type: "grpc"  # grpc, zeromq, rabbitmq, redis
+    encoding: "protobuf"  # protobuf, json, msgpack
+    compression: "gzip"  # gzip, lz4, snappy, none
+    
+    # Timeouts
+    timeouts:
+      connect: 5  # seconds
+      read: 30
+      write: 30
+      heartbeat: 10
+    
+    # Retry policy
+    retry:
+      enabled: true
+      max_attempts: 3
+      backoff_factor: 2.0
+      max_delay: 60  # seconds
+  
+  # Message formats
+  messages:
+    # Analysis request
+    analysis_request:
+      fields:
+        - "request_id"
+        - "timestamp"
+        - "agent_id"
+        - "data_type"
+        - "data"
+        - "priority"
+        - "deadline"
+        - "metadata"
+    
+    # Analysis response
+    analysis_response:
+      fields:
+        - "request_id"
+        - "timestamp"
+        - "agent_id"
+        - "findings"
+        - "confidence"
+        - "threat_level"
+        - "evidence"
+        - "recommendations"
+        - "processing_time"
+    
+    # Coordination messages
+    coordination:
+      types:
+        - "state_update"
+        - "vote_request"
+        - "vote_response"
+        - "consensus_proposal"
+        - "consensus_agreement"
+        - "task_assignment"
+        - "task_completion"
+    
+    # Error messages
+    errors:
+      types:
+        - "timeout"
+        - "invalid_data"
+        - "resource_exhausted"
+        - "agent_unavailable"
+        - "protocol_error"
+        - "authentication_failed"
+  
+  # Security
+  security:
+    # Authentication
+    authentication:
+      enabled: true
+      method: "mtls"  # mtls, jwt, api_key
+      certificate_authority: "config/ca.crt"
+      client_certificate: "config/client.crt"
+      client_key: "config/client.key"
+    
+    # Encryption
+    encryption:
+      enabled: true
+      algorithm: "AES-256-GCM"
+      key_exchange: "ECDHE"
+      perfect_forward_secrecy: true
+    
+    # Authorization
+    authorization:
+      enabled: true
+      policy_file: "config/authorization_policy.json"
+      cache_ttl: 300  # seconds
+    
+    # Audit logging
+    audit:
+      enabled: true
+      log_all_messages: false
+      sensitive_fields: ["data", "findings", "evidence"]
+      retention_days: 90
+
+# ----------------------------------------------------------------------------
+# AGENT PERSISTENCE & STATE MANAGEMENT
+# ----------------------------------------------------------------------------
+agent_persistence:
+  # State persistence
+  state:
+    # What to persist
+    persist:
+      - "agent_configuration"
+      - "learning_models"
+      - "detection_rules"
+      - "performance_metrics"
+      - "analysis_history"
+      - "coordination_state"
+    
+    # Persistence interval
+    interval: 300  # seconds
+    
+    # Storage backend
+    backend: "redis"  # redis, postgresql, filesystem
+    connection_string: "redis://localhost:6379/0"
+    
+    # Compression
+    compression: true
+    algorithm: "lz4"
+    
+    # Encryption
+    encryption: true
+    key: "env:AGENT_PERSISTENCE_KEY"
+  
+  # State recovery
+  recovery:
+    # Auto-recovery on startup
+    auto_recover: true
+    
+    # Recovery methods
+    methods:
+      - "from_persistence_store"
+      - "from_backup"
+      - "from_peer"
+    
+    # Recovery priority
+    priority: ["from_peer", "from_persistence_store", "from_backup"]
+    
+    # Maximum recovery time
+    max_recovery_time: 300  # seconds
+    
+    # State validation
+    validation:
+      enabled: true
+      checksum_algorithm: "sha256"
+      validate_on_load: true
+      validate_on_save: true
+  
+  # State synchronization
+  synchronization:
+    # Peer-to-peer sync
+    peer_sync:
+      enabled: true
+      sync_interval: 60  # seconds
+      sync_method: "gossip"  # gossip, raft, paxos
+      
+      # Conflict resolution
+      conflict_resolution: "last_write_wins"  # last_write_wins, custom, manual
+      custom_resolver: "agent_state_resolver.resolve_conflict"
+    
+    # Leader election
+    leader_election:
+      enabled: true
+      algorithm: "raft"  # raft, bully, ring
+      election_timeout: 150  # milliseconds
+      heartbeat_interval: 50  # milliseconds
+    
+    # Consensus
+    consensus:
+      enabled: true
+      required_quorum: 0.5  # 50% of agents
+      timeout: 5000  # milliseconds
+      retry_attempts: 3
+
+# ----------------------------------------------------------------------------
+# AGENT DEPLOYMENT CONFIGURATION
+# ----------------------------------------------------------------------------
+agent_deployment:
+  # Deployment mode
+  mode: "container"  # container, process, serverless
+  
+  # Container deployment (Docker)
+  container:
+    image: "cyberguard/agent:latest"
+    runtime: "docker"  # docker, containerd, podman
+    
+    # Resource limits
+    resources:
+      cpu: "1.0"
+      memory: "1G"
+      memory_reservation: "512M"
+      memory_swap: "2G"
+    
+    # Networking
+    network:
+      mode: "host"  # host, bridge, none
+      ports:
+        - "8080:8080"
+      
+      # DNS configuration
+      dns:
+        - "8.8.8.8"
+        - "8.8.4.4"
+    
+    # Volumes
+    volumes:
+      - "/etc/cyberguard:/config:ro"
+      - "/var/log/cyberguard:/logs"
+      - "/var/lib/cyberguard:/data"
+    
+    # Environment variables
+    environment:
+      - "AGENT_ID=${AGENT_ID}"
+      - "AGENT_TYPE=${AGENT_TYPE}"
+      - "LOG_LEVEL=INFO"
+      - "CONFIG_PATH=/config"
+    
+    # Health checks
+    healthcheck:
+      test: ["CMD", "python", "-c", "import agent; agent.health_check()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+  
+  # Process deployment
+  process:
+    # Process management
+    supervisor: "systemd"  # systemd, supervisord, upstart
+    
+    # Systemd service configuration
+    systemd:
+      service_file: "/etc/systemd/system/cyberguard-agent.service"
+      user: "cyberguard"
+      group: "cyberguard"
+      working_directory: "/opt/cyberguard"
+      environment_file: "/etc/cyberguard/agent.env"
+      
+      # Service dependencies
+      after:
+        - "network.target"
+        - "redis.service"
+        - "postgresql.service"
+      
+      requires:
+        - "redis.service"
+        - "postgresql.service"
+    
+    # Process limits
+    limits:
+      nofile: 65536
+      nproc: 4096
+      memlock: unlimited
+      core: unlimited
+  
+  # Serverless deployment (AWS Lambda, Azure Functions, etc.)
+  serverless:
+    platform: "aws_lambda"  # aws_lambda, azure_functions, google_cloud_functions
+    
+    # AWS Lambda configuration
+    aws_lambda:
+      runtime: "python3.10"
+      handler: "agent.handler.lambda_handler"
+      memory_size: 1024
+      timeout: 300
+      concurrency: 100
+      
+      # VPC configuration
+      vpc_config:
+        subnet_ids:
+          - "subnet-123456"
+          - "subnet-789012"
+        security_group_ids:
+          - "sg-123456"
+      
+      # Environment variables
+      environment:
+        variables:
+          AGENT_ID: "${AGENT_ID}"
+          CONFIG_BUCKET: "cyberguard-config"
+          LOG_GROUP: "/aws/lambda/cyberguard-agent"
+    
+    # Event sources
+    event_sources:
+      - type: "api_gateway"
+        methods: ["POST"]
+        path: "/analyze"
+        
+      - type: "s3"
+        bucket: "cyberguard-input"
+        events: ["s3:ObjectCreated:*"]
+        
+      - type: "sqs"
+        queue: "cyberguard-queue"
+        batch_size: 10
+  
+  # Auto-scaling configuration
+  auto_scaling:
+    enabled: true
+    
+    # Scaling metrics
+    metrics:
+      - type: "cpu_utilization"
+        target: 70
+        scale_in_cooldown: 300
+        scale_out_cooldown: 60
+      
+      - type: "memory_utilization"
+        target: 80
+        scale_in_cooldown: 300
+        scale_out_cooldown: 60
+      
+      - type: "request_count"
+        target: 1000  # requests per minute
+        scale_in_cooldown: 300
+        scale_out_cooldown: 60
+    
+    # Scaling policies
+    policies:
+      - type: "target_tracking"
+        metric: "cpu_utilization"
+        target_value: 70
+        
+      - type: "step_scaling"
+        adjustments:
+          - metric_interval_lower_bound: 0
+            metric_interval_upper_bound: 10
+            scaling_adjustment: -1
+          
+          - metric_interval_lower_bound: 50
+            metric_interval_upper_bound: 70
+            scaling_adjustment: 1
+          
+          - metric_interval_lower_bound: 70
+            scaling_adjustment: 2
+  
+  # Monitoring and logging
+  monitoring:
+    # Log aggregation
+    logs:
+      driver: "json-file"  # json-file, syslog, journald, awslogs, gelf
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "cyberguard-agent"
+    
+    # Metrics collection
+    metrics:
+      endpoint: "0.0.0.0:9090"
+      path: "/metrics"
+      interval: 15s
+      
+      # Custom metrics
+      custom_metrics:
+        - name: "agent_requests_total"
+          type: "counter"
+          help: "Total number of requests processed"
+          
+        - name: "agent_processing_seconds"
+          type: "histogram"
+          help: "Time spent processing requests"
+          buckets: [0.1, 0.5, 1.0, 2.0, 5.0]
+    
+    # Distributed tracing
+    tracing:
+      enabled: true
+      provider: "jaeger"  # jaeger, zipkin, datadog
+      endpoint: "http://jaeger:14268/api/traces"
+      sampling_rate: 0.1  # 10% of requests
+
+# ============================================================================
+# END OF AGENT CONFIGURATION
+# ============================================================================

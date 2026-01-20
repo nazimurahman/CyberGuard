@@ -1,0 +1,1189 @@
+# config/enterprise_config.yaml
+# ============================================================================
+# CYBERGUARD ENTERPRISE CONFIGURATION
+# ============================================================================
+# This is the main configuration file for the CyberGuard Web Security AI System.
+# It defines global settings, system parameters, and deployment configurations.
+# All values can be overridden by environment variables with prefix "CG_"
+# Example: CG_SYSTEM_ENVIRONMENT=staging
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# SYSTEM IDENTITY & METADATA
+# ----------------------------------------------------------------------------
+system:
+  # Unique identifier for this CyberGuard deployment
+  deployment_id: "cyberguard-prod-001"
+  
+  # Human-readable system name
+  name: "CyberGuard Web Security AI System"
+  
+  # Version following semantic versioning (MAJOR.MINOR.PATCH)
+  version: "1.0.0"
+  
+  # Deployment environment: development, staging, production
+  environment: "production"
+  
+  # Organization name for compliance reporting
+  organization: "SecureCorp Inc."
+  
+  # Contact email for security incidents
+  security_contact: "security@securecorp.com"
+  
+  # License information
+  license: "Enterprise Security License v2.0"
+  
+  # Data retention policy (in days)
+  data_retention_days: 365
+
+# ----------------------------------------------------------------------------
+# SECURITY & COMPLIANCE SETTINGS
+# ----------------------------------------------------------------------------
+security:
+  # Zero-trust architecture settings
+  zero_trust:
+    # Enable mutual TLS for all internal communications
+    enable_mtls: true
+    
+    # Require authentication for all API endpoints
+    require_auth_for_all_endpoints: true
+    
+    # Default deny policy (whitelist approach)
+    default_deny: true
+  
+  # Encryption settings
+  encryption:
+    # Default encryption algorithm for data at rest
+    algorithm: "AES-256-GCM"
+    
+    # Key rotation interval in days
+    key_rotation_days: 30
+    
+    # Enable hardware security module (HSM) integration
+    enable_hsm: false
+    
+    # HSM provider (if enabled): aws_kms, azure_keyvault, gcp_kms, hashicorp_vault
+    hsm_provider: "hashicorp_vault"
+  
+  # Compliance frameworks to enforce
+  compliance:
+    - "GDPR"           # General Data Protection Regulation
+    - "HIPAA"          # Health Insurance Portability and Accountability Act
+    - "PCI-DSS"        # Payment Card Industry Data Security Standard
+    - "SOC2"           # Service Organization Control 2
+    - "ISO-27001"      # Information Security Management Standard
+    - "NIST-CSF"       # National Institute of Standards and Technology Cybersecurity Framework
+  
+  # Privacy settings
+  privacy:
+    # Enable data anonymization for logs and analytics
+    anonymize_sensitive_data: true
+    
+    # Data minimization: only collect necessary data
+    data_minimization: true
+    
+    # User consent requirement for data processing
+    require_user_consent: true
+    
+    # Right to be forgotten (GDPR compliance)
+    enable_right_to_be_forgotten: true
+
+# ----------------------------------------------------------------------------
+# WEB SECURITY SCANNING CONFIGURATION
+# ----------------------------------------------------------------------------
+web_security:
+  # Scanning depth and intensity
+  scanning:
+    # Maximum depth to follow links (prevents infinite crawling)
+    max_scan_depth: 3
+    
+    # Maximum pages to scan per website
+    max_pages_per_scan: 100
+    
+    # Timeout for individual HTTP requests (seconds)
+    request_timeout: 10
+    
+    # Timeout for entire scan (minutes)
+    scan_timeout: 30
+    
+    # Rate limiting: requests per second
+    requests_per_second: 5
+    
+    # Respect robots.txt directives
+    respect_robots_txt: true
+    
+    # User agent string for scanning
+    user_agent: "CyberGuard-Security-Scanner/1.0 (+https://cyberguard.example.com)"
+  
+  # Vulnerability detection settings
+  vulnerabilities:
+    # OWASP Top-10 categories to scan for
+    owasp_top_10:
+      A01: "Broken Access Control"
+      A02: "Cryptographic Failures"
+      A03: "Injection"
+      A04: "Insecure Design"
+      A05: "Security Misconfiguration"
+      A06: "Vulnerable and Outdated Components"
+      A07: "Identification and Authentication Failures"
+      A08: "Software and Data Integrity Failures"
+      A09: "Security Logging and Monitoring Failures"
+      A10: "Server-Side Request Forgery"
+    
+    # Enable specific vulnerability detection modules
+    enable_detection:
+      xss: true           # Cross-Site Scripting
+      sqli: true          # SQL Injection
+      csrf: true          # Cross-Site Request Forgery
+      ssrf: true          # Server-Side Request Forgery
+      rce: true           # Remote Code Execution
+      lfi: true           # Local File Inclusion
+      rfi: true           # Remote File Inclusion
+      xxe: true           # XML External Entity
+      idor: true          # Insecure Direct Object Reference
+      path_traversal: true # Directory Traversal
+      command_injection: true
+      deserialization: true
+    
+    # Severity thresholds for reporting
+    severity_thresholds:
+      critical: 9.0    # CVSS score >= 9.0
+      high: 7.0        # CVSS score >= 7.0
+      medium: 4.0      # CVSS score >= 4.0
+      low: 0.1         # CVSS score >= 0.1
+      info: 0.0        # Informational findings
+  
+  # API security scanning
+  api_security:
+    # Enable API endpoint discovery
+    enable_api_discovery: true
+    
+    # Automatically test discovered APIs
+    auto_test_discovered_apis: true
+    
+    # Common API security tests
+    api_tests:
+      - "broken_object_level_authorization"
+      - "broken_user_authentication"
+      - "excessive_data_exposure"
+      - "lack_of_resources_rate_limiting"
+      - "broken_function_level_authorization"
+      - "mass_assignment"
+      - "security_misconfiguration"
+      - "injection"
+    
+    # Rate limiting tests
+    rate_limiting:
+      # Test for rate limiting vulnerabilities
+      test_rate_limiting: true
+      
+      # Number of requests to test with
+      test_requests: 100
+      
+      # Time window for rate limiting test (seconds)
+      time_window: 60
+
+# ----------------------------------------------------------------------------
+# AI MODEL & INFERENCE CONFIGURATION
+# ----------------------------------------------------------------------------
+ai:
+  # GQA (Grouped Query Attention) Transformer settings
+  gqa_transformer:
+    # Model architecture parameters
+    d_model: 512               # Dimension of model embeddings
+    n_layers: 6                # Number of transformer layers
+    n_heads: 8                 # Number of attention heads
+    n_groups: 2                # Number of KV head groups (GQA)
+    d_ff: 2048                 # Feed-forward network dimension
+    dropout: 0.1               # Dropout rate for regularization
+    activation: "gelu"         # Activation function
+    
+    # Sequence processing
+    max_sequence_length: 2048  # Maximum tokens per sequence
+    vocab_size: 50257          # Vocabulary size (GPT-2 compatible)
+    
+    # Positional encoding
+    positional_encoding: "rope" # rotary (RoPE) or sinusoidal
+    
+    # Attention optimization
+    use_flash_attention: true  # Use Flash Attention for speed
+    use_mixed_precision: true  # Use mixed precision (FP16) for training
+    
+    # KV cache optimization
+    enable_kv_cache: true      # Enable KV caching for inference
+    kv_cache_max_tokens: 8192  # Maximum tokens to cache
+  
+  # Threat classification model
+  threat_classifier:
+    # Number of threat categories to classify
+    num_classes: 50
+    
+    # Confidence thresholds for classification
+    confidence_thresholds:
+      certain: 0.9     # >90% confidence
+      high: 0.7        # >70% confidence
+      medium: 0.5      # >50% confidence
+      low: 0.3         # >30% confidence
+    
+    # Enable explainable AI (XAI)
+    enable_explainability: true
+    
+    # XAI methods to use
+    xai_methods:
+      - "attention_visualization"
+      - "feature_importance"
+      - "counterfactual_explanation"
+      - "lime"
+      - "shap"
+  
+  # Inference settings
+  inference:
+    # Batch size for inference
+    batch_size: 32
+    
+    # Maximum tokens to generate
+    max_new_tokens: 512
+    
+    # Sampling temperature (0.0 = deterministic, 1.0 = creative)
+    temperature: 0.7
+    
+    # Top-p (nucleus) sampling
+    top_p: 0.95
+    
+    # Top-k sampling
+    top_k: 50
+    
+    # Repetition penalty
+    repetition_penalty: 1.2
+    
+    # Length penalty
+    length_penalty: 1.0
+
+# ----------------------------------------------------------------------------
+# MULTI-AGENT SYSTEM CONFIGURATION
+# ----------------------------------------------------------------------------
+agents:
+  # General agent settings
+  general:
+    # Maximum number of concurrent agents
+    max_concurrent_agents: 10
+    
+    # Agent timeout in seconds
+    agent_timeout_seconds: 300
+    
+    # Memory size per agent (in tokens/entries)
+    agent_memory_size: 1000
+    
+    # Communication buffer size
+    communication_buffer_size: 1000
+    
+    # Enable agent persistence (save/load state)
+    enable_persistence: true
+    
+    # Persistence interval in minutes
+    persistence_interval_minutes: 5
+  
+  # Individual agent configurations
+  web_threat_detection:
+    # Confidence weight in ensemble voting
+    weight: 1.0
+    
+    # Enable/disable this agent
+    enabled: true
+    
+    # Specialized configurations
+    specializations:
+      - "xss_detection"
+      - "sqli_detection"
+      - "csrf_detection"
+      - "ssrf_detection"
+      - "command_injection"
+    
+    # Detection thresholds
+    thresholds:
+      xss_confidence: 0.7
+      sqli_confidence: 0.8
+      csrf_confidence: 0.6
+  
+  traffic_anomaly:
+    weight: 0.9
+    enabled: true
+    window_size: 100
+    anomaly_threshold: 3.0
+    enable_autoencoder: true
+  
+  bot_detection:
+    weight: 0.8
+    enabled: true
+    rate_limit_threshold: 100
+    enable_behavioral_analysis: true
+    bot_signatures_file: "config/bot_signatures.json"
+  
+  malware_payload:
+    weight: 0.85
+    enabled: true
+    yara_rules_file: "config/yara_rules.yar"
+    enable_heuristic_analysis: true
+    enable_sandboxing: false  # Requires Docker isolation
+  
+  exploit_chain_reasoning:
+    weight: 0.95
+    enabled: true
+    max_chain_length: 5
+    enable_attack_graph: true
+  
+  digital_forensics:
+    weight: 0.7
+    enabled: true
+    evidence_retention_days: 90
+    enable_timeline_analysis: true
+  
+  incident_response:
+    weight: 1.0
+    enabled: true
+    auto_response_enabled: true
+    escalation_threshold: 0.8
+    response_playbooks:
+      - "data_breach"
+      - "ransomware"
+      - "ddos"
+      - "insider_threat"
+  
+  compliance_privacy:
+    weight: 0.6
+    enabled: true
+    compliance_frameworks:
+      - "GDPR"
+      - "HIPAA"
+      - "PCI-DSS"
+      - "CCPA"
+    privacy_check_interval: 3600  # seconds
+  
+  secure_code_review:
+    weight: 0.75
+    enabled: true
+    languages:
+      - "python"
+      - "javascript"
+      - "java"
+      - "php"
+      - "go"
+    security_rules: "config/security_rules.yaml"
+  
+  threat_education:
+    weight: 0.5
+    enabled: true
+    enable_interactive_learning: true
+    learning_modules:
+      - "owasp_top_10"
+      - "secure_coding"
+      - "incident_response"
+      - "threat_hunting"
+
+# ----------------------------------------------------------------------------
+# MHC (MANIFOLD-CONSTRAINED HYPER-CONNECTIONS) CONFIGURATION
+# ----------------------------------------------------------------------------
+mhc:
+  # Core MHC parameters
+  core:
+    # State dimension for manifold representation
+    state_dimension: 512
+    
+    # Temperature for attention smoothing
+    temperature: 1.0
+    
+    # Number of Sinkhorn iterations for doubly-stochastic normalization
+    sinkhorn_iterations: 50
+    
+    # Small epsilon for numerical stability
+    epsilon: 1e-8
+    
+    # Signal bound to prevent explosion
+    signal_bound: 1.0
+    
+    # Identity preservation factor
+    identity_preserve_factor: 0.1
+  
+  # Coordination strategies
+  coordination:
+    # Strategy for agent coordination
+    strategy: "residual_coordination"  # Options: residual, attention, ensemble
+    
+    # Enable convex state mixing
+    enable_convex_mixing: true
+    
+    # Enable doubly-stochastic normalization
+    enable_doubly_stochastic: true
+    
+    # Enable non-expansive updates
+    enable_non_expansive_updates: true
+    
+    # Enable identity-preserving mappings
+    enable_identity_preservation: true
+  
+  # Stability enforcement
+  stability:
+    # Maximum allowed signal growth per step
+    max_signal_growth: 1.1
+    
+    # Minimum agent contribution (prevents starvation)
+    min_agent_contribution: 0.05
+    
+    # Maximum agent dominance (prevents takeover)
+    max_agent_dominance: 0.7
+    
+    # Enable gradient clipping
+    enable_gradient_clipping: true
+    
+    # Gradient clipping norm
+    gradient_clip_norm: 1.0
+  
+  # Performance optimization
+  performance:
+    # Enable caching for Sinkhorn iterations
+    enable_caching: true
+    
+    # Cache size for manifold states
+    cache_size: 1000
+    
+    # Enable parallel processing
+    enable_parallel_processing: true
+    
+    # Number of parallel workers
+    num_workers: 4
+
+# ----------------------------------------------------------------------------
+# DATA INGESTION & THREAT INTELLIGENCE
+# ----------------------------------------------------------------------------
+data:
+  # Threat intelligence feeds
+  threat_intelligence:
+    # CVE feeds
+    cve_feeds:
+      - "https://cve.mitre.org/data/downloads/allitems.csv"
+      - "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-%Y.json.gz"
+      - "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    
+    # Exploit databases
+    exploit_feeds:
+      - "https://raw.githubusercontent.com/vulnersCom/vulners-whitelist/master/exploitdb.csv"
+      - "https://www.exploit-db.com/feeds/exploits"
+    
+    # Malware feeds
+    malware_feeds:
+      - "https://feodotracker.abuse.ch/downloads/ipblocklist.csv"
+      - "https://malshare.com/daily/malshare.current.txt"
+      - "https://urlhaus.abuse.ch/downloads/csv_recent/"
+    
+    # Phishing feeds
+    phishing_feeds:
+      - "https://openphish.com/feed.txt"
+      - "https://phishing.army/download/phishing_army_blocklist.txt"
+    
+    # Update intervals (in minutes)
+    update_intervals:
+      cve_feeds: 360    # 6 hours
+      exploit_feeds: 60  # 1 hour
+      malware_feeds: 30  # 30 minutes
+      phishing_feeds: 15 # 15 minutes
+  
+  # Data validation and security
+  validation:
+    # Enable hash validation for downloaded feeds
+    enable_hash_validation: true
+    
+    # Enable TLS certificate validation
+    enable_tls_validation: true
+    
+    # Enable signature verification
+    enable_signature_verification: true
+    
+    # Tamper detection threshold
+    tamper_detection_threshold: 0.95
+    
+    # Quarantine suspicious data
+    enable_quarantine: true
+    
+    # Quarantine duration (days)
+    quarantine_duration_days: 7
+  
+  # Data storage settings
+  storage:
+    # Database configuration
+    database:
+      # Primary database type
+      type: "postgresql"  # Options: postgresql, mysql, sqlite
+      
+      # Connection string (overridden by environment variable)
+      connection_string: "postgresql://user:pass@localhost:5432/cyberguard"
+      
+      # Connection pool settings
+      pool_size: 20
+      max_overflow: 10
+      pool_timeout: 30
+      pool_recycle: 3600
+    
+    # Vector database for embeddings
+    vector_database:
+      type: "chromadb"  # Options: chromadb, pinecone, weaviate
+      persist_directory: "./data/vectordb"
+      collection_name: "threat_embeddings"
+    
+    # Cache configuration
+    cache:
+      type: "redis"  # Options: redis, memcached
+      host: "localhost"
+      port: 6379
+      db: 0
+      ttl_seconds: 3600
+
+# ----------------------------------------------------------------------------
+# DEPLOYMENT & INFRASTRUCTURE
+# ----------------------------------------------------------------------------
+deployment:
+  # Web dashboard configuration
+  dashboard:
+    # Dashboard server settings
+    host: "0.0.0.0"
+    port: 8080
+    
+    # Enable HTTPS
+    enable_https: true
+    
+    # SSL certificate paths
+    ssl_cert: "./certs/cert.pem"
+    ssl_key: "./certs/key.pem"
+    
+    # Authentication required
+    auth_required: true
+    
+    # Session timeout (minutes)
+    session_timeout: 60
+    
+    # Rate limiting
+    rate_limit: "100/minute"
+    
+    # CORS settings
+    cors:
+      enabled: true
+      origins:
+        - "https://dashboard.cyberguard.example.com"
+        - "https://admin.cyberguard.example.com"
+      methods:
+        - "GET"
+        - "POST"
+        - "PUT"
+        - "DELETE"
+      headers:
+        - "Content-Type"
+        - "Authorization"
+  
+  # REST API configuration
+  api:
+    # API server settings
+    host: "0.0.0.0"
+    port: 8000
+    
+    # Enable HTTPS
+    enable_https: true
+    
+    # API version
+    version: "v1"
+    
+    # Authentication
+    authentication:
+      # Authentication methods
+      methods:
+        - "api_key"
+        - "jwt"
+        - "oauth2"
+      
+      # API key validation
+      api_key_header: "X-API-Key"
+      
+      # JWT settings
+      jwt_secret: "change_this_in_production"
+      jwt_algorithm: "HS256"
+      jwt_expiry_minutes: 60
+    
+    # Rate limiting
+    rate_limits:
+      anonymous: "10/minute"
+      authenticated: "100/minute"
+      premium: "1000/minute"
+    
+    # Documentation
+    enable_docs: true
+    docs_path: "/docs"
+    redoc_path: "/redoc"
+  
+  # Reverse proxy configuration
+  reverse_proxy:
+    # Enable reverse proxy mode
+    enabled: false
+    
+    # Proxy target
+    target: "http://localhost:3000"
+    
+    # Security headers to inject
+    security_headers:
+      X-Frame-Options: "DENY"
+      X-Content-Type-Options: "nosniff"
+      X-XSS-Protection: "1; mode=block"
+      Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+      Content-Security-Policy: "default-src 'self'"
+      Referrer-Policy: "strict-origin-when-cross-origin"
+    
+    # Request/response modification
+    modify_requests: true
+    modify_responses: true
+  
+  # Plugin system
+  plugins:
+    # Enable plugin system
+    enabled: true
+    
+    # Plugin directory
+    plugin_directory: "./plugins"
+    
+    # Auto-load plugins
+    auto_load: true
+    
+    # Plugin sandboxing
+    enable_sandboxing: true
+    
+    # Allowed plugin permissions
+    allowed_permissions:
+      - "read_config"
+      - "write_logs"
+      - "scan_network"
+      - "analyze_traffic"
+
+# ----------------------------------------------------------------------------
+# LOGGING & MONITORING
+# ----------------------------------------------------------------------------
+monitoring:
+  # Logging configuration
+  logging:
+    # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    level: "INFO"
+    
+    # Log format
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    # Date format in logs
+    date_format: "%Y-%m-%d %H:%M:%S"
+    
+    # Log destinations
+    destinations:
+      console:
+        enabled: true
+        format: "color"  # color, plain
+        
+      file:
+        enabled: true
+        path: "./logs/cyberguard.log"
+        max_size: "100MB"
+        backup_count: 10
+        rotation: "midnight"
+        
+      syslog:
+        enabled: false
+        address: "/dev/log"
+        facility: "local7"
+        
+      elasticsearch:
+        enabled: false
+        hosts: ["http://localhost:9200"]
+        index: "cyberguard-logs"
+    
+    # Structured logging
+    structured_logging: true
+    
+    # Log sensitive data (caution!)
+    log_sensitive_data: false
+    
+    # Log sanitization patterns
+    sanitization_patterns:
+      - pattern: "(?i)password[=:]\s*(\S+)"
+        replacement: "password=***"
+      - pattern: "(?i)api_key[=:]\s*(\S+)"
+        replacement: "api_key=***"
+      - pattern: "(?i)token[=:]\s*(\S+)"
+        replacement: "token=***"
+  
+  # Metrics collection
+  metrics:
+    # Enable metrics collection
+    enabled: true
+    
+    # Metrics collection interval (seconds)
+    collection_interval: 60
+    
+    # Export metrics to
+    exporters:
+      prometheus:
+        enabled: true
+        port: 9090
+        
+      statsd:
+        enabled: false
+        host: "localhost"
+        port: 8125
+        
+      datadog:
+        enabled: false
+        api_key: "your_datadog_api_key"
+    
+    # Custom metrics to collect
+    custom_metrics:
+      - "requests_total"
+      - "requests_duration_seconds"
+      - "threats_detected_total"
+      - "false_positives_total"
+      - "agent_confidence_avg"
+      - "scan_duration_seconds"
+      - "memory_usage_bytes"
+      - "cpu_usage_percent"
+  
+  # Alerting configuration
+  alerting:
+    # Enable alerting
+    enabled: true
+    
+    # Alert channels
+    channels:
+      email:
+        enabled: true
+        smtp_server: "smtp.gmail.com"
+        smtp_port: 587
+        from_address: "alerts@cyberguard.example.com"
+        to_addresses:
+          - "security-team@securecorp.com"
+          - "oncall@securecorp.com"
+      
+      slack:
+        enabled: false
+        webhook_url: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+        channel: "#security-alerts"
+      
+      pagerduty:
+        enabled: false
+        integration_key: "your_pagerduty_key"
+        severity_levels:
+          critical: "critical"
+          high: "error"
+          medium: "warning"
+          low: "info"
+    
+    # Alert conditions
+    conditions:
+      - name: "critical_threat_detected"
+        condition: "threat_level > 0.8 AND confidence > 0.7"
+        severity: "critical"
+        channel: "email"
+        
+      - name: "multiple_high_threats"
+        condition: "threats_detected > 5 IN LAST 5 minutes"
+        severity: "high"
+        channel: "slack"
+        
+      - name: "system_high_load"
+        condition: "cpu_usage > 80% FOR 5 minutes"
+        severity: "medium"
+        channel: "email"
+        
+      - name: "agent_failure"
+        condition: "agent_status == 'failed'"
+        severity: "high"
+        channel: "pagerduty"
+  
+  # Health checks
+  health_checks:
+    # Enable health checks
+    enabled: true
+    
+    # Health check interval (seconds)
+    interval: 30
+    
+    # Health check endpoints
+    endpoints:
+      - name: "api_health"
+        url: "http://localhost:8000/health"
+        timeout: 5
+        expected_status: 200
+        
+      - name: "database_health"
+        query: "SELECT 1"
+        timeout: 2
+        
+      - name: "agent_orchestrator_health"
+        check: "agent_count > 0"
+        timeout: 3
+    
+    # Failure thresholds
+    failure_threshold: 3
+    success_threshold: 2
+
+# ----------------------------------------------------------------------------
+# TRAINING & MODEL MANAGEMENT
+# ----------------------------------------------------------------------------
+training:
+  # Training data configuration
+  data:
+    # Training dataset paths
+    datasets:
+      threat_intelligence: "./data/training/threat_intelligence.csv"
+      vulnerability_data: "./data/training/vulnerabilities.json"
+      attack_patterns: "./data/training/attack_patterns.parquet"
+      normal_traffic: "./data/training/normal_traffic.pkl"
+    
+    # Data split ratios
+    split_ratios:
+      training: 0.7
+      validation: 0.15
+      test: 0.15
+    
+    # Data augmentation
+    augmentation:
+      enabled: true
+      techniques:
+        - "noise_injection"
+        - "synthetic_samples"
+        - "adversarial_examples"
+        - "time_series_augmentation"
+      
+      # Augmentation factor
+      factor: 2.0
+  
+  # Training hyperparameters
+  hyperparameters:
+    # Optimizer settings
+    optimizer:
+      type: "adamw"  # adam, adamw, sgd, rmsprop
+      learning_rate: 0.001
+      weight_decay: 0.01
+      beta1: 0.9
+      beta2: 0.999
+      epsilon: 1e-8
+    
+    # Scheduler settings
+    scheduler:
+      type: "cosine"  # cosine, linear, step, plateau
+      warmup_steps: 1000
+      total_steps: 100000
+      min_learning_rate: 1e-6
+    
+    # Batch settings
+    batch_size: 32
+    gradient_accumulation_steps: 1
+    max_grad_norm: 1.0
+    
+    # Training loop
+    epochs: 100
+    early_stopping_patience: 10
+    early_stopping_delta: 0.001
+    
+    # Mixed precision training
+    mixed_precision: true
+    amp_level: "O2"  # O0, O1, O2, O3
+  
+  # Model checkpointing
+  checkpointing:
+    # Enable checkpointing
+    enabled: true
+    
+    # Checkpoint directory
+    directory: "./models/checkpoints"
+    
+    # Save interval (steps)
+    save_interval_steps: 1000
+    
+    # Maximum checkpoints to keep
+    max_checkpoints: 5
+    
+    # Save best model only
+    save_best_only: true
+    
+    # Monitor metric for best model
+    monitor_metric: "val_loss"
+    monitor_mode: "min"  # min or max
+  
+  # Distributed training
+  distributed:
+    # Enable distributed training
+    enabled: false
+    
+    # Distributed backend
+    backend: "nccl"  # nccl, gloo, mpi
+    
+    # Number of nodes
+    num_nodes: 1
+    
+    # Number of GPUs per node
+    gpus_per_node: 4
+    
+    # Communication settings
+    master_addr: "localhost"
+    master_port: 29500
+    
+    # Gradient synchronization
+    sync_batchnorm: true
+
+# ----------------------------------------------------------------------------
+# PERFORMANCE & OPTIMIZATION
+# ----------------------------------------------------------------------------
+performance:
+  # Memory optimization
+  memory:
+    # Enable gradient checkpointing
+    gradient_checkpointing: true
+    
+    # Enable CPU offloading
+    cpu_offloading: false
+    
+    # Model parallelism
+    model_parallelism: false
+    
+    # Pipeline parallelism
+    pipeline_parallelism: false
+    
+    # Tensor parallelism
+    tensor_parallelism: false
+    
+    # Activation checkpointing
+    activation_checkpointing: true
+    
+    # Memory efficient attention
+    memory_efficient_attention: true
+  
+  # Inference optimization
+  inference:
+    # Enable model quantization
+    quantization:
+      enabled: true
+      dtype: "int8"  # int8, float16, bfloat16
+      per_channel: true
+      symmetric: true
+    
+    # Enable model pruning
+    pruning:
+      enabled: true
+      amount: 0.2  # 20% pruning
+      method: "magnitude"
+      frequency: 1000
+    
+    # Enable knowledge distillation
+    distillation:
+      enabled: true
+      temperature: 4.0
+      alpha: 0.5  # Balance between hard and soft targets
+    
+    # Inference engine
+    engine: "onnxruntime"  # pytorch, onnxruntime, tensorrt
+    provider: "CUDAExecutionProvider"  # CPU, CUDA, TensorRT
+    
+    # Batch inference settings
+    batch_inference: true
+    dynamic_batching: true
+    max_batch_size: 64
+    batch_timeout_ms: 100
+  
+  # Caching strategies
+  caching:
+    # Enable response caching
+    response_caching: true
+    
+    # Cache TTL (seconds)
+    cache_ttl: 3600
+    
+    # Cache backend
+    backend: "redis"  # redis, memcached, memory
+    
+    # Cache invalidation strategy
+    invalidation: "time_based"  # time_based, event_based
+    
+    # Cache warming
+    cache_warming: true
+    warming_interval: 300  # seconds
+
+# ----------------------------------------------------------------------------
+# BACKUP & DISASTER RECOVERY
+# ----------------------------------------------------------------------------
+backup:
+  # Backup configuration
+  configuration:
+    # Enable automated backups
+    enabled: true
+    
+    # Backup schedule (cron expression)
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    
+    # Retention policy (days)
+    retention_days: 30
+    
+    # Backup types to perform
+    types:
+      - "database"
+      - "configurations"
+      - "models"
+      - "logs"
+      - "threat_intelligence"
+    
+    # Compression
+    compression: "gzip"  # gzip, bzip2, lzma
+    compression_level: 6
+    
+    # Encryption
+    encryption: true
+    encryption_algorithm: "AES-256-GCM"
+  
+  # Storage locations
+  storage:
+    # Local storage
+    local:
+      enabled: true
+      directory: "./backups"
+      max_backups: 30
+    
+    # Cloud storage
+    cloud:
+      enabled: false
+      provider: "aws_s3"  # aws_s3, azure_blob, gcp_storage
+      bucket: "cyberguard-backups"
+      region: "us-east-1"
+      path: "backups/"
+    
+    # Remote server
+    remote:
+      enabled: false
+      protocol: "sftp"  # sftp, scp, rsync
+      host: "backup-server.example.com"
+      port: 22
+      path: "/backups/cyberguard/"
+  
+  # Recovery testing
+  recovery:
+    # Test recovery periodically
+    test_recovery: true
+    
+    # Test interval (days)
+    test_interval_days: 7
+    
+    # Test methods
+    methods:
+      - "integrity_check"
+      - "partial_restore"
+      - "full_restore_simulation"
+    
+    # Notification for recovery tests
+    notify_on_test: true
+
+# ----------------------------------------------------------------------------
+# INTEGRATIONS & THIRD-PARTY SERVICES
+# ----------------------------------------------------------------------------
+integrations:
+  # Security tools integration
+  security_tools:
+    # Web Application Firewall (WAF)
+    waf:
+      enabled: false
+      provider: "cloudflare"  # cloudflare, aws_waf, azure_waf
+      api_key: "your_waf_api_key"
+      zone_id: "your_zone_id"
+    
+    # SIEM integration
+    siem:
+      enabled: false
+      providers:
+        splunk:
+          enabled: false
+          host: "splunk.example.com"
+          port: 8088
+          token: "your_splunk_token"
+        
+        elastic_siem:
+          enabled: false
+          hosts: ["http://elasticsearch:9200"]
+          index: "security-events"
+    
+    # EDR integration
+    edr:
+      enabled: false
+      provider: "crowdstrike"  # crowdstrike, carbonblack, sentinelone
+      client_id: "your_client_id"
+      client_secret: "your_client_secret"
+  
+  # Cloud provider integrations
+  cloud:
+    aws:
+      enabled: false
+      access_key_id: "your_access_key"
+      secret_access_key: "your_secret_key"
+      region: "us-east-1"
+      services:
+        - "guardduty"
+        - "security_hub"
+        - "waf"
+    
+    azure:
+      enabled: false
+      tenant_id: "your_tenant_id"
+      client_id: "your_client_id"
+      client_secret: "your_client_secret"
+      subscription_id: "your_subscription_id"
+    
+    gcp:
+      enabled: false
+      project_id: "your_project_id"
+      credentials_file: "./gcp_credentials.json"
+      services:
+        - "security_command_center"
+        - "cloud_armor"
+  
+  # Communication integrations
+  communication:
+    # Email service
+    email:
+      enabled: true
+      provider: "smtp"  # smtp, sendgrid, mailgun
+      smtp_server: "smtp.gmail.com"
+      smtp_port: 587
+      use_tls: true
+      username: "noreply@cyberguard.example.com"
+      password: "your_email_password"
+    
+    # SMS notifications
+    sms:
+      enabled: false
+      provider: "twilio"  # twilio, nexmo, plivo
+      account_sid: "your_account_sid"
+      auth_token: "your_auth_token"
+      from_number: "+1234567890"
+    
+    # Voice notifications
+    voice:
+      enabled: false
+      provider: "twilio"
+      account_sid: "your_account_sid"
+      auth_token: "your_auth_token"
+      from_number: "+1234567890"
+
+# ----------------------------------------------------------------------------
+# ENVIRONMENT VARIABLE OVERRIDES
+# ----------------------------------------------------------------------------
+# Note: All configuration values can be overridden by environment variables.
+# The environment variable name is constructed as:
+# CG_<SECTION>_<SUBSECTION>_<KEY> (uppercase with underscores)
+#
+# Examples:
+#   CG_SYSTEM_ENVIRONMENT=staging
+#   CG_SECURITY_ENCRYPTION_ALGORITHM=AES-256-GCM
+#   CG_WEB_SECURITY_SCANNING_MAX_SCAN_DEPTH=5
+#
+# For nested values, use underscores to separate levels:
+#   CG_AGENTS_WEB_THREAT_DETECTION_WEIGHT=0.9
+#
+# For arrays/lists, use comma-separated values:
+#   CG_SECURITY_COMPLIANCE=GDPR,HIPAA,PCI-DSS
+# ============================================================================

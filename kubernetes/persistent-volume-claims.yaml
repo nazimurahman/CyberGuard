@@ -1,0 +1,94 @@
+# kubernetes/persistent-volume-claims.yaml
+---
+# Models PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyberguard-models-pvc
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: storage
+    type: models
+spec:
+  accessModes:
+  - ReadWriteMany  # Multiple pods can read/write
+  resources:
+    requests:
+      storage: 50Gi  # Size of storage
+  storageClassName: fast-ssd  # Storage class for performance
+  selector:
+    matchLabels:
+      type: fast-ssd
+---
+# Logs PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyberguard-logs-pvc
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: storage
+    type: logs
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi  # Larger for logs
+  storageClassName: standard
+---
+# Scans PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyberguard-scans-pvc
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: storage
+    type: scans
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 200Gi  # Large storage for scan results
+  storageClassName: fast-ssd
+---
+# Database PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyberguard-database-pvc
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: storage
+    type: database
+spec:
+  accessModes:
+  - ReadWriteOnce  # Single pod can write
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+---
+# Threat Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyberguard-threat-data-pvc
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: storage
+    type: threat-data
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard

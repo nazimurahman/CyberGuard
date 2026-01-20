@@ -1,0 +1,1211 @@
+# config/logging_config.yaml
+# ============================================================================
+# CYBERGUARD LOGGING CONFIGURATION
+# ============================================================================
+# Comprehensive logging configuration for the CyberGuard system
+# Includes structured logging, log rotation, and compliance logging
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# LOGGING ARCHITECTURE
+# ----------------------------------------------------------------------------
+logging_architecture:
+  # Logging framework
+  framework: "loguru"  # loguru, structlog, python_logging
+  
+  # Logging levels hierarchy
+  levels:
+    - name: "TRACE"
+      value: 5
+      description: "Detailed tracing information"
+      
+    - name: "DEBUG"
+      value: 10
+      description: "Debug information for development"
+      
+    - name: "INFO"
+      value: 20
+      description: "General operational information"
+      
+    - name: "SUCCESS"
+      value: 25
+      description: "Successful operations"
+      
+    - name: "WARNING"
+      value: 30
+      description: "Warning messages"
+      
+    - name: "ERROR"
+      value: 40
+      description: "Error conditions"
+      
+    - name: "CRITICAL"
+      value: 50
+      description: "Critical conditions requiring immediate attention"
+  
+  # Default log level
+  default_level: "INFO"
+  
+  # Module-specific log levels
+  module_levels:
+    "cyberguard.core": "INFO"
+    "cyberguard.agents": "DEBUG"
+    "cyberguard.web_security": "INFO"
+    "cyberguard.training": "WARNING"
+    "cyberguard.inference": "INFO"
+    "cyberguard.data_ingestion": "INFO"
+    "cyberguard.deployment": "INFO"
+    "cyberguard.ui": "WARNING"
+    "cyberguard.utils": "ERROR"
+
+# ----------------------------------------------------------------------------
+# LOG HANDLERS & SINKS
+# ----------------------------------------------------------------------------
+handlers:
+  # Console handler
+  console:
+    enabled: true
+    level: "INFO"
+    format: |
+      <green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> |
+      <level>{level: <8}</level> |
+      <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> |
+      <level>{message}</level>
+    colorize: true
+    
+    # Terminal detection
+    detect_terminal: true
+    force_colors: false
+    
+  # File handler (main log)
+  file:
+    enabled: true
+    level: "DEBUG"
+    sink: "./logs/cyberguard.log"
+    format: "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"
+    
+    # Rotation
+    rotation: "100 MB"
+    retention: "30 days"
+    compression: "gz"
+    
+    # File naming
+    naming: "time_based"  # time_based, size_based, fixed
+    time_format: "%Y%m%d_%H%M%S"
+    
+  # Error log file
+  error_file:
+    enabled: true
+    level: "ERROR"
+    sink: "./logs/errors.log"
+    format: "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message} | {extra}"
+    
+    # Rotation
+    rotation: "50 MB"
+    retention: "90 days"
+    compression: "gz"
+    
+  # Security log file
+  security_log:
+    enabled: true
+    level: "INFO"
+    sink: "./logs/security.log"
+    format: "SECURITY | {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {event} | {user} | {ip} | {action} | {result} | {details}"
+    
+    # Security-specific fields
+    security_fields:
+      - "event"
+      - "user"
+      - "ip"
+      - "action"
+      - "result"
+      - "details"
+      
+    # Immutable logging
+    immutable: true
+    append_only: true
+    permissions: "600"
+    
+    # Retention for compliance
+    retention: "365 days"  # GDPR requirement
+    
+  # Audit log file
+  audit_log:
+    enabled: true
+    level: "INFO"
+    sink: "./logs/audit.log"
+    format: "AUDIT | {time:YYYY-MM-DD HH:mm:ss.SSS} | {user} | {action} | {resource} | {status} | {reason} | {session_id}"
+    
+    # Audit-specific fields
+    audit_fields:
+      - "user"
+      - "action"
+      - "resource"
+      - "status"
+      - "reason"
+      - "session_id"
+      - "timestamp"
+      - "checksum"
+      
+    # Chain of custody
+    chain_of_custody:
+      enabled: true
+      hash_algorithm: "sha256"
+      hash_every: 100  # entries
+      previous_hash_field: "previous_hash"
+      
+    # Tamper detection
+    tamper_detection:
+      enabled: true
+      digital_signatures: true
+      signature_key: "env:AUDIT_SIGNATURE_KEY"
+      
+  # Performance log file
+  performance_log:
+    enabled: true
+    level: "INFO"
+    sink: "./logs/performance.log"
+    format: "PERF | {time:YYYY-MM-DD HH:mm:ss.SSS} | {metric} | {value} | {unit} | {tags}"
+    
+    # Performance metrics
+    metrics:
+      - "inference_latency"
+      - "memory_usage"
+      - "cpu_usage"
+      - "request_rate"
+      - "error_rate"
+      - "cache_hit_rate"
+      
+    # Aggregation
+    aggregation:
+      enabled: true
+      interval: "1 minute"
+      aggregates:
+        - "mean"
+        - "p95"
+        - "p99"
+        - "max"
+        - "min"
+        
+  # Structured JSON log (for ELK/Splunk)
+  json_log:
+    enabled: true
+    level: "INFO"
+    sink: "./logs/structured.json"
+    format: "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name} | {message} | {extra}"
+    serialize: true  # Output as JSON
+    
+    # JSON structure
+    json_structure:
+      timestamp: "{time:YYYY-MM-DD HH:mm:ss.SSS}"
+      level: "{level}"
+      logger: "{name}"
+      message: "{message}"
+      function: "{function}"
+      line: "{line}"
+      module: "{module}"
+      process: "{process}"
+      thread: "{thread}"
+      extra: "{extra}"
+      
+  # Syslog integration
+  syslog:
+    enabled: false
+    level: "WARNING"
+    address: "/dev/log"  # Unix socket
+    # address: ("loghost.example.com", 514)  # UDP
+    # address: ("loghost.example.com", 514, socktype=socket.SOCK_STREAM)  # TCP
+    
+    # Syslog facility
+    facility: "local7"
+    
+    # Syslog format
+    syslog_format: "{time:YYYY-MM-DD HH:mm:ss.SSS} {hostname} {name}[{process}]: {level}: {message}"
+    
+  # External log services
+  external:
+    # Datadog
+    datadog:
+      enabled: false
+      level: "INFO"
+      api_key: "env:DATADOG_API_KEY"
+      service: "cyberguard"
+      env: "production"
+      
+    # LogDNA
+    logdna:
+      enabled: false
+      level: "INFO"
+      ingestion_key: "env:LOGDNA_INGESTION_KEY"
+      hostname: "{hostname}"
+      app: "cyberguard"
+      
+    # Papertrail
+    pa
+
+Now I'll continue with the remaining logging configuration:
+
+```yaml
+    # Papertrail
+    papertrail:
+      enabled: false
+      level: "INFO"
+      address: "logs.papertrailapp.com:12345"  # Replace with actual
+      hostname: "{hostname}"
+      
+  # Database logging
+  database:
+    enabled: false
+    level: "INFO"
+    connection_string: "env:LOG_DATABASE_URL"
+    table_name: "system_logs"
+    
+    # Log schema
+    schema:
+      timestamp: "TIMESTAMP"
+      level: "VARCHAR(10)"
+      logger: "VARCHAR(255)"
+      message: "TEXT"
+      extra: "JSONB"
+      metadata: "JSONB"
+      
+    # Indexing
+    indexes:
+      - ["timestamp"]
+      - ["level"]
+      - ["logger"]
+      
+    # Retention policy
+    retention:
+      enabled: true
+      delete_after_days: 365
+      archive_before_delete: true
+
+# ----------------------------------------------------------------------------
+# LOG ENRICHMENT & PROCESSING
+# ----------------------------------------------------------------------------
+enrichment:
+  # Context enrichment
+  context:
+    enabled: true
+    
+    # Static context
+    static:
+      application: "CyberGuard"
+      version: "1.0.0"
+      environment: "production"
+      deployment_id: "env:DEPLOYMENT_ID"
+      
+    # Dynamic context
+    dynamic:
+      hostname: true
+      process_id: true
+      thread_id: true
+      python_version: true
+      memory_usage: false
+      cpu_usage: false
+      
+    # Request context (for web requests)
+    request_context:
+      enabled: true
+      fields:
+        - "request_id"
+        - "user_id"
+        - "session_id"
+        - "ip_address"
+        - "user_agent"
+        - "endpoint"
+        - "method"
+        
+  # Log processing pipeline
+  processing:
+    # Pre-processing filters
+    filters:
+      # Filter out sensitive data
+      sensitive_data:
+        enabled: true
+        patterns:
+          - pattern: "(?i)password[=:]\s*([^&\s]+)"
+            replacement: "password=***"
+            
+          - pattern: "(?i)api_key[=:]\s*([^&\s]+)"
+            replacement: "api_key=***"
+            
+          - pattern: "(?i)token[=:]\s*([^&\s]+)"
+            replacement: "token=***"
+            
+          - pattern: "(?i)credit_card[=:]\s*(\d{16})"
+            replacement: "credit_card=************\g<1>[-4:]"
+            
+          - pattern: "(?i)ssn[=:]\s*(\d{3}-\d{2}-\d{4})"
+            replacement: "ssn=***-**-\g<1>[-4:]"
+            
+      # Filter out debug in production
+      debug_filter:
+        enabled: true
+        condition: "environment == 'production' AND level == 'DEBUG'"
+        action: "drop"
+        
+    # Log transformation
+    transformation:
+      # Add correlation IDs
+      correlation:
+        enabled: true
+        field: "correlation_id"
+        generator: "uuid4"
+        
+      # Add sequence numbers
+      sequencing:
+        enabled: true
+        field: "sequence_number"
+        reset_daily: true
+        
+      # Normalize timestamps
+      timestamp_normalization:
+        enabled: true
+        format: "ISO8601"
+        timezone: "UTC"
+        
+    # Log aggregation
+    aggregation:
+      enabled: true
+      window: "1 minute"
+      
+      # Aggregate similar logs
+      similar_logs:
+        enabled: true
+        similarity_threshold: 0.8
+        max_aggregation: 100
+        
+      # Rate limiting for noisy logs
+      rate_limiting:
+        enabled: true
+        max_per_minute: 100
+        action: "drop_extra"
+
+# ----------------------------------------------------------------------------
+# LOG ROTATION & RETENTION
+# ----------------------------------------------------------------------------
+rotation_retention:
+  # Rotation policies
+  rotation:
+    # Size-based rotation
+    size_based:
+      enabled: true
+      max_size: "100MB"
+      backup_count: 10
+      
+    # Time-based rotation
+    time_based:
+      enabled: true
+      when: "midnight"  # midnight, W0 (Monday), etc.
+      interval: 1
+      backup_count: 30
+      
+    # Combined rotation
+    combined:
+      enabled: true
+      conditions:
+        - "size > 100MB"
+        - "time > 24 hours"
+      backup_count: 10
+      
+  # Retention policies
+  retention:
+    # Time-based retention
+    time_based:
+      enabled: true
+      days: 30
+      action: "delete"  # delete, compress, archive
+      
+    # Size-based retention
+    size_based:
+      enabled: true
+      max_total_size: "10GB"
+      action: "delete_oldest"
+      
+    # Compliance retention
+    compliance:
+      enabled: true
+      policies:
+        security_logs:
+          retention_days: 365  # GDPR
+          immutable: true
+          
+        audit_logs:
+          retention_days: 730  # 2 years for compliance
+          immutable: true
+          
+        access_logs:
+          retention_days: 90
+          immutable: false
+          
+  # Archiving configuration
+  archiving:
+    enabled: true
+    format: "tar.gz"
+    compression_level: 6
+    
+    # Archive location
+    locations:
+      local: "./logs/archive/"
+      cloud:
+        enabled: false
+        provider: "aws_s3"
+        bucket: "cyberguard-logs-archive"
+        path: "logs/{year}/{month}/"
+        
+    # Archive retention
+    archive_retention:
+      days: 3650  # 10 years
+      action: "delete"
+
+# ----------------------------------------------------------------------------
+# LOG SECURITY & INTEGRITY
+# ----------------------------------------------------------------------------
+security:
+  # Access control
+  access_control:
+    enabled: true
+    
+    # File permissions
+    permissions:
+      security_logs: "600"  # rw-------
+      audit_logs: "600"
+      application_logs: "644"  # rw-r--r--
+      debug_logs: "640"  # rw-r-----
+      
+    # Directory permissions
+    directory_permissions:
+      logs_root: "755"
+      security_subdir: "700"
+      archive_subdir: "750"
+      
+  # Log integrity
+  integrity:
+    enabled: true
+    
+    # Hash verification
+    hashing:
+      algorithm: "sha256"
+      compute_on_write: true
+      verify_on_read: true
+      store_hash_separately: true
+      
+    # Digital signatures
+    digital_signatures:
+      enabled: true
+      algorithm: "RSA"
+      key_size: 4096
+      sign_frequency: "daily"
+      
+    # Write-once enforcement
+    write_once:
+      enabled: true
+      for_logs: ["security", "audit"]
+      implementation: "append_only_files"
+      
+  # Encryption
+  encryption:
+    enabled: false  # May impact performance
+    
+    # At-rest encryption
+    at_rest:
+      algorithm: "AES-256-GCM"
+      key_management: "aws_kms"  # aws_kms, hashicorp_vault, local
+      key_rotation_days: 30
+      
+    # In-transit encryption
+    in_transit:
+      enabled: true
+      for_external_transfers: true
+      protocol: "TLS 1.3"
+      
+  # Tamper detection
+  tamper_detection:
+    enabled: true
+    
+    # Methods
+    methods:
+      - "hash_chaining"
+      - "digital_signatures"
+      - "write_once_media"
+      - "immutable_storage"
+      
+    # Alerting
+    alerting:
+      enabled: true
+      channels:
+        email: "security-team@company.com"
+        slack: "#security-alerts"
+        pagerduty: "high_priority"
+        
+  # Audit trail for logs
+  log_audit_trail:
+    enabled: true
+    
+    # What to audit
+    audit_events:
+      - "log_file_creation"
+      - "log_file_deletion"
+      - "log_file_modification"
+      - "log_file_access"
+      - "log_configuration_changes"
+      
+    # Where to store audit trail
+    audit_store: "separate_secure_location"
+    
+    # Retention for log audit trail
+    retention_days: 3650  # 10 years
+
+# ----------------------------------------------------------------------------
+# PERFORMANCE MONITORING LOGS
+# ----------------------------------------------------------------------------
+performance:
+  # Metrics collection
+  metrics_collection:
+    enabled: true
+    interval_seconds: 60
+    
+    # System metrics
+    system_metrics:
+      cpu_usage: true
+      memory_usage: true
+      disk_usage: true
+      network_io: true
+      process_count: true
+      
+    # Application metrics
+    application_metrics:
+      request_count: true
+      error_rate: true
+      response_time: true
+      queue_length: true
+      cache_hit_rate: true
+      
+    # Agent metrics
+    agent_metrics:
+      agent_health: true
+      processing_time: true
+      detection_accuracy: true
+      false_positive_rate: true
+      confidence_scores: true
+      
+  # Performance thresholds
+  thresholds:
+    # Alert thresholds
+    alert_thresholds:
+      cpu_usage_percent: 80
+      memory_usage_percent: 85
+      disk_usage_percent: 90
+      error_rate_percent: 5
+      response_time_ms: 1000
+      
+    # Critical thresholds
+    critical_thresholds:
+      cpu_usage_percent: 95
+      memory_usage_percent: 95
+      disk_usage_percent: 95
+      error_rate_percent: 10
+      response_time_ms: 5000
+      
+  # Performance logging format
+  format:
+    metric_format: "json"
+    include_timestamp: true
+    include_hostname: true
+    include_service: true
+    
+    # Tags for metrics
+    tags:
+      environment: "production"
+      region: "us-east-1"
+      deployment: "cyberguard-v1"
+      
+  # Performance log destinations
+  destinations:
+    # Time series database
+    timeseries_db:
+      enabled: false
+      type: "influxdb"  # influxdb, prometheus, timescaledb
+      url: "http://localhost:8086"
+      database: "cyberguard_metrics"
+      
+    # Cloud monitoring
+    cloud_monitoring:
+      enabled: false
+      provider: "aws_cloudwatch"  # aws_cloudwatch, azure_monitor, gcp_stackdriver
+      namespace: "CyberGuard"
+      
+    # Local file (fallback)
+    local_file:
+      enabled: true
+      path: "./logs/metrics.log"
+      rotation: "100MB"
+      retention: "30 days"
+
+# ----------------------------------------------------------------------------
+# COMPLIANCE LOGGING
+# ----------------------------------------------------------------------------
+compliance:
+  # Regulatory requirements
+  regulations:
+    GDPR:
+      enabled: true
+      requirements:
+        - "data_access_logging"
+        - "consent_logging"
+        - "data_breach_logging"
+        - "right_to_be_forgotten_logging"
+        
+      # Retention periods
+      retention:
+        access_logs: "3 years"
+        consent_logs: "5 years"
+        breach_logs: "indefinitely"
+        
+    HIPAA:
+      enabled: false
+      requirements:
+        - "phi_access_logging"
+        - "authentication_logging"
+        - "security_incident_logging"
+        
+      # Retention periods
+      retention:
+        access_logs: "6 years"
+        security_logs: "6 years"
+        
+    PCI_DSS:
+      enabled: false
+      requirements:
+        - "cardholder_data_access"
+        - "authentication_logging"
+        - "security_event_logging"
+        
+      # Retention periods
+      retention:
+        all_logs: "1 year"
+        at_least_3_months_immediately_available: true
+        
+    SOX:
+      enabled: false
+      requirements:
+        - "financial_transaction_logging"
+        - "access_control_logging"
+        - "change_management_logging"
+        
+      # Retention periods
+      retention:
+        all_logs: "7 years"
+        
+  # Compliance log format
+  compliance_format:
+    # Required fields for compliance
+    required_fields:
+      timestamp: "ISO 8601 with timezone"
+      user_id: "Authenticated user or system"
+      action: "Specific action performed"
+      resource: "Resource accessed or modified"
+      result: "Success/failure/error"
+      reason: "Reason for action (if applicable)"
+      session_id: "Session identifier"
+      ip_address: "Source IP address"
+      
+    # Optional fields
+    optional_fields:
+      user_agent: "Client user agent"
+      request_id: "Request correlation ID"
+      duration: "Action duration"
+      bytes_transferred: "Amount of data"
+      location: "Geographic location"
+      
+  # Compliance log validation
+  validation:
+    enabled: true
+    
+    # Schema validation
+    schema_validation:
+      enabled: true
+      schema_file: "config/log_schema.json"
+      
+    # Completeness validation
+    completeness:
+      enabled: true
+      required_fields_present: true
+      timestamp_valid: true
+      user_id_not_null: true
+      
+    # Consistency validation
+    consistency:
+      enabled: true
+      check_timestamp_order: true
+      check_session_continuity: true
+      check_user_consistency: true
+
+# ----------------------------------------------------------------------------
+# LOG QUERYING & ANALYSIS
+# ----------------------------------------------------------------------------
+query_analysis:
+  # Log indexing
+  indexing:
+    enabled: true
+    
+    # What to index
+    indexed_fields:
+      - "timestamp"
+      - "level"
+      - "logger"
+      - "message"
+      - "user_id"
+      - "ip_address"
+      - "action"
+      - "result"
+      
+    # Index types
+    index_types:
+      timestamp: "range"
+      level: "category"
+      logger: "fulltext"
+      message: "fulltext"
+      user_id: "exact"
+      ip_address: "exact"
+      
+    # Update frequency
+    update_frequency: "realtime"  # realtime, hourly, daily
+    
+  # Search capabilities
+  search:
+    # Full-text search
+    fulltext:
+      enabled: true
+      fields: ["message", "exception", "stack_trace"]
+      analyzer: "standard"
+      
+    # Structured search
+    structured:
+      enabled: true
+      operators:
+        - "AND"
+        - "OR"
+        - "NOT"
+        - ">"
+        - "<"
+        - "="
+        - "LIKE"
+        
+    # Time-range search
+    time_range:
+      enabled: true
+      default_range: "last 24 hours"
+      supported_formats:
+        - "relative: 1h, 24h, 7d, 30d"
+        - "absolute: YYYY-MM-DD HH:MM:SS"
+        - "calendar: today, yesterday, this week"
+        
+  # Analysis capabilities
+  analysis:
+    # Aggregation
+    aggregation:
+      enabled: true
+      functions:
+        - "count"
+        - "sum"
+        - "average"
+        - "min"
+        - "max"
+        - "distinct"
+        
+    # Grouping
+    grouping:
+      enabled: true
+      fields:
+        - "level"
+        - "logger"
+        - "user_id"
+        - "action"
+        - "result"
+        - "hour"
+        - "day"
+        
+    # Trend analysis
+    trends:
+      enabled: true
+      methods:
+        - "moving_average"
+        - "rate_of_change"
+        - "seasonal_decomposition"
+        
+  # Export capabilities
+  export:
+    enabled: true
+    formats:
+      - "csv"
+      - "json"
+      - "excel"
+      - "pdf"
+      
+    # Export limits
+    limits:
+      max_rows: 100000
+      max_size: "100MB"
+      time_range_limit: "30 days"
+      
+    # Export security
+    security:
+      require_authentication: true
+      audit_exports: true
+      limit_sensitive_data: true
+
+# ----------------------------------------------------------------------------
+# ALERTING & NOTIFICATIONS
+# ----------------------------------------------------------------------------
+alerting:
+  # Alert conditions
+  conditions:
+    # Error-based alerts
+    error_alerts:
+      - condition: "level == 'ERROR' AND count > 10 IN last 5 minutes"
+        severity: "high"
+        action: "email AND slack"
+        
+      - condition: "level == 'CRITICAL'"
+        severity: "critical"
+        action: "email AND slack AND pagerduty"
+        
+    # Performance alerts
+    performance_alerts:
+      - condition: "response_time_ms > 5000"
+        severity: "medium"
+        action: "slack"
+        
+      - condition: "error_rate_percent > 10"
+        severity: "high"
+        action: "email AND slack"
+        
+    # Security alerts
+    security_alerts:
+      - condition: "security_event == 'brute_force'"
+        severity: "high"
+        action: "email AND slack"
+        
+      - condition: "security_event == 'sql_injection'"
+        severity: "critical"
+        action: "email AND slack AND pagerduty"
+        
+    # Compliance alerts
+    compliance_alerts:
+      - condition: "missing_audit_log == true"
+        severity: "high"
+        action: "email"
+        
+      - condition: "log_tamper_detected == true"
+        severity: "critical"
+        action: "email AND pagerduty"
+        
+  # Notification channels
+  channels:
+    # Email
+    email:
+      enabled: true
+      smtp_server: "smtp.gmail.com"
+      smtp_port: 587
+      from_address: "alerts@cyberguard.example.com"
+      to_addresses:
+        - "security-team@company.com"
+        - "oncall@company.com"
+      template: "config/email_templates/alert.html"
+      
+    # Slack
+    slack:
+      enabled: true
+      webhook_url: "env:SLACK_WEBHOOK_URL"
+      channel: "#security-alerts"
+      username: "CyberGuard Alerts"
+      icon_emoji: ":warning:"
+      
+    # PagerDuty
+    pagerduty:
+      enabled: true
+      integration_key: "env:PAGERDUTY_INTEGRATION_KEY"
+      severity_levels:
+        critical: "critical"
+        high: "error"
+        medium: "warning"
+        low: "info"
+        
+    # Webhook
+    webhook:
+      enabled: false
+      url: "https://internal-alerts.company.com/webhook"
+      headers:
+        Authorization: "Bearer {env:WEBHOOK_TOKEN}"
+      timeout: 10
+      
+  # Alert management
+  management:
+    # Deduplication
+    deduplication:
+      enabled: true
+      window_minutes: 5
+      key_fields: ["condition", "source", "severity"]
+      
+    # Escalation
+    escalation:
+      enabled: true
+      rules:
+        - condition: "alert_age_minutes > 30 AND acknowledged == false"
+          action: "escalate_to_manager"
+          
+        - condition: "alert_age_minutes > 60 AND acknowledged == false"
+          action: "escalate_to_director"
+          
+    # Suppression
+    suppression:
+      enabled: true
+      rules:
+        - condition: "maintenance_window == true"
+          action: "suppress_non_critical"
+          
+        - condition: "testing_environment == true"
+          action: "suppress_all"
+          
+    # Alert history
+    history:
+      enabled: true
+      retention_days: 90
+      storage: "database"  # database, elasticsearch, file
+
+# ----------------------------------------------------------------------------
+# DEBUGGING & TROUBLESHOOTING
+# ----------------------------------------------------------------------------
+debugging:
+  # Debug mode
+  debug_mode:
+    enabled: false  # Only enable in development/staging
+    level: "DEBUG"
+    
+    # What to debug
+    debug_components:
+      - "agent_coordination"
+      - "mhc_operations"
+      - "security_detection"
+      - "api_requests"
+      
+    # Debug output
+    output:
+      console: true
+      file: "./logs/debug.log"
+      format: "verbose"
+      
+  # Trace logging
+  trace_logging:
+    enabled: false  # Very verbose, use sparingly
+    components:
+      - "function_calls"
+      - "database_queries"
+      - "network_requests"
+      - "cache_operations"
+      
+    # Sampling rate
+    sampling_rate: 0.01  # 1% of requests
+    
+  # Profiling
+  profiling:
+    enabled: false
+    
+    # What to profile
+    profile_types:
+      - "cpu"
+      - "memory"
+      - "i/o"
+      - "network"
+      
+    # Profiling intervals
+    intervals:
+      cpu_profile_seconds: 60
+      memory_profile_minutes: 5
+      
+    # Output format
+    output_format: "pprof"  # pprof, pyinstrument, cprofile
+    
+  # Diagnostic endpoints
+  diagnostic_endpoints:
+    enabled: true
+    
+    # Health check
+    health:
+      path: "/health"
+      checks:
+        - "database_connectivity"
+        - "redis_connectivity"
+        - "agent_health"
+        - "log_health"
+        
+    # Metrics endpoint
+    metrics:
+      path: "/metrics"
+      format: "prometheus"
+      
+    # Debug endpoint (protected)
+    debug:
+      path: "/debug"
+      authentication_required: true
+      ip_whitelist: ["127.0.0.1", "10.0.0.0/8"]
+      
+    # Log level control
+    log_level_control:
+      enabled: true
+      path: "/loglevel"
+      methods: ["GET", "POST"]
+      allowed_levels: ["DEBUG", "INFO", "WARNING", "ERROR"]
+
+# ----------------------------------------------------------------------------
+# LOGGING PERFORMANCE OPTIMIZATION
+# ----------------------------------------------------------------------------
+performance_optimization:
+  # Asynchronous logging
+  async_logging:
+    enabled: true
+    queue_size: 10000
+    worker_threads: 4
+    drop_when_full: false  # If true, drop logs when queue is full
+    
+    # Batch processing
+    batch_processing:
+      enabled: true
+      batch_size: 100
+      flush_interval_seconds: 1
+      
+  # Log buffering
+  buffering:
+    enabled: true
+    
+    # Memory buffer
+    memory_buffer:
+      size_mb: 10
+      flush_threshold: 0.8  # Flush when 80% full
+      
+    # Disk buffer (fallback)
+    disk_buffer:
+      enabled: true
+      directory: "./logs/buffer/"
+      max_size_mb: 100
+      
+  # Compression
+  compression:
+    enabled: true
+    
+    # When to compress
+    compression_strategy:
+      immediate: false
+      deferred: true
+      threshold_mb: 1
+      
+    # Compression algorithms
+    algorithms:
+      gzip:
+        level: 6
+        enabled: true
+        
+      lz4:
+        enabled: true
+        acceleration: 1
+        
+      zstd:
+        enabled: false
+        level: 3
+        
+  # Caching
+  caching:
+    enabled: true
+    
+    # What to cache
+    cache_items:
+      - "log_formats"
+      - "log_configurations"
+      - "frequent_log_patterns"
+      
+    # Cache size
+    cache_size_mb: 100
+    
+    # Cache TTL
+    ttl_seconds: 3600
+
+# ----------------------------------------------------------------------------
+# ENVIRONMENT-SPECIFIC CONFIGURATIONS
+# ----------------------------------------------------------------------------
+environments:
+  # Development environment
+  development:
+    log_level: "DEBUG"
+    handlers:
+      console: true
+      file: true
+      security_log: false
+      audit_log: false
+      
+    performance:
+      metrics_collection: true
+      alerting: false
+      
+    debugging:
+      debug_mode: true
+      trace_logging: false
+      profiling: false
+      
+  # Staging environment
+  staging:
+    log_level: "INFO"
+    handlers:
+      console: true
+      file: true
+      security_log: true
+      audit_log: true
+      
+    performance:
+      metrics_collection: true
+      alerting: true
+      
+    debugging:
+      debug_mode: false
+      trace_logging: true  # For testing
+      profiling: true  # For performance testing
+      
+  # Production environment
+  production:
+    log_level: "WARNING"  # Only warnings and above
+    handlers:
+      console: false  # No console in production
+      file: true
+      security_log: true
+      audit_log: true
+      external: true  # Send to external services
+      
+    performance:
+      metrics_collection: true
+      alerting: true
+      
+    debugging:
+      debug_mode: false
+      trace_logging: false
+      profiling: false  # Only on-demand
+      
+    security:
+      encryption: true
+      access_control: true
+      integrity: true
+      
+  # Testing environment
+  testing:
+    log_level: "INFO"
+    handlers:
+      console: true
+      file: false  # Don't create files during tests
+      
+    performance:
+      metrics_collection: false
+      
+    debugging:
+      debug_mode: true
+      trace_logging: false
