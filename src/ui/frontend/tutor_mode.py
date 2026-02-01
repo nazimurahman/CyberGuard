@@ -52,10 +52,10 @@ class TutorMode:
         self.quizzes = self._load_quiz_content()
         self.user_progress = {}  # In production, use database
         
-        # Learning paths
+        # Learning paths - predefined sequences of vulnerabilities for different roles
         self.learning_paths = {
             'web_developer': [
-                'xss_basics', 'sql_injection', 'csrf', 'authentication',
+                'xss', 'sql_injection', 'csrf', 'authentication',  # Changed from 'xss_basics' to 'xss' to match content
                 'session_management', 'input_validation'
             ],
             'api_developer': [
@@ -197,6 +197,34 @@ with connection.cursor() as cursor:
                         '''
                     }
                 }
+            },
+            # Added missing vulnerability definitions referenced in learning paths
+            'csrf': {
+                'id': 'csrf',
+                'name': 'Cross-Site Request Forgery',
+                'category': VulnerabilityCategory.OWASP_TOP_10.value,
+                'difficulty': DifficultyLevel.INTERMEDIATE.value,
+                'description': 'CSRF tricks users into performing unwanted actions on a web application where they are authenticated.',
+                'impact': 'Can lead to unauthorized state changes like fund transfers or profile updates.',
+                'prevention': ['Use CSRF tokens', 'Implement SameSite cookies', 'Check Origin headers']
+            },
+            'authentication': {
+                'id': 'authentication',
+                'name': 'Authentication Vulnerabilities',
+                'category': VulnerabilityCategory.OWASP_TOP_10.value,
+                'difficulty': DifficultyLevel.INTERMEDIATE.value,
+                'description': 'Weaknesses in authentication mechanisms that allow unauthorized access.',
+                'impact': 'Account takeover and unauthorized access to sensitive data.',
+                'prevention': ['Implement multi-factor authentication', 'Use strong password policies', 'Secure password storage']
+            },
+            'security_headers_misconfig': {
+                'id': 'security_headers_misconfig',
+                'name': 'Security Headers Misconfiguration',
+                'category': VulnerabilityCategory.INFRASTRUCTURE.value,
+                'difficulty': DifficultyLevel.BEGINNER.value,
+                'description': 'Missing or improperly configured security headers that expose applications to attacks.',
+                'impact': 'Increased attack surface and reduced browser security protections.',
+                'prevention': ['Implement CSP', 'Set X-Frame-Options', 'Enable HSTS']
             }
         }
     
@@ -246,7 +274,7 @@ with connection.cursor() as cursor:
                             'DOM-based XSS',
                             'Blind XSS'
                         ],
-                        'correct_answer': 1,
+                        'correct_answer': 1,  # Index of correct answer (0-based)
                         'explanation': 'Stored XSS (also called persistent XSS) occurs when malicious script is stored on the server (e.g., in a database) and then served to other users.'
                     },
                     {
@@ -258,11 +286,11 @@ with connection.cursor() as cursor:
                             'Both input validation and output encoding',
                             'Using HTTPS'
                         ],
-                        'correct_answer': 2,
+                        'correct_answer': 2,  # Index of correct answer
                         'explanation': 'Both input validation (to reject malicious input) and output encoding (to neutralize any malicious input that gets through) are necessary for comprehensive XSS protection.'
                     }
                 ],
-                'passing_score': 70
+                'passing_score': 70  # Percentage required to pass
             }
         }
     
@@ -281,21 +309,23 @@ with connection.cursor() as cursor:
         if vuln_id not in self.vulnerabilities:
             raise ValueError(f"Unknown vulnerability: {vuln_id}")
         
-        vuln_info = self.vulnerabilities[vuln_id].copy()
+        vuln_info = self.vulnerabilities[vuln_id].copy()  # Create copy to avoid modifying original
         
         # Add personalized recommendations if user context provided
         if user_context:
-            # Add context-specific examples
+            # Add context-specific examples based on user's language/framework
             language = user_context.get('primary_language')
             framework = user_context.get('primary_framework')
             
             if language and language in vuln_info.get('code_snippets', {}):
+                # Store language-specific snippets
                 vuln_info['recommended_snippets'] = vuln_info['code_snippets'][language]
                 
                 if framework and framework in vuln_info['code_snippets'][language]:
+                    # Store specific framework snippet
                     vuln_info['recommended_snippet'] = vuln_info['code_snippets'][language][framework]
         
-        # Add quiz information if available
+        # Add quiz information if available for this vulnerability
         related_quizzes = [
             quiz_id for quiz_id, quiz in self.quizzes.items()
             if quiz.get('vulnerability_id') == vuln_id
@@ -324,11 +354,11 @@ with connection.cursor() as cursor:
         for vuln in vulnerabilities:
             vuln_type = vuln.get('type', '').lower()
             
-            # Map common vulnerability types to educational content
+            # Map common vulnerability types to educational content IDs
             vuln_mapping = {
                 'xss': 'xss',
                 'sql_injection': 'sql_injection',
-                'csrf': 'csrf',  # Would need to be defined in content
+                'csrf': 'csrf',
                 'security_headers': 'security_headers_misconfig'
             }
             
@@ -383,7 +413,7 @@ with connection.cursor() as cursor:
         
         vuln_info = self.vulnerabilities[vuln_id]
         
-        # Generate context-specific instructions
+        # Extract context for personalized instructions
         language = context.get('language')
         framework = context.get('framework')
         specific_issue = context.get('specific_issue')
@@ -394,13 +424,13 @@ with connection.cursor() as cursor:
             'steps': []
         }
         
-        # Generic steps
+        # Generic educational steps applicable to any vulnerability
         instructions['steps'].extend([
             {
                 'step': 1,
                 'title': 'Understand the vulnerability',
                 'description': f'Learn how {vuln_info["name"]} works and why it\'s dangerous.',
-                'resources': vuln_info.get('resources', [])[:2]
+                'resources': vuln_info.get('resources', [])[:2]  # Limit to 2 resources
             },
             {
                 'step': 2,
@@ -410,7 +440,7 @@ with connection.cursor() as cursor:
             }
         ])
         
-        # Language/framework specific steps
+        # Add language/framework specific implementation steps
         if language and language in vuln_info.get('code_snippets', {}):
             lang_snippets = vuln_info['code_snippets'][language]
             
@@ -433,7 +463,7 @@ with connection.cursor() as cursor:
                     'language': language
                 })
         
-        # Testing steps
+        # Add testing steps
         instructions['steps'].append({
             'step': 4,
             'title': 'Test your fix',
@@ -441,12 +471,12 @@ with connection.cursor() as cursor:
             'action': 'Use the original attack payload to confirm it no longer works'
         })
         
-        # Prevention steps
+        # Add prevention steps to avoid future issues
         instructions['steps'].append({
             'step': 5,
             'title': 'Prevent future issues',
             'description': 'Implement these preventive measures:',
-            'checklist': vuln_info.get('prevention', [])[:3]
+            'checklist': vuln_info.get('prevention', [])[:3]  # Top 3 prevention measures
         })
         
         return instructions
@@ -457,7 +487,7 @@ with connection.cursor() as cursor:
         
         Args:
             quiz_id: Quiz identifier
-            answers: Dictionary of question_id -> answer_index
+            answers: Dictionary of question_id -> answer_index (0-based)
         
         Returns:
             Quiz results with score and feedback
@@ -493,6 +523,7 @@ with connection.cursor() as cursor:
                 'explanation': question.get('explanation', '')
             })
         
+        # Calculate percentage score
         score = (correct / total) * 100 if total > 0 else 0
         passed = score >= quiz.get('passing_score', 70)
         
@@ -515,6 +546,7 @@ with connection.cursor() as cursor:
                              score: float, passed: bool):
         """Update user progress in learning"""
         if user_id not in self.user_progress:
+            # Initialize user progress data structure
             self.user_progress[user_id] = {
                 'completed_quizzes': [],
                 'scores': {},
@@ -523,9 +555,11 @@ with connection.cursor() as cursor:
         
         user_data = self.user_progress[user_id]
         
+        # Track completed quizzes
         if quiz_id not in user_data['completed_quizzes']:
             user_data['completed_quizzes'].append(quiz_id)
         
+        # Store quiz score
         user_data['scores'][quiz_id] = score
         
         # Update learning path progress if applicable
@@ -537,10 +571,11 @@ with connection.cursor() as cursor:
                         'progress': 0
                     }
                 
+                # Add quiz to completed list for this path
                 if quiz_id not in user_data['learning_paths'][path_name]['completed']:
                     user_data['learning_paths'][path_name]['completed'].append(quiz_id)
                 
-                # Calculate progress percentage
+                # Calculate progress percentage for this learning path
                 total_in_path = len(quizzes)
                 completed_in_path = len(user_data['learning_paths'][path_name]['completed'])
                 progress = (completed_in_path / total_in_path) * 100
@@ -580,6 +615,7 @@ with connection.cursor() as cursor:
     def get_user_progress(self, user_id: str) -> Dict[str, Any]:
         """Get user learning progress"""
         if user_id not in self.user_progress:
+            # Return default progress for new users
             return {
                 'completed_quizzes': [],
                 'average_score': 0,
@@ -588,7 +624,7 @@ with connection.cursor() as cursor:
         
         user_data = self.user_progress[user_id]
         
-        # Calculate average score
+        # Calculate average score across all quizzes taken
         scores = list(user_data.get('scores', {}).values())
         average_score = sum(scores) / len(scores) if scores else 0
         
@@ -599,42 +635,45 @@ with connection.cursor() as cursor:
             'total_quizzes_taken': len(scores)
         }
 
-# Initialize tutor mode
+# Initialize tutor mode globally
 tutor_mode = TutorMode()
 
 # Tutor mode routes
 @tutor_blueprint.route('/')
 @login_required
 def tutor_home():
-    """Tutor mode home page"""
-    # Get user progress
+    """Tutor mode home page - shows learning dashboard"""
+    # Get user progress from session or use demo user
     user_id = session.get('user_id', 'demo_user')
     progress = tutor_mode.get_user_progress(user_id)
     
     # Get recommended learning paths
     learning_paths = tutor_mode.learning_paths
     
+    # Render tutor home template with context data
     return render_template(
         'tutor/home.html',
         title='Security Tutor',
         progress=progress,
         learning_paths=learning_paths,
-        difficulty_levels=[d.value for d in DifficultyLevel]
+        difficulty_levels=[d.value for d in DifficultyLevel]  # Convert Enum values to strings
     )
 
 @tutor_blueprint.route('/vulnerability/<vuln_id>')
 @login_required
 def vulnerability_detail(vuln_id):
-    """Vulnerability educational page"""
+    """Vulnerability educational page - detailed view"""
     try:
-        # Get user context for personalized learning
+        # Get user context from session for personalized learning
         user_context = {
             'primary_language': session.get('primary_language', 'python'),
             'primary_framework': session.get('primary_framework', 'flask')
         }
         
+        # Retrieve vulnerability information with personalization
         vuln_info = tutor_mode.get_vulnerability_info(vuln_id, user_context)
         
+        # Render vulnerability detail template
         return render_template(
             'tutor/vulnerability_detail.html',
             title=f"Learn: {vuln_info['name']}",
@@ -643,14 +682,15 @@ def vulnerability_detail(vuln_id):
         )
         
     except ValueError as e:
+        # Handle invalid vulnerability ID
         return render_template('errors/404.html'), 404
 
 @tutor_blueprint.route('/scan/<scan_id>/learn')
 @login_required
 def learn_from_scan(scan_id):
-    """Learn from specific scan results"""
+    """Learn from specific scan results - connects scanning with education"""
     # In production, would fetch scan from database
-    # For now, use sample data
+    # For demonstration, use sample scan data
     
     sample_scan = {
         'vulnerabilities': [
@@ -667,8 +707,10 @@ def learn_from_scan(scan_id):
         }
     }
     
+    # Analyze scan results for educational opportunities
     educational_items = tutor_mode.analyze_scan_for_education(sample_scan)
     
+    # Render learn from scan template
     return render_template(
         'tutor/learn_from_scan.html',
         title='Learn from Scan Results',
@@ -679,12 +721,14 @@ def learn_from_scan(scan_id):
 @tutor_blueprint.route('/quiz/<quiz_id>')
 @login_required
 def take_quiz_page(quiz_id):
-    """Quiz taking page"""
+    """Quiz taking page - displays quiz questions"""
     if quiz_id not in tutor_mode.quizzes:
+        # Handle invalid quiz ID
         return render_template('errors/404.html'), 404
     
     quiz = tutor_mode.quizzes[quiz_id]
     
+    # Render quiz template
     return render_template(
         'tutor/quiz.html',
         title=f"Quiz: {quiz['title']}",
@@ -694,12 +738,14 @@ def take_quiz_page(quiz_id):
 @tutor_blueprint.route('/fix-instructions')
 @login_required
 def fix_instructions():
-    """Generate fix instructions for a vulnerability"""
+    """Generate fix instructions for a vulnerability - educational remediation guide"""
+    # Extract parameters from query string
     vuln_id = request.args.get('vulnerability')
     language = request.args.get('language', 'python')
     framework = request.args.get('framework', 'flask')
     severity = request.args.get('severity', 'MEDIUM')
     
+    # Validate required parameter
     if not vuln_id:
         return jsonify({
             'status': 'error',
@@ -707,14 +753,17 @@ def fix_instructions():
         }), 400
     
     try:
+        # Create context for fix instructions
         context = {
             'language': language,
             'framework': framework,
             'severity': severity
         }
         
+        # Generate step-by-step fix instructions
         instructions = tutor_mode.generate_fix_instructions(vuln_id, context)
         
+        # Render fix instructions template
         return render_template(
             'tutor/fix_instructions.html',
             title=f"Fix: {instructions['vulnerability']}",
@@ -722,15 +771,18 @@ def fix_instructions():
         )
         
     except ValueError as e:
+        # Handle invalid vulnerability ID
         return render_template('errors/404.html'), 404
 
 @tutor_blueprint.route('/api/quiz/<quiz_id>/submit', methods=['POST'])
 @login_required
 def api_submit_quiz(quiz_id):
-    """API endpoint to submit quiz answers"""
+    """API endpoint to submit quiz answers - handles AJAX requests"""
     try:
+        # Parse JSON request body
         data = request.get_json()
         
+        # Validate request data
         if not data or 'answers' not in data:
             return jsonify({
                 'status': 'error',
@@ -739,19 +791,23 @@ def api_submit_quiz(quiz_id):
         
         answers = data['answers']
         
+        # Process quiz submission and calculate results
         results = tutor_mode.take_quiz(quiz_id, answers)
         
+        # Return success response with quiz results
         return jsonify({
             'status': 'success',
             'data': results
         })
         
     except ValueError as e:
+        # Handle invalid quiz ID or data
         return jsonify({
             'status': 'error',
             'message': str(e)
         }), 400
     except Exception as e:
+        # Log unexpected errors
         current_app.logger.error(f"Quiz submission error: {str(e)}")
         return jsonify({
             'status': 'error',
@@ -761,10 +817,11 @@ def api_submit_quiz(quiz_id):
 @tutor_blueprint.route('/api/progress')
 @login_required
 def api_get_progress():
-    """API endpoint to get user progress"""
+    """API endpoint to get user progress - for AJAX updates"""
     user_id = session.get('user_id', 'demo_user')
     progress = tutor_mode.get_user_progress(user_id)
     
+    # Return JSON response with progress data
     return jsonify({
         'status': 'success',
         'data': progress
@@ -773,11 +830,11 @@ def api_get_progress():
 @tutor_blueprint.route('/api/recommendations')
 @login_required
 def api_get_recommendations():
-    """API endpoint to get learning recommendations"""
+    """API endpoint to get learning recommendations - personalized suggestions"""
     user_id = session.get('user_id', 'demo_user')
     progress = tutor_mode.get_user_progress(user_id)
     
-    # Generate recommendations based on progress
+    # Generate personalized recommendations based on user progress
     recommendations = []
     
     completed = set(progress.get('completed_quizzes', []))
@@ -793,7 +850,7 @@ def api_get_recommendations():
                 'priority': 'medium'
             })
     
-    # Recommend vulnerabilities to study based on user's primary language
+    # Recommend vulnerabilities based on user's primary programming language
     primary_language = session.get('primary_language', 'python')
     
     for vuln_id, vuln_info in tutor_mode.vulnerabilities.items():
@@ -806,13 +863,14 @@ def api_get_recommendations():
                 'priority': 'high'
             })
     
+    # Return top 5 recommendations
     return jsonify({
         'status': 'success',
         'data': {
-            'recommendations': recommendations[:5],  # Top 5
+            'recommendations': recommendations[:5],
             'total_recommendations': len(recommendations)
         }
     })
 
-# Export blueprint and tutor mode
-__all__ = ['TutorMode', 'tutor_blueprint']
+# Export blueprint and tutor mode for use in other modules
+__all__ = ['tutor_blueprint', 'TutorMode']

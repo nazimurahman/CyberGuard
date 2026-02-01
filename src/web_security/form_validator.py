@@ -9,7 +9,7 @@ import re
 import json
 import hashlib
 from typing import Dict, List, Any, Optional, Tuple, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from bs4 import BeautifulSoup
 import urllib.parse
 import html
@@ -37,13 +37,13 @@ class FormInput:
     name: str                         # Input name attribute
     input_type: str                   # Input type (text, password, email, etc.)
     required: bool                    # Required attribute
-    pattern: Optional[str]            # Pattern attribute (regex)
-    maxlength: Optional[int]          # Maxlength attribute
-    minlength: Optional[int]          # Minlength attribute
-    placeholder: Optional[str]        # Placeholder text
-    value: Optional[str]             # Default value
-    autocomplete: Optional[str]      # Autocomplete attribute
-    attributes: Dict[str, str]       # All other attributes
+    pattern: Optional[str] = None     # Pattern attribute (regex)
+    maxlength: Optional[int] = None   # Maxlength attribute
+    minlength: Optional[int] = None   # Minlength attribute
+    placeholder: Optional[str] = None # Placeholder text
+    value: Optional[str] = None      # Default value
+    autocomplete: Optional[str] = None # Autocomplete attribute
+    attributes: Dict[str, str] = field(default_factory=dict)  # All other attributes
 
 class FormValidator:
     """
@@ -51,16 +51,16 @@ class FormValidator:
     Detects: Missing validations, CSRF vulnerabilities, insecure configurations
     """
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any] = None):
         """
         Initialize form validator with configuration
         
         Args:
-            config: Configuration dictionary containing validation rules
+            config: Configuration dictionary containing validation rules (optional)
         """
-        self.config = config
+        self.config = config or {}  # Handle None config
         
-        # Input types that require special validation
+        # Input types that require special validation with their severity levels
         self.sensitive_input_types = {
             'password': 'CRITICAL',
             'email': 'MEDIUM',
@@ -71,7 +71,7 @@ class FormValidator:
             'ssn': 'CRITICAL',
         }
         
-        # Common CSRF token names
+        # Common CSRF token names to check for
         self.csrf_token_names = {
             'csrf_token', 'csrfmiddlewaretoken', '_token',
             'authenticity_token', 'csrf', 'anticsrf',
@@ -85,7 +85,7 @@ class FormValidator:
             'dangerous_extensions': ['.exe', '.bat', '.sh', '.php', '.jar'],
         }
         
-        # Input validation patterns
+        # Input validation patterns for common data types
         self.validation_patterns = {
             'email': r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
             'phone': r'^[\d\s\(\)\-+]{10,20}$',
@@ -95,7 +95,7 @@ class FormValidator:
             'zipcode': r'^\d{5}(-\d{4})?$',
         }
         
-        # Security headers to check
+        # Security headers to check for in HTTP responses
         self.security_headers = [
             'Content-Security-Policy',
             'X-Frame-Options',
@@ -104,7 +104,7 @@ class FormValidator:
             'Referrer-Policy',
         ]
         
-        # Statistics
+        # Statistics tracking for validator usage
         self.stats = {
             'forms_analyzed': 0,
             'vulnerabilities_found': 0,
@@ -112,7 +112,7 @@ class FormValidator:
             'csrf_vulnerabilities': 0,
         }
     
-    def analyze_form(self, html_content: str, form_element=None) -> FormAnalysis:
+    def analyze_form(self, html_content: str, form_element = None) -> FormAnalysis:
         """
         Analyze HTML form for security issues
         
@@ -122,7 +122,11 @@ class FormValidator:
             
         Returns:
             FormAnalysis object with analysis results
+            
+        Raises:
+            ValueError: If no forms found in HTML content
         """
+        # Parse HTML content using BeautifulSoup
         soup = BeautifulSoup(html_content, 'html.parser')
         
         # Extract form if not provided
@@ -130,27 +134,27 @@ class FormValidator:
             forms = soup.find_all('form')
             if not forms:
                 raise ValueError("No forms found in HTML content")
-            form_element = forms[0]  # Analyze first form
+            form_element = forms[0]  # Analyze first form by default
         
-        # Extract form attributes
+        # Extract form attributes with defaults
         form_action = form_element.get('action', '')
         form_method = form_element.get('method', 'GET').upper()
         form_enctype = form_element.get('enctype', 'application/x-www-form-urlencoded')
         
-        # Generate form ID
+        # Generate unique form ID based on form characteristics
         form_id = self._generate_form_id(form_element)
         
-        # Extract all input fields
+        # Extract all input fields from the form
         inputs = self._extract_input_fields(form_element)
         
-        # Initialize results containers
+        # Initialize results containers for different analysis categories
         vulnerabilities = []
         missing_validations = []
         file_uploads = []
         password_fields = []
         hidden_fields = []
         
-        # 1. Check for CSRF protection
+        # 1. Check for CSRF protection in the form
         csrf_analysis = self._analyze_csrf_protection(form_element, inputs)
         if not csrf_analysis['protected']:
             vulnerabilities.append({
@@ -162,18 +166,18 @@ class FormValidator:
             })
             self.stats['csrf_vulnerabilities'] += 1
         
-        # 2. Analyze each input field
+        # 2. Analyze each input field individually
         for form_input in inputs:
-            # Check input-specific vulnerabilities
+            # Check for input-specific security vulnerabilities
             input_vulns = self._analyze_input_field(form_input, form_method)
             vulnerabilities.extend(input_vulns)
             
-            # Check for missing validations
+            # Check for missing input validations
             missing = self._check_missing_validations(form_input)
             if missing:
                 missing_validations.extend(missing)
             
-            # Categorize special input types
+            # Categorize special input types for detailed analysis
             if form_input.input_type == 'file':
                 file_uploads.append({
                     'name': form_input.name,
@@ -200,19 +204,21 @@ class FormValidator:
         form_vulns = self._analyze_form_level_security(form_element, form_method, form_action)
         vulnerabilities.extend(form_vulns)
         
-        # 4. Check security headers (would be from HTTP response)
-        security_headers = self._check_security_headers({})  # Empty dict for now
+        # 4. Check security headers (would normally come from HTTP response)
+        # Currently using empty dict as placeholder
+        security_headers = self._check_security_headers({})
         
-        # 5. Calculate security score
+        # 5. Calculate overall security score based on findings
         security_score = self._calculate_security_score(vulnerabilities, missing_validations)
         
-        # Update statistics
+        # Update statistics based on analysis results
         self.stats['forms_analyzed'] += 1
         if vulnerabilities:
             self.stats['vulnerabilities_found'] += len(vulnerabilities)
         if security_score < 0.5:
             self.stats['insecure_forms'] += 1
         
+        # Return comprehensive analysis object
         return FormAnalysis(
             form_id=form_id,
             form_action=form_action,
@@ -237,9 +243,9 @@ class FormValidator:
             form_element: BeautifulSoup form element
             
         Returns:
-            Unique form ID string
+            Unique form ID string (16-character hex)
         """
-        # Create string from form attributes
+        # Create identifying string from form attributes
         id_parts = [
             form_element.get('action', ''),
             form_element.get('method', ''),
@@ -247,10 +253,11 @@ class FormValidator:
             form_element.get('name', ''),
         ]
         
-        # Add input names
+        # Add input names to make ID more unique
         input_names = [inp.get('name', '') for inp in form_element.find_all('input')]
         id_parts.extend(input_names)
         
+        # Join parts and create MD5 hash
         id_string = ':'.join(id_parts)
         return hashlib.md5(id_string.encode()).hexdigest()[:16]
     
@@ -262,17 +269,17 @@ class FormValidator:
             form_element: BeautifulSoup form element
             
         Returns:
-            List of FormInput objects
+            List of FormInput objects representing each input field
         """
         inputs = []
         
-        # Find all input elements
+        # Find all form input elements (input, textarea, select)
         input_elements = form_element.find_all(['input', 'textarea', 'select'])
         
         for element in input_elements:
             tag_name = element.name
             
-            # Determine input type
+            # Determine input type based on tag
             if tag_name == 'input':
                 input_type = element.get('type', 'text').lower()
             elif tag_name == 'textarea':
@@ -282,7 +289,7 @@ class FormValidator:
             else:
                 input_type = 'unknown'
             
-            # Extract attributes
+            # Extract common attributes
             name = element.get('name', '')
             required = element.get('required') is not None
             pattern = element.get('pattern')
@@ -292,20 +299,29 @@ class FormValidator:
             value = element.get('value')
             autocomplete = element.get('autocomplete')
             
-            # Convert maxlength/minlength to integers if possible
+            # Convert string length attributes to integers safely
             try:
-                maxlength = int(maxlength) if maxlength else None
-                minlength = int(minlength) if minlength else None
+                if maxlength is not None:
+                    maxlength = int(maxlength)
             except (ValueError, TypeError):
                 maxlength = None
+                
+            try:
+                if minlength is not None:
+                    minlength = int(minlength)
+            except (ValueError, TypeError):
                 minlength = None
             
-            # Extract all attributes
+            # Extract all attributes for complete analysis
             attributes = {}
-            for attr, val in element.attrs.items():
-                attributes[attr] = val
+            if hasattr(element, 'attrs'):
+                for attr, val in element.attrs.items():
+                    # Convert list values to string for consistency
+                    if isinstance(val, list):
+                        val = ' '.join(val)
+                    attributes[attr] = val
             
-            # Create FormInput object
+            # Create FormInput object with extracted data
             form_input = FormInput(
                 name=name,
                 input_type=input_type,
@@ -334,38 +350,52 @@ class FormValidator:
         Returns:
             CSRF protection analysis results
         """
-        # Check for CSRF token in hidden fields
+        # Initialize analysis results
         csrf_token_found = False
         csrf_token_name = None
         csrf_token_value = None
         
+        # Check for CSRF token in hidden input fields
         for form_input in inputs:
             if form_input.input_type == 'hidden':
-                if form_input.name.lower() in [name.lower() for name in self.csrf_token_names]:
+                # Case-insensitive check against known CSRF token names
+                if form_input.name and form_input.name.lower() in [name.lower() for name in self.csrf_token_names]:
                     csrf_token_found = True
                     csrf_token_name = form_input.name
                     csrf_token_value = form_input.value
                     break
         
-        # Check for meta tags with CSRF tokens
-        meta_tags = form_element.find_parent().find_all('meta')
-        for meta in meta_tags:
-            name = meta.get('name', '').lower()
-            content = meta.get('content', '')
-            
-            if 'csrf' in name or 'token' in name:
-                csrf_token_found = True
-                csrf_token_name = name
-                csrf_token_value = content
+        # Check for meta tags containing CSRF tokens (common in some frameworks)
+        if not csrf_token_found:
+            # Get parent element to search for meta tags
+            parent = form_element.find_parent()
+            if parent:
+                meta_tags = parent.find_all('meta')
+                for meta in meta_tags:
+                    name = meta.get('name', '').lower()
+                    content = meta.get('content', '')
+                    
+                    # Check if meta tag contains CSRF-related information
+                    if 'csrf' in name or 'token' in name:
+                        csrf_token_found = True
+                        csrf_token_name = name
+                        csrf_token_value = content
+                        break
         
-        # Check for headers (would be in HTTP request/response)
-        # This is handled elsewhere in the traffic analysis
+        # Prepare recommendation based on findings
+        recommendation = 'Use CSRF tokens for all state-changing forms'
+        if csrf_token_found:
+            recommendation = 'CSRF protection appears adequate'
+            
+            # Truncate long token values for display
+            if csrf_token_value and len(csrf_token_value) > 50:
+                csrf_token_value = csrf_token_value[:50] + '...'
         
         return {
             'protected': csrf_token_found,
             'token_name': csrf_token_name,
-            'token_value': csrf_token_value[:50] + '...' if csrf_token_value and len(csrf_token_value) > 50 else csrf_token_value,
-            'recommendation': 'Use CSRF tokens for all state-changing forms' if not csrf_token_found else 'CSRF protection appears adequate'
+            'token_value': csrf_token_value,
+            'recommendation': recommendation
         }
     
     def _analyze_input_field(self, form_input: FormInput, form_method: str) -> List[Dict[str, Any]]:
@@ -377,15 +407,15 @@ class FormValidator:
             form_method: Form HTTP method
             
         Returns:
-            List of input-specific vulnerabilities
+            List of input-specific vulnerabilities found
         """
         vulnerabilities = []
         
-        # Skip if no name (can't be submitted)
+        # Skip unnamed fields (they can't be submitted)
         if not form_input.name:
             return vulnerabilities
         
-        # 1. Check for sensitive data in field names
+        # 1. Check for sensitive data indicators in field names
         sensitive_keywords = ['password', 'passwd', 'pwd', 'creditcard', 'cc', 'ssn', 'social']
         for keyword in sensitive_keywords:
             if keyword in form_input.name.lower():
@@ -396,8 +426,9 @@ class FormValidator:
                     'location': f'Input field: {form_input.name}',
                     'recommendation': 'Use generic field names for sensitive data'
                 })
+                break  # Only report once per field
         
-        # 2. Check for autocomplete on sensitive fields
+        # 2. Check for autocomplete on password fields
         if form_input.input_type == 'password' and form_input.autocomplete != 'off':
             vulnerabilities.append({
                 'type': 'PASSWORD_AUTOCOMPLETE',
@@ -407,7 +438,7 @@ class FormValidator:
                 'recommendation': 'Add autocomplete="off" to password fields'
             })
         
-        # 3. Check for missing maxlength on text inputs
+        # 3. Check for missing maxlength on text-based inputs
         if form_input.input_type in ['text', 'textarea', 'search', 'url', 'email']:
             if form_input.maxlength is None:
                 vulnerabilities.append({
@@ -418,9 +449,9 @@ class FormValidator:
                     'recommendation': 'Add maxlength attribute to prevent overflow'
                 })
         
-        # 4. Check for file upload security
+        # 4. Check for file upload security issues
         if form_input.input_type == 'file':
-            # Check for accept attribute
+            # Check for missing accept attribute
             if 'accept' not in form_input.attributes:
                 vulnerabilities.append({
                     'type': 'MISSING_FILE_TYPE_RESTRICTION',
@@ -430,10 +461,11 @@ class FormValidator:
                     'recommendation': 'Add accept attribute to restrict file types'
                 })
         
-        # 5. Check for proper input type
+        # 5. Check for generic input types that should be more specific
         if form_input.input_type == 'text':
-            # Suggest more specific input types when appropriate
             field_name = form_input.name.lower()
+            
+            # Suggest email type for email fields
             if 'email' in field_name:
                 vulnerabilities.append({
                     'type': 'GENERIC_EMAIL_FIELD',
@@ -442,6 +474,8 @@ class FormValidator:
                     'location': f'Input field: {form_input.name}',
                     'recommendation': 'Change type from "text" to "email"'
                 })
+            
+            # Suggest tel type for phone fields
             elif 'tel' in field_name or 'phone' in field_name:
                 vulnerabilities.append({
                     'type': 'GENERIC_PHONE_FIELD',
@@ -450,6 +484,8 @@ class FormValidator:
                     'location': f'Input field: {form_input.name}',
                     'recommendation': 'Change type from "text" to "tel"'
                 })
+            
+            # Suggest url type for URL fields
             elif 'url' in field_name or 'website' in field_name:
                 vulnerabilities.append({
                     'type': 'GENERIC_URL_FIELD',
@@ -469,20 +505,20 @@ class FormValidator:
             form_input: FormInput object
             
         Returns:
-            List of missing validations
+            List of missing validations found
         """
         missing = []
         
-        # Skip if no name
+        # Skip unnamed fields
         if not form_input.name:
             return missing
         
-        # 1. Required fields should have validation
+        # 1. Required fields should have appropriate validation
         if form_input.required:
             if not form_input.pattern and form_input.input_type == 'text':
-                # Suggest pattern based on field name
                 field_name = form_input.name.lower()
                 
+                # Suggest email validation pattern for email fields
                 if 'email' in field_name:
                     missing.append({
                         'type': 'MISSING_EMAIL_VALIDATION',
@@ -503,7 +539,7 @@ class FormValidator:
                     'recommendation': 'Add pattern requiring uppercase, lowercase, numbers, and special characters'
                 })
         
-        # 3. Check for proper length constraints
+        # 3. Check for missing length constraints on text-based fields
         if form_input.input_type in ['text', 'textarea', 'password']:
             if form_input.maxlength is None:
                 missing.append({
@@ -524,8 +560,9 @@ class FormValidator:
             form_input: File upload FormInput object
             
         Returns:
-            File upload security analysis
+            File upload security analysis results
         """
+        # Initialize security checks
         checks = {
             'has_accept_attribute': False,
             'accept_value': None,
@@ -539,15 +576,16 @@ class FormValidator:
             checks['has_accept_attribute'] = True
             checks['accept_value'] = accept_value
             
-            # Check if dangerous extensions are allowed
+            # Check if dangerous file extensions are allowed
             for dangerous_ext in self.file_upload_checks['dangerous_extensions']:
                 if dangerous_ext in accept_value:
                     checks['dangerous_extensions_allowed'] = True
                     checks['recommendations'].append(f'Remove {dangerous_ext} from accept attribute')
         else:
+            # Recommend adding accept attribute if missing
             checks['recommendations'].append('Add accept attribute to restrict file types')
         
-        # Check for multiple attribute (allows multiple files)
+        # Check for multiple attribute (allows multiple file uploads)
         if 'multiple' in form_input.attributes:
             checks['recommendations'].append('Consider limiting to single file upload for security')
         
@@ -561,8 +599,9 @@ class FormValidator:
             form_input: Password FormInput object
             
         Returns:
-            Password field security analysis
+            Password field security analysis results
         """
+        # Initialize security checks
         checks = {
             'has_autocomplete_off': form_input.autocomplete == 'off',
             'has_pattern': form_input.pattern is not None,
@@ -573,13 +612,14 @@ class FormValidator:
             'recommendations': []
         }
         
-        # Recommendations
+        # Generate recommendations based on findings
         if not checks['has_autocomplete_off']:
             checks['recommendations'].append('Add autocomplete="off" to prevent password saving')
         
         if not checks['has_pattern']:
             checks['recommendations'].append('Add pattern attribute for password complexity')
         
+        # Check minimum length requirements
         if not checks['has_minlength'] or (checks['minlength_value'] and checks['minlength_value'] < 8):
             checks['recommendations'].append('Set minlength="8" or higher')
         
@@ -593,16 +633,21 @@ class FormValidator:
             form_input: Hidden FormInput object
             
         Returns:
-            Hidden field security analysis
+            Hidden field security analysis results
         """
+        # Initialize security checks
         check = {
-            'is_csrf_token': form_input.name.lower() in [name.lower() for name in self.csrf_token_names],
+            'is_csrf_token': False,
             'value_exposed': False,
             'sensitive_data': False,
             'recommendations': []
         }
         
-        # Check if value might contain sensitive data
+        # Check if this is a CSRF token
+        if form_input.name:
+            check['is_csrf_token'] = form_input.name.lower() in [name.lower() for name in self.csrf_token_names]
+        
+        # Check if hidden field might contain sensitive data
         sensitive_patterns = [
             ('session', 'SESSION_ID_IN_HIDDEN_FIELD'),
             ('token', 'TOKEN_IN_HIDDEN_FIELD'),
@@ -611,9 +656,10 @@ class FormValidator:
         ]
         
         for pattern, description in sensitive_patterns:
-            if pattern in form_input.name.lower():
+            if form_input.name and pattern in form_input.name.lower():
                 check['sensitive_data'] = True
                 check['recommendations'].append(f'Consider removing {form_input.name} from client-side')
+                break
         
         # Check if value is exposed (non-empty)
         if form_input.value and len(form_input.value) > 0:
@@ -632,7 +678,7 @@ class FormValidator:
             form_action: Form action URL
             
         Returns:
-            List of form-level vulnerabilities
+            List of form-level vulnerabilities found
         """
         vulnerabilities = []
         
@@ -648,7 +694,7 @@ class FormValidator:
         
         # 2. Check for GET method with sensitive data
         if form_method == 'GET':
-            # Check if form has sensitive fields
+            # Search for sensitive fields in the form
             sensitive_fields = form_element.find_all(['input', 'textarea', 'select'])
             has_sensitive = False
             
@@ -656,6 +702,7 @@ class FormValidator:
                 field_name = field.get('name', '').lower()
                 field_type = field.get('type', '').lower()
                 
+                # Check if field contains sensitive data
                 if 'password' in field_name or field_type == 'password':
                     has_sensitive = True
                     break
@@ -669,7 +716,7 @@ class FormValidator:
                     'recommendation': 'Change method to POST for sensitive data'
                 })
         
-        # 3. Check for missing or weak enctype
+        # 3. Check for missing or weak enctype on POST forms
         enctype = form_element.get('enctype', '')
         if form_method == 'POST' and not enctype:
             vulnerabilities.append({
@@ -680,7 +727,7 @@ class FormValidator:
                 'recommendation': 'Add enctype="application/x-www-form-urlencoded" or "multipart/form-data"'
             })
         
-        # 4. Check for forms without proper IDs (harder to track)
+        # 4. Check for forms without proper identification
         if not form_element.get('id') and not form_element.get('name'):
             vulnerabilities.append({
                 'type': 'UNIDENTIFIED_FORM',
@@ -700,18 +747,21 @@ class FormValidator:
             headers: HTTP headers dictionary
             
         Returns:
-            Security headers analysis
+            Security headers analysis results
         """
         analysis = {}
         
+        # Check each security header
         for header in self.security_headers:
             if header in headers:
+                # Header is present, check if it's securely configured
                 analysis[header] = {
                     'present': True,
                     'value': headers[header],
                     'secure': self._is_security_header_secure(header, headers[header])
                 }
             else:
+                # Header is missing
                 analysis[header] = {
                     'present': False,
                     'value': None,
@@ -730,23 +780,30 @@ class FormValidator:
             value: Header value
             
         Returns:
-            True if header is securely configured
+            True if header is securely configured, False otherwise
         """
+        if not value:
+            return False
+            
         if header == 'Content-Security-Policy':
-            # Check for unsafe directives
+            # Check for unsafe directives in CSP
             unsafe_directives = ["'unsafe-inline'", "'unsafe-eval'", "*"]
             return not any(directive in value for directive in unsafe_directives)
         
         elif header == 'X-Frame-Options':
+            # Check for proper X-Frame-Options values
             return value.upper() in ['DENY', 'SAMEORIGIN']
         
         elif header == 'X-Content-Type-Options':
+            # Check for nosniff directive
             return value.lower() == 'nosniff'
         
         elif header == 'X-XSS-Protection':
+            # Check for XSS protection with blocking mode
             return '1; mode=block' in value
         
         elif header == 'Referrer-Policy':
+            # Check for secure referrer policy values
             secure_values = ['no-referrer', 'same-origin', 'strict-origin']
             return any(secure_value in value for secure_value in secure_values)
         
@@ -764,7 +821,7 @@ class FormValidator:
         Returns:
             Security score between 0.0 (worst) and 1.0 (best)
         """
-        # Severity weights for vulnerabilities
+        # Severity weights for different vulnerability levels
         vuln_weights = {
             'CRITICAL': 0.8,
             'HIGH': 0.6,
@@ -772,7 +829,7 @@ class FormValidator:
             'LOW': 0.1,
         }
         
-        # Weights for missing validations
+        # Weights for missing validations (less severe than actual vulnerabilities)
         validation_weights = {
             'CRITICAL': 0.4,
             'HIGH': 0.3,
@@ -780,7 +837,7 @@ class FormValidator:
             'LOW': 0.1,
         }
         
-        # Calculate penalty from vulnerabilities
+        # Calculate penalty from actual vulnerabilities
         vuln_penalty = 0.0
         for vuln in vulnerabilities:
             severity = vuln.get('severity', 'LOW')
@@ -794,16 +851,17 @@ class FormValidator:
             weight = validation_weights.get(severity, 0.1)
             validation_penalty += weight
         
-        # Combine penalties
-        total_penalty = vuln_penalty + (validation_penalty * 0.5)  # Validations less critical
+        # Combine penalties with validation penalty weighted lower
+        total_penalty = vuln_penalty + (validation_penalty * 0.5)
         
-        # Normalize with diminishing returns
+        # Normalize penalty based on total number of items
         total_items = len(vulnerabilities) + len(missing_validations)
         normalized_penalty = min(total_penalty / (1 + total_items * 0.2), 1.0)
         
         # Security score is inverse of penalty
         security_score = 1.0 - normalized_penalty
         
+        # Ensure score is within 0.0 to 1.0 range
         return max(0.0, min(1.0, security_score))
     
     def _input_to_dict(self, form_input: FormInput) -> Dict[str, Any]:
@@ -814,7 +872,7 @@ class FormValidator:
             form_input: FormInput object
             
         Returns:
-            Dictionary representation
+            Dictionary representation of FormInput
         """
         return {
             'name': form_input.name,
@@ -834,6 +892,6 @@ class FormValidator:
         Get validator statistics
         
         Returns:
-            Dictionary of statistics
+            Dictionary of current validator statistics
         """
         return self.stats.copy()

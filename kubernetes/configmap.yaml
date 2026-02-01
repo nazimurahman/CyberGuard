@@ -1,4 +1,3 @@
-# kubernetes/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,72 +8,81 @@ metadata:
     component: configuration
     version: v1.0.0
 data:
-  # Application Configuration
+  #  APPLICATION CONFIGURATION 
   APP_NAME: "CyberGuard Web Security AI"
   APP_VERSION: "1.0.0"
   APP_ENVIRONMENT: "production"
   
-  # Logging Configuration
+  #  LOGGING CONFIGURATION 
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
   LOG_OUTPUT: "/var/log/cyberguard/app.log"
   
-  # Security Scanner Configuration
+  #  SECURITY SCANNER CONFIGURATION 
   SCAN_MAX_DEPTH: "3"
   SCAN_TIMEOUT_SECONDS: "30"
   SCAN_CONCURRENT_WORKERS: "5"
   SCAN_RATE_LIMIT_PER_MINUTE: "60"
   
-  # Agent Configuration
+  #  AGENT CONFIGURATION 
   AGENT_CONFIDENCE_THRESHOLD: "0.6"
   AGENT_MAX_FINDINGS: "20"
   AGENT_COORDINATION_TIMEOUT: "10"
   
-  # mHC (Manifold-Constrained Hyper-Connections) Configuration
+  #  MHC (MANIFOLD-CONSTRAINED HYPER-CONNECTIONS) CONFIG 
   MHC_STATE_DIMENSION: "512"
   MHC_TEMPERATURE: "1.0"
   MHC_SINKHORN_ITERATIONS: "50"
   MHC_SIGNAL_BOUND: "1.0"
   MHC_IDENTITY_PRESERVE_FACTOR: "0.1"
   
-  # GQA (Grouped Query Attention) Configuration
+  #  GQA (GROUPED QUERY ATTENTION) CONFIG 
   GQA_D_MODEL: "512"
   GQA_N_HEADS: "8"
   GQA_N_GROUPS: "2"
   GQA_DROPOUT_RATE: "0.1"
   GQA_USE_FLASH_ATTENTION: "true"
   
-  # Threat Intelligence Feeds
+  #  THREAT INTELLIGENCE FEEDS 
+  # CVE feed URL - provides Common Vulnerabilities and Exposures data
   CVE_FEED_URL: "https://cve.mitre.org/data/downloads/allitems.csv"
-  EXPLOITDB_FEED_URL: "https://raw.githubusercontent.com/vulnersCom/vulners-whitelist/master/exploitdb.csv"
+
+  # Exploit Database feed - contains known exploits and vulnerabilities
+  EXPLOITDB_FEED_URL: "https://raw.githubusercontent.com/offensive-security/exploitdb/master/files_exploits.csv"
+
+  # Malware feed from abuse.ch - tracks Feodo/Badbot malware
   MALWARE_FEED_URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.csv"
+
+  # Phishing feed from OpenPhish - tracks active phishing sites
   PHISHING_FEED_URL: "https://openphish.com/feed.txt"
   
-  # OWASP Detection Rules
-  ENABLE_XSS_DETECTION: "true"
-  ENABLE_SQLI_DETECTION: "true"
-  ENABLE_CSRF_DETECTION: "true"
-  ENABLE_SSRF_DETECTION: "true"
-  ENABLE_COMMAND_INJECTION_DETECTION: "true"
+  #  OWASP DETECTION RULES 
+  # Enable/disable detection for various OWASP Top 10 vulnerabilities
+  ENABLE_XSS_DETECTION: "true"               # Cross-Site Scripting
+  ENABLE_SQLI_DETECTION: "true"              # SQL Injection
+  ENABLE_CSRF_DETECTION: "true"              # Cross-Site Request Forgery
+  ENABLE_SSRF_DETECTION: "true"              # Server-Side Request Forgery
+  ENABLE_COMMAND_INJECTION_DETECTION: "true" # Command Injection
   
-  # API Rate Limiting
-  API_RATE_LIMIT_REQUESTS: "100"
-  API_RATE_LIMIT_PERIOD: "minute"
-  API_MAX_REQUEST_SIZE_MB: "10"
+  #  API RATE LIMITING 
+  API_RATE_LIMIT_REQUESTS: "100"        # Max requests per period
+  API_RATE_LIMIT_PERIOD: "minute"       # Rate limit period
+  API_MAX_REQUEST_SIZE_MB: "10"         # Maximum request body size
   
-  # Dashboard Configuration
-  DASHBOARD_REFRESH_INTERVAL_SECONDS: "30"
-  DASHBOARD_MAX_HISTORY_DAYS: "90"
-  DASHBOARD_ALERT_RETENTION_DAYS: "30"
+  #  DASHBOARD CONFIGURATION 
+  DASHBOARD_REFRESH_INTERVAL_SECONDS: "30"  # Auto-refresh interval
+  DASHBOARD_MAX_HISTORY_DAYS: "90"          # Maximum days of historical data
+  DASHBOARD_ALERT_RETENTION_DAYS: "30"      # Days to retain alerts
   
-  # Model Training Configuration
-  TRAINING_BATCH_SIZE: "32"
-  TRAINING_LEARNING_RATE: "0.001"
-  TRAINING_MAX_EPOCHS: "100"
-  TRAINING_EARLY_STOPPING_PATIENCE: "10"
-  TRAINING_MODEL_CHECKPOINT_DIR: "/models/checkpoints"
+  #  MODEL TRAINING CONFIGURATION 
+  TRAINING_BATCH_SIZE: "32"                    # Number of samples per batch
+  TRAINING_LEARNING_RATE: "0.001"              # Learning rate for optimizer
+  TRAINING_MAX_EPOCHS: "100"                   # Maximum training epochs
+  TRAINING_EARLY_STOPPING_PATIENCE: "10"       # Epochs to wait before early stopping
+  TRAINING_MODEL_CHECKPOINT_DIR: "/models/checkpoints"  # Directory for saving model checkpoints
   
-  # Web Security Headers to Check
+  #  SECURITY HEADERS CHECKLIST 
+  # Multi-line string containing security headers to validate in web applications
   SECURITY_HEADERS_TO_CHECK: |
     Content-Security-Policy
     X-Frame-Options
@@ -87,7 +95,8 @@ data:
     Cross-Origin-Embedder-Policy
     Cross-Origin-Resource-Policy
   
-  # Common Vulnerable Endpoints to Scan
+  #  VULNERABLE ENDPOINTS LIST
+  # Common paths that may expose sensitive information or be vulnerable
   VULNERABLE_ENDPOINTS: |
     /admin
     /wp-admin
@@ -107,106 +116,122 @@ data:
     /config
     /database
   
-  # Nginx Configuration for Reverse Proxy
+  #  NGINX REVERSE PROXY CONFIGURATION 
   nginx.conf: |
-    # CyberGuard Nginx Configuration
-    # This config is mounted into the nginx reverse proxy container
+    # CyberGuard Nginx Reverse Proxy Configuration
+    # This configuration is mounted into the Nginx container
     
+    # Events block defines connection handling parameters
     events {
-        worker_connections 1024;
+        worker_connections 1024;  # Maximum simultaneous connections per worker
     }
     
+    # HTTP block contains web server configuration
     http {
-        # Basic Settings
-        sendfile on;
-        tcp_nopush on;
-        tcp_nodelay on;
-        keepalive_timeout 65;
-        types_hash_max_size 2048;
-        server_tokens off;
+        #  BASIC SETTINGS 
+        sendfile on;          # Use sendfile for file transfers (kernel optimization)
+        tcp_nopush on;        # Optimize sending of packets
+        tcp_nodelay on;       # Disable Nagle's algorithm for low latency
+        keepalive_timeout 65; # Timeout for keep-alive connections
+        types_hash_max_size 2048; # Maximum size of MIME types hash table
+        server_tokens off;    # Hide Nginx version for security
         
-        # MIME Types
-        include /etc/nginx/mime.types;
-        default_type application/octet-stream;
+        #  MIME TYPES
+        include /etc/nginx/mime.types;  # Include standard MIME type definitions
+        default_type application/octet-stream; # Default MIME type for unknown files
         
-        # Logging
-        access_log /var/log/nginx/access.log;
-        error_log /var/log/nginx/error.log;
+        #  LOGGING 
+        access_log /var/log/nginx/access.log;  # Access log location
+        error_log /var/log/nginx/error.log;    # Error log location
         
-        # Gzip Compression
-        gzip on;
-        gzip_vary on;
-        gzip_proxied any;
-        gzip_comp_level 6;
-        gzip_types text/plain text/css text/xml text/javascript 
-                   application/json application/javascript application/xml+rss 
-                   application/atom+xml image/svg+xml;
+        #  GZIP COMPRESSION 
+        gzip on;              # Enable Gzip compression
+        gzip_vary on;         # Add "Vary: Accept-Encoding" header
+        gzip_proxied any;     # Compress responses for proxied requests
+        gzip_comp_level 6;    # Compression level (1-9, 6 is balanced)
+        gzip_types            # File types to compress
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/json
+            application/javascript
+            application/xml+rss
+            application/atom+xml
+            image/svg+xml;
         
-        # Security Headers for Nginx
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header X-XSS-Protection "1; mode=block" always;
-        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        #  SECURITY HEADERS 
+        # Add security headers to all responses
+        add_header X-Frame-Options "SAMEORIGIN" always;          # Prevent clickjacking
+        add_header X-Content-Type-Options "nosniff" always;      # Prevent MIME sniffing
+        add_header X-XSS-Protection "1; mode=block" always;      # Enable XSS filtering
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always; # Control referrer info
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:;" always;
         
-        # Rate Limiting
-        limit_req_zone $binary_remote_addr zone=api_limit:10m rate=100r/m;
-        limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=10r/m;
+        #  RATE LIMITING ZONES 
+        # Define rate limiting zones for different types of requests
+        limit_req_zone $binary_remote_addr zone=api_limit:10m rate=100r/m;   # API rate limit
+        limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=10r/m;   # Authentication rate limit
         
-        # Upstream Servers
+        #  UPSTREAM SERVERS 
+        # Define backend services for load balancing
         upstream cyberguard_api {
-            least_conn;
-            server cyberguard-api:8000 max_fails=3 fail_timeout=30s;
+            least_conn;                              # Use least connections load balancing
+            server cyberguard-api:8000 max_fails=3 fail_timeout=30s; # API service
         }
         
         upstream cyberguard_dashboard {
             least_conn;
-            server cyberguard-dashboard:8080 max_fails=3 fail_timeout=30s;
+            server cyberguard-dashboard:8080 max_fails=3 fail_timeout=30s; # Dashboard service
         }
         
         upstream cyberguard_scanner {
             least_conn;
-            server cyberguard-scanner:9000 max_fails=3 fail_timeout=30s;
+            server cyberguard-scanner:9000 max_fails=3 fail_timeout=30s; # Scanner service
         }
         
-        # Main Server Block
+        #  MAIN HTTPS SERVER BLOCK
         server {
-            listen 443 ssl http2;
-            listen [::]:443 ssl http2;
-            server_name cyberguard.example.com;
+            listen 443 ssl http2;           # Listen on port 443 with SSL and HTTP/2
+            listen [::]:443 ssl http2;      # IPv6 support
+            server_name cyberguard.example.com; # Domain name
             
-            # SSL Configuration - These will be mounted from secrets
-            ssl_certificate /etc/nginx/ssl/tls.crt;
-            ssl_certificate_key /etc/nginx/ssl/tls.key;
-            ssl_protocols TLSv1.2 TLSv1.3;
+            #  SSL CONFIGURATION 
+            # Certificate paths (mounted from Kubernetes Secrets)
+            ssl_certificate /etc/nginx/ssl/tls.crt;      # SSL certificate
+            ssl_certificate_key /etc/nginx/ssl/tls.key;  # SSL private key
+            
+            # SSL protocols and ciphers
+            ssl_protocols TLSv1.2 TLSv1.3;               # Allow only secure protocols
             ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
-            ssl_prefer_server_ciphers off;
-            ssl_session_cache shared:SSL:10m;
-            ssl_session_timeout 10m;
+            ssl_prefer_server_ciphers off;              # Let client choose cipher
+            ssl_session_cache shared:SSL:10m;           # SSL session cache
+            ssl_session_timeout 10m;                    # SSL session timeout
             
-            # API Routes
+            #  API ROUTES 
             location /api/ {
-                limit_req zone=api_limit burst=20 nodelay;
+                limit_req zone=api_limit burst=20 nodelay; # Apply rate limiting
                 
-                proxy_pass http://cyberguard_api;
-                proxy_http_version 1.1;
-                proxy_set_header Upgrade $http_upgrade;
-                proxy_set_header Connection 'upgrade';
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_cache_bypass $http_upgrade;
+                # Proxy configuration
+                proxy_pass http://cyberguard_api;       # Forward to API upstream
+                proxy_http_version 1.1;                 # Use HTTP/1.1
+                proxy_set_header Upgrade $http_upgrade; # WebSocket upgrade header
+                proxy_set_header Connection 'upgrade';  # Connection upgrade header
+                proxy_set_header Host $host;            # Preserve original host
+                proxy_set_header X-Real-IP $remote_addr; # Client IP
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; # Forward chain
+                proxy_set_header X-Forwarded-Proto $scheme; # Original protocol
+                proxy_cache_bypass $http_upgrade;       # Bypass cache for WebSocket
                 
-                # Timeouts
-                proxy_connect_timeout 60s;
-                proxy_send_timeout 60s;
-                proxy_read_timeout 60s;
+                # Timeout configurations
+                proxy_connect_timeout 60s;              # Connection timeout
+                proxy_send_timeout 60s;                 # Send timeout
+                proxy_read_timeout 60s;                 # Read timeout
             }
-            
-            # Dashboard Routes
+
+            #  DASHBOARD ROUTES
             location / {
-                proxy_pass http://cyberguard_dashboard;
+                proxy_pass http://cyberguard_dashboard; # Forward to dashboard
                 proxy_http_version 1.1;
                 proxy_set_header Upgrade $http_upgrade;
                 proxy_set_header Connection 'upgrade';
@@ -217,42 +242,42 @@ data:
                 proxy_cache_bypass $http_upgrade;
             }
             
-            # Scanner WebSocket
+            #  WEB SOCKET ENDPOINT 
             location /ws/ {
-                proxy_pass http://cyberguard_scanner;
+                proxy_pass http://cyberguard_scanner;   # Forward WebSocket connections
                 proxy_http_version 1.1;
-                proxy_set_header Upgrade $http_upgrade;
-                proxy_set_header Connection "Upgrade";
+                proxy_set_header Upgrade $http_upgrade; # Required for WebSocket
+                proxy_set_header Connection "Upgrade";  # Required for WebSocket
                 proxy_set_header Host $host;
                 proxy_set_header X-Real-IP $remote_addr;
                 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
                 
-                # WebSocket specific timeouts
-                proxy_read_timeout 3600s;
-                proxy_send_timeout 3600s;
+                # Extended timeouts for WebSocket connections
+                proxy_read_timeout 3600s;               # 1 hour read timeout
+                proxy_send_timeout 3600s;               # 1 hour send timeout
             }
             
-            # Health Check Endpoint
+            #  HEALTH CHECK ENDPOINT 
             location /health {
-                access_log off;
-                return 200 "healthy\n";
-                add_header Content-Type text/plain;
+                access_log off;                         # Disable logging for health checks
+                return 200 "healthy\n";                 # Return healthy response
+                add_header Content-Type text/plain;     # Plain text response
             }
             
-            # Status Page
+            #  NGINX STATUS PAGE 
             location /status {
-                stub_status on;
-                access_log off;
-                allow 10.0.0.0/8;  # Internal network only
-                deny all;
+                stub_status on;                         # Enable Nginx status page
+                access_log off;                         # Disable access logging
+                allow 10.0.0.0/8;                       # Allow internal network only
+                deny all;                               # Deny all others
             }
         }
         
-        # HTTP to HTTPS Redirect
+        #  HTTP TO HTTPS REDIRECT SERVER
         server {
-            listen 80;
-            listen [::]:80;
-            server_name cyberguard.example.com;
-            return 301 https://$server_name$request_uri;
+            listen 80;                                  # Listen on port 80 (HTTP)
+            listen [::]:80;                             # IPv6 support
+            server_name cyberguard.example.com;         # Same domain
+            return 301 https://$server_name$request_uri; # Permanent redirect to HTTPS
         }
     }

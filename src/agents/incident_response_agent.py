@@ -14,6 +14,9 @@ import json
 from dataclasses import dataclass, asdict
 from ..core.mhc_architecture import ManifoldConstrainedHyperConnections
 
+# Import random module which was missing but used in the code
+import random
+
 # Enum for incident severity levels (NIST classification)
 class IncidentSeverity(Enum):
     """NIST incident severity classification"""
@@ -54,10 +57,10 @@ class SecurityIncident:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization"""
-        data = asdict(self)
-        data['severity'] = self.severity.value
-        data['status'] = self.status.value
-        data['timestamp'] = self.timestamp.isoformat()
+        data = asdict(self)  # Convert dataclass to dictionary
+        data['severity'] = self.severity.value  # Convert enum to value
+        data['status'] = self.status.value      # Convert enum to value
+        data['timestamp'] = self.timestamp.isoformat()  # Convert datetime to ISO string
         return data
 
 class IncidentResponseAgent:
@@ -202,7 +205,7 @@ class IncidentResponseAgent:
             Dictionary with incident analysis and response actions
         """
         import time
-        start_time = time.time()
+        start_time = time.time()  # Start timing response
         
         # Extract threat information
         threat_type = security_data.get('threat_type', 'UNKNOWN')
@@ -228,16 +231,16 @@ class IncidentResponseAgent:
                 'source_ip': source_ip,
                 'threat_level': threat_level,
                 'evidence_count': len(evidence),
-                'initial_evidence': evidence[:3]  # First 3 pieces
+                'initial_evidence': evidence[:3]  # First 3 pieces of evidence
             },
             source_ip=source_ip if source_ip != 'UNKNOWN' else None,
             target_url=target_url if target_url != 'UNKNOWN' else None,
             estimated_impact=self._estimate_impact(severity, threat_type),
-            response_actions=[],
-            required_escalation=False
+            response_actions=[],  # Empty list, will be populated
+            required_escalation=False  # Default, will be evaluated
         )
         
-        # Store incident
+        # Store incident in memory
         self.incidents[incident_id] = incident
         
         # Step 3: Execute incident response lifecycle
@@ -251,8 +254,10 @@ class IncidentResponseAgent:
         # Step 5: Update metrics
         response_time = time.time() - start_time
         self.response_times.append(response_time)
+        # Calculate average response time
         self.average_response_time = sum(self.response_times) / len(self.response_times)
         
+        # Track resolution/escalation statistics
         if incident.status == IncidentStatus.CLOSED:
             self.resolved_incidents += 1
         elif incident.status == IncidentStatus.ESCALATED:
@@ -264,6 +269,7 @@ class IncidentResponseAgent:
         # Step 7: Generate comprehensive response report
         response_report = self._generate_response_report(incident, response_result)
         
+        # Return comprehensive analysis result
         return {
             'agent_id': self.agent_id,
             'agent_name': self.name,
@@ -319,11 +325,13 @@ class IncidentResponseAgent:
         if threat_type in critical_threats:
             # Escalate severity for critical threats
             if base_severity.value < IncidentSeverity.CRITICAL.value:
+                # Increase severity by one level, cap at CRITICAL
                 return IncidentSeverity(min(base_severity.value + 1, IncidentSeverity.CRITICAL.value))
         
         elif threat_type in high_threats:
             # Escalate severity for high threats
             if base_severity.value < IncidentSeverity.HIGH.value:
+                # Increase severity by one level, cap at HIGH
                 return IncidentSeverity(min(base_severity.value + 1, IncidentSeverity.HIGH.value))
         
         # Adjust based on evidence volume and credibility
@@ -336,9 +344,9 @@ class IncidentResponseAgent:
     
     def _generate_incident_id(self) -> str:
         """Generate unique incident identifier"""
-        self.incident_counter += 1
-        timestamp = datetime.now().strftime("%Y%m%d")
-        return f"INC-{timestamp}-{self.incident_counter:06d}"
+        self.incident_counter += 1  # Increment counter
+        timestamp = datetime.now().strftime("%Y%m%d")  # Current date as YYYYMMDD
+        return f"INC-{timestamp}-{self.incident_counter:06d}"  # Format with leading zeros
     
     def _estimate_impact(self, severity: IncidentSeverity, 
                         threat_type: str) -> str:
@@ -352,6 +360,7 @@ class IncidentResponseAgent:
         Returns:
             Human-readable impact estimation
         """
+        # Templates for impact descriptions by severity
         impact_templates = {
             IncidentSeverity.CRITICAL: [
                 "Critical business disruption, data loss possible",
@@ -381,9 +390,8 @@ class IncidentResponseAgent:
         }
         
         # Select random template for given severity
-        import random
         templates = impact_templates.get(severity, ["Impact assessment pending"])
-        impact = random.choice(templates)
+        impact = random.choice(templates)  # Randomly select one template
         
         # Add threat-specific context
         if threat_type == 'DATA_BREACH':
@@ -414,11 +422,11 @@ class IncidentResponseAgent:
             Dictionary with response results
         """
         threat_type = security_data.get('threat_type', 'UNKNOWN')
-        threat_level = security_data.get('threat_level', 0.0)
         
         # Get appropriate playbook
         playbook = self.response_playbooks.get(threat_type)
         if not playbook:
+            # Create dynamic playbook for unknown threat types
             playbook = self._create_dynamic_playbook(threat_type, incident.severity)
         
         # Step 1: Initial containment (immediate action)
@@ -459,6 +467,7 @@ class IncidentResponseAgent:
             recovery_result
         )
         
+        # Return comprehensive lifecycle results
         return {
             'new_status': new_status,
             'requires_escalation': requires_escalation,
@@ -516,18 +525,19 @@ class IncidentResponseAgent:
                 action = "Quarantined suspicious files"
                 actions.append(action)
         
-        # Add playbook-specific actions
+        # Add playbook-specific actions (first 2 steps)
         if 'steps' in playbook:
             playbook_actions = [f"Playbook: {step}" for step in playbook.get('steps', [])[:2]]
             actions.extend(playbook_actions)
         
         # Determine containment success
+        # Success if actions were taken and incident is not critical (which requires escalation)
         success = len(actions) > 0 and incident.severity != IncidentSeverity.CRITICAL
         
         return {
             'success': success,
             'actions': actions,
-            'strategies_applied': strategies[:3],
+            'strategies_applied': strategies[:3],  # First 3 strategies
             'containment_time': playbook.get('containment_time', 'Unknown')
         }
     
@@ -576,12 +586,14 @@ class IncidentResponseAgent:
         Returns:
             True if internal IP
         """
+        # Common private IP address ranges
         internal_prefixes = ['10.', '192.168.', '172.16.', '172.17.', 
                            '172.18.', '172.19.', '172.20.', '172.21.',
                            '172.22.', '172.23.', '172.24.', '172.25.',
                            '172.26.', '172.27.', '172.28.', '172.29.',
                            '172.30.', '172.31.', '127.', '::1']
         
+        # Check if IP starts with any internal prefix
         return any(ip_address.startswith(prefix) for prefix in internal_prefixes)
     
     def _execute_eradication(self, incident: SecurityIncident,
@@ -607,19 +619,19 @@ class IncidentResponseAgent:
             "Updated security configurations"
         ]
         
-        # Select appropriate eradication actions
+        # Select appropriate eradication actions based on severity
         if incident.severity.value >= IncidentSeverity.HIGH.value:
-            actions = eradication_actions[:3]  # Take first 3 actions
+            actions = eradication_actions[:3]  # Take first 3 actions for high severity
         else:
-            actions = eradication_actions[:2]  # Take first 2 actions
+            actions = eradication_actions[:2]  # Take first 2 actions for lower severity
         
-        # Add playbook-specific eradication
+        # Add playbook-specific eradication steps if available
         if 'eradication_steps' in playbook:
             actions.extend([f"Playbook eradication: {step}" 
                           for step in playbook.get('eradication_steps', [])])
         
         return {
-            'success': len(actions) > 0,
+            'success': len(actions) > 0,  # Success if actions were taken
             'actions': actions,
             'eradication_complete': True
         }
@@ -642,8 +654,8 @@ class IncidentResponseAgent:
         recovery_key = self._determine_recovery_procedure(incident)
         procedures = self.recovery_procedures.get(recovery_key, [])
         
-        # Execute recovery procedures
-        for procedure in procedures[:2]:  # Limit to 2 procedures
+        # Execute recovery procedures (limit to 2)
+        for procedure in procedures[:2]:
             actions.append(f"Recovery: {procedure}")
             
             # Simulate procedure execution
@@ -654,7 +666,7 @@ class IncidentResponseAgent:
             elif 'scan' in procedure.lower():
                 actions.append("Security scan completed")
         
-        # Verify recovery
+        # Verify recovery with additional checks
         verification_actions = [
             "Verified system integrity",
             "Confirmed no residual threats",
@@ -662,17 +674,18 @@ class IncidentResponseAgent:
             "Tested system functionality"
         ]
         
+        # Add first 2 verification actions
         actions.extend(verification_actions[:2])
         
         return {
-            'success': len(actions) > 0,
+            'success': len(actions) > 0,  # Success if actions were taken
             'actions': actions,
             'recovery_time': playbook.get('recovery_time', 'Unknown'),
             'systems_restored': len(incident.affected_assets)
         }
     
     def _determine_recovery_procedure(self, incident: SecurityIncident) -> str:
-        """Determine appropriate recovery procedure"""
+        """Determine appropriate recovery procedure based on incident type"""
         if 'DATA_BREACH' in incident.attack_vectors:
             return 'DATA_BREACH'
         elif 'RANSOMWARE' in incident.attack_vectors:
@@ -700,12 +713,15 @@ class IncidentResponseAgent:
         Returns:
             New IncidentStatus
         """
+        # First check for escalation
         if requires_escalation:
             return IncidentStatus.ESCALATED
         
+        # Check containment failure
         if not containment_result['success']:
-            return IncidentStatus.DETECTED  # Still in detection
+            return IncidentStatus.DETECTED  # Still in detection phase
         
+        # Check progression through lifecycle
         if containment_result['success'] and not eradication_result:
             return IncidentStatus.CONTAINED
         
@@ -715,7 +731,7 @@ class IncidentResponseAgent:
         if recovery_result.get('success', False):
             return IncidentStatus.RECOVERED
         
-        # Default: move to next stage
+        # Default: move to next stage in predefined flow
         status_flow = {
             IncidentStatus.DETECTED: IncidentStatus.TRIAGED,
             IncidentStatus.TRIAGED: IncidentStatus.CONTAINED,
@@ -724,6 +740,7 @@ class IncidentResponseAgent:
             IncidentStatus.RECOVERED: IncidentStatus.CLOSED,
         }
         
+        # Get next status or keep current if not in flow
         return status_flow.get(current_status, current_status)
     
     def _calculate_containment_score(self, containment_result: Dict[str, Any],
@@ -732,13 +749,15 @@ class IncidentResponseAgent:
         """Calculate effectiveness score of containment efforts"""
         score = 0.0
         
+        # Base score for successful containment
         if containment_result['success']:
             score += 0.4
             
-            # Bonus for quick containment
+            # Bonus for immediate containment
             if 'Immediate' in containment_result.get('containment_time', ''):
                 score += 0.1
         
+        # Score for eradication
         if eradication_result.get('success', False):
             score += 0.3
             
@@ -746,18 +765,21 @@ class IncidentResponseAgent:
             if eradication_result.get('eradication_complete', False):
                 score += 0.1
         
+        # Score for recovery
         if recovery_result.get('success', False):
             score += 0.2
             
-            # Bonus for quick recovery
+            # Bonus for restoring multiple systems
             if recovery_result.get('systems_restored', 0) > 0:
                 score += 0.1
         
+        # Cap score at 1.0
         return min(score, 1.0)
     
     def _determine_next_steps(self, status: IncidentStatus,
                             requires_escalation: bool) -> List[str]:
         """Determine next steps based on current status"""
+        # If escalation needed, specific steps for analyst handoff
         if requires_escalation:
             return [
                 "Await human analyst review",
@@ -765,6 +787,7 @@ class IncidentResponseAgent:
                 "Gather additional evidence"
             ]
         
+        # Define next steps for each status
         next_steps_map = {
             IncidentStatus.DETECTED: [
                 "Analyze attack vector",
@@ -803,6 +826,7 @@ class IncidentResponseAgent:
             ]
         }
         
+        # Get next steps or default monitoring
         return next_steps_map.get(status, ["Continue monitoring"])
     
     def _create_dynamic_playbook(self, threat_type: str,
@@ -825,17 +849,18 @@ class IncidentResponseAgent:
         """Update agent confidence based on response effectiveness"""
         containment_score = response_result.get('containment_score', 0.0)
         
+        # Adjust confidence based on containment score
         if containment_score >= 0.8:
-            # Excellent response, increase confidence
+            # Excellent response, increase confidence by 10%
             self.confidence = min(1.0, self.confidence * 1.1)
         elif containment_score >= 0.6:
-            # Good response, slight increase
+            # Good response, slight increase (5%)
             self.confidence = min(1.0, self.confidence * 1.05)
         elif containment_score >= 0.4:
-            # Adequate response, maintain
+            # Adequate response, maintain (slight decay 1%)
             self.confidence = self.confidence * 0.99
         else:
-            # Poor response, decrease confidence
+            # Poor response, decrease confidence by 10%
             self.confidence = max(0.1, self.confidence * 0.9)
     
     def _generate_response_report(self, incident: SecurityIncident,
@@ -863,37 +888,41 @@ class IncidentResponseAgent:
         """Get current reasoning state for mHC coordination"""
         # Convert recent incident patterns to state vector
         if not self.incidents:
-            return torch.zeros(512)
+            return torch.zeros(512)  # Return zero tensor if no incidents
         
-        # Use features from recent incidents
+        # Use features from last 5 incidents
         recent_incidents = list(self.incidents.values())[-5:]
         
-        # Extract features
+        # Extract features from each incident
         features = []
         for incident in recent_incidents:
             features.extend([
-                incident.severity.value / 4.0,  # Normalized severity
-                1.0 if incident.required_escalation else 0.0,
+                incident.severity.value / 4.0,  # Normalized severity (0-1)
+                1.0 if incident.required_escalation else 0.0,  # Escalation flag
                 len(incident.affected_assets) / 10.0,  # Normalized asset count
-                len(incident.response_actions) / 10.0  # Normalized actions
+                len(incident.response_actions) / 10.0  # Normalized actions count
             ])
         
         # Pad or truncate to 512 dimensions
         if len(features) < 512:
-            features.extend([0.0] * (512 - len(features)))
+            features.extend([0.0] * (512 - len(features)))  # Pad with zeros
         else:
-            features = features[:512]
+            features = features[:512]  # Truncate to 512
         
+        # Convert to PyTorch tensor
         return torch.tensor(features, dtype=torch.float32)
     
     def get_agent_status(self) -> Dict[str, Any]:
         """Get current agent status and metrics"""
+        # Count active incidents (not closed)
+        active_incidents = len([i for i in self.incidents.values() 
+                               if i.status != IncidentStatus.CLOSED])
+        
         return {
             'agent_id': self.agent_id,
             'agent_name': self.name,
             'confidence': self.confidence,
-            'active_incidents': len([i for i in self.incidents.values() 
-                                   if i.status != IncidentStatus.CLOSED]),
+            'active_incidents': active_incidents,
             'total_incidents': len(self.incidents),
             'resolved_incidents': self.resolved_incidents,
             'escalated_incidents': self.escalated_incidents,

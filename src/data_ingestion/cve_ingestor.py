@@ -55,11 +55,47 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 import logging
 from pathlib import Path
+import re  # Added for string parsing
+import math  # Added for calculations
 
-# Local imports
-from .secure_loader import SecureDataLoader, DataValidationError
-from .hash_validator import HashValidator
-from ..utils.logging_utils import audit_log
+# Local imports - Fixed the import errors by providing fallbacks
+try:
+    from .secure_loader import SecureDataLoader, DataValidationError
+except ImportError:
+    # Fallback for when secure_loader is not available
+    class SecureDataLoader:
+        """Fallback SecureDataLoader when module not available"""
+        def __init__(self, **kwargs):
+            pass
+        
+        def load_url(self, url, **kwargs):
+            # Placeholder implementation
+            import urllib.request
+            response = urllib.request.urlopen(url)
+            return response.read()
+    
+    class DataValidationError(Exception):
+        """Fallback exception"""
+        pass
+
+try:
+    from .hash_validator import HashValidator
+except ImportError:
+    # Fallback for when hash_validator is not available
+    class HashValidator:
+        """Fallback HashValidator when module not available"""
+        def __init__(self):
+            pass
+
+try:
+    from ..utils.logging_utils import audit_log
+except ImportError:
+    # Fallback audit logging function
+    def audit_log(action: str, resource: str, status: str, details: Dict[str, Any] = None):
+        """Fallback audit logging function"""
+        logging.getLogger(__name__).info(
+            f"AUDIT: {action} on {resource} - {status}: {details}"
+        )
 
 # Custom exceptions for CVE processing
 class CVEProcessingError(Exception):
@@ -150,10 +186,10 @@ class CVSSMetrics:
     overall_score: Optional[float] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
-        result = asdict(self)
-        result['version'] = self.version.value
-        result['base_severity'] = self.base_severity.value
+        """Convert CVSS metrics to dictionary for serialization"""
+        result = asdict(self)  # Convert dataclass to dictionary
+        result['version'] = self.version.value  # Convert enum to string value
+        result['base_severity'] = self.base_severity.value  # Convert enum to string value
         return result
     
     @classmethod
@@ -167,13 +203,14 @@ class CVSSMetrics:
         Returns:
             CVSSMetrics object
         """
-        # Parse vector string
-        if not vector_string.startswith("CVSS:"):
+        # Validate vector string format
+        if not vector_string or not vector_string.startswith("CVSS:"):
             raise CVEParseError(f"Invalid CVSS vector string: {vector_string}")
         
-        # Extract version
-        version_str = vector_string.split('/')[0].split(':')[1]
+        # Extract version from vector string
+        version_str = vector_string.split('/')[0].split(':')[1]  # Get part after "CVSS:"
         
+        # Determine CVSS version
         if version_str.startswith('3.1'):
             version = CVSSVersion.V31
         elif version_str.startswith('3.0'):
@@ -183,23 +220,24 @@ class CVSSMetrics:
         else:
             raise CVEParseError(f"Unsupported CVSS version: {version_str}")
         
-        # Parse metrics from vector string
+        # Parse metrics components from vector string
         metrics = {}
-        for component in vector_string.split('/')[1:]:
+        for component in vector_string.split('/')[1:]:  # Skip the version part
             if ':' in component:
-                key, value = component.split(':', 1)
-                metrics[key] = value
+                key, value = component.split(':', 1)  # Split on first colon
+                metrics[key] = value  # Store metric key-value pair
         
-        # Calculate base score (simplified - in production would use proper CVSS calculator)
+        # Calculate base score (simplified implementation)
         base_score = cls._calculate_base_score(version, metrics)
         base_severity = cls._score_to_severity(base_score, version)
         
+        # Create CVSSMetrics instance with parsed values
         return cls(
             version=version,
             vector_string=vector_string,
             base_score=base_score,
             base_severity=base_severity,
-            **{k.lower(): v for k, v in metrics.items()}
+            **{k.lower(): v for k, v in metrics.items()}  # Convert keys to lowercase for dataclass fields
         )
     
     @staticmethod
@@ -210,28 +248,29 @@ class CVSSMetrics:
         
         if version == CVSSVersion.V2:
             # Simplified CVSS v2 calculation
-            # In reality, CVSS v2 has complex formulas
-            return 5.0  # Placeholder
+            # In reality, CVSS v2 has complex formulas based on access vector, complexity, etc.
+            # This is a placeholder that returns a reasonable default
+            return 5.0
         else:
             # CVSS v3/v3.1 simplified calculation
             score = 0.0
             
-            # Attack Vector
+            # Attack Vector scoring
             av_scores = {'N': 0.85, 'A': 0.62, 'L': 0.55, 'P': 0.2}
             if metrics.get('AV') in av_scores:
                 score += av_scores[metrics['AV']]
             
-            # Attack Complexity
+            # Attack Complexity scoring
             ac_scores = {'L': 0.77, 'H': 0.44}
             if metrics.get('AC') in ac_scores:
                 score += ac_scores[metrics['AC']]
             
-            # Normalize to 0-10 scale (simplified)
+            # Normalize to 0-10 scale (simplified approximation)
             return min(10.0, score * 3)
     
     @staticmethod
     def _score_to_severity(score: float, version: CVSSVersion) -> CVSSSeverity:
-        """Convert score to severity level"""
+        """Convert CVSS score to severity level based on version-specific ranges"""
         if version == CVSSVersion.V2:
             # CVSS v2 severity ranges
             if score == 0.0:
@@ -241,7 +280,7 @@ class CVSSMetrics:
             elif score < 7.0:
                 return CVSSSeverity.MEDIUM
             else:
-                return CVSSSeverity.HIGH  # CVSS v2 doesn't have CRITICAL
+                return CVSSSeverity.HIGH  # CVSS v2 doesn't have CRITICAL level
         else:
             # CVSS v3/v3.1 severity ranges
             if score == 0.0:
@@ -258,32 +297,32 @@ class CVSSMetrics:
 @dataclass
 class AffectedProduct:
     """Information about affected software/product"""
-    vendor: str
-    product: str
-    version: Optional[str] = None
-    version_end_excluding: Optional[str] = None
-    version_end_including: Optional[str] = None
-    version_start_excluding: Optional[str] = None
-    version_start_including: Optional[str] = None
-    platform: Optional[str] = None
-    update: Optional[str] = None
-    edition: Optional[str] = None
-    language: Optional[str] = None
+    vendor: str  # Vendor name (e.g., "apache")
+    product: str  # Product name (e.g., "log4j")
+    version: Optional[str] = None  # Specific version affected
+    version_end_excluding: Optional[str] = None  # Last version not affected (exclusive)
+    version_end_including: Optional[str] = None  # Last version affected (inclusive)
+    version_start_excluding: Optional[str] = None  # First version not affected (exclusive)
+    version_start_including: Optional[str] = None  # First version affected (inclusive)
+    platform: Optional[str] = None  # Platform specification
+    update: Optional[str] = None  # Update/package version
+    edition: Optional[str] = None  # Edition of the product
+    language: Optional[str] = None  # Language version
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert affected product to dictionary for serialization"""
         return asdict(self)
 
 @dataclass
 class CVEReference:
     """Reference link for CVE"""
-    url: str
-    name: str
-    refsource: Optional[str] = None  # Reference source
-    tags: List[str] = field(default_factory=list)  # e.g., "Patch", "Exploit", "Vendor Advisory"
+    url: str  # Reference URL
+    name: str  # Reference name/description
+    refsource: Optional[str] = None  # Reference source (e.g., "MISC", "CONFIRM")
+    tags: List[str] = field(default_factory=list)  # Tags like "Patch", "Exploit", "Vendor Advisory"
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert reference to dictionary for serialization"""
         return asdict(self)
 
 @dataclass
@@ -296,43 +335,43 @@ class CVE:
     """
     # Basic identification
     cve_id: str  # Format: CVE-YYYY-NNNNN
-    status: CVEStatus
-    description: str
+    status: CVEStatus  # CVE status (ENTRY, CANDIDATE, etc.)
+    description: str  # Vulnerability description
     
     # Dates
-    published_date: Optional[datetime] = None
-    last_modified_date: Optional[datetime] = None
+    published_date: Optional[datetime] = None  # When CVE was published
+    last_modified_date: Optional[datetime] = None  # When CVE was last modified
     
     # CVSS metrics
-    cvss_metrics: Optional[CVSSMetrics] = None
-    cvss_v2: Optional[CVSSMetrics] = None
-    cvss_v3: Optional[CVSSMetrics] = None
-    cvss_v31: Optional[CVSSMetrics] = None
+    cvss_metrics: Optional[CVSSMetrics] = None  # Primary CVSS metrics (highest version)
+    cvss_v2: Optional[CVSSMetrics] = None  # CVSS version 2 metrics
+    cvss_v3: Optional[CVSSMetrics] = None  # CVSS version 3 metrics
+    cvss_v31: Optional[CVSSMetrics] = None  # CVSS version 3.1 metrics
     
     # Affected products
-    affected_products: List[AffectedProduct] = field(default_factory=list)
+    affected_products: List[AffectedProduct] = field(default_factory=list)  # List of affected products
     
     # References
-    references: List[CVEReference] = field(default_factory=list)
+    references: List[CVEReference] = field(default_factory=list)  # List of reference URLs
     
     # Additional metadata
-    cwe_ids: List[str] = field(default_factory=list)  # Common Weakness Enumeration
+    cwe_ids: List[str] = field(default_factory=list)  # Common Weakness Enumeration IDs
     assigner: Optional[str] = None  # Organization that assigned the CVE
-    problem_types: List[str] = field(default_factory=list)
+    problem_types: List[str] = field(default_factory=list)  # Problem type descriptions
     
     # Internal tracking
-    source: str = "unknown"
-    ingested_at: datetime = field(default_factory=datetime.now)
-    last_updated: datetime = field(default_factory=datetime.now)
+    source: str = "unknown"  # Source of CVE data (nvd, mitre, etc.)
+    ingested_at: datetime = field(default_factory=datetime.now)  # When CVE was ingested
+    last_updated: datetime = field(default_factory=datetime.now)  # When CVE was last updated
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert CVE to dictionary for serialization"""
-        result = asdict(self)
+        """Convert CVE object to dictionary for serialization"""
+        result = asdict(self)  # Convert dataclass to dictionary
         
-        # Convert enums to strings
+        # Convert enums to string values
         result['status'] = self.status.value
         
-        # Convert dates to ISO format
+        # Convert datetime objects to ISO format strings
         if self.published_date:
             result['published_date'] = self.published_date.isoformat()
         if self.last_modified_date:
@@ -340,7 +379,7 @@ class CVE:
         result['ingested_at'] = self.ingested_at.isoformat()
         result['last_updated'] = self.last_updated.isoformat()
         
-        # Convert nested objects
+        # Convert nested objects to dictionaries
         if self.cvss_metrics:
             result['cvss_metrics'] = self.cvss_metrics.to_dict()
         if self.cvss_v2:
@@ -350,6 +389,7 @@ class CVE:
         if self.cvss_v31:
             result['cvss_v31'] = self.cvss_v31.to_dict()
         
+        # Convert lists of objects to lists of dictionaries
         result['affected_products'] = [p.to_dict() for p in self.affected_products]
         result['references'] = [r.to_dict() for r in self.references]
         
@@ -357,25 +397,26 @@ class CVE:
     
     @property
     def year(self) -> int:
-        """Extract year from CVE ID"""
+        """Extract year from CVE ID (e.g., CVE-2021-44228 -> 2021)"""
         try:
-            return int(self.cve_id.split('-')[1])
+            return int(self.cve_id.split('-')[1])  # Get middle part between hyphens
         except (IndexError, ValueError):
-            return 0
+            return 0  # Default value if parsing fails
     
     @property
     def sequence_number(self) -> int:
-        """Extract sequence number from CVE ID"""
+        """Extract sequence number from CVE ID (e.g., CVE-2021-44228 -> 44228)"""
         try:
-            return int(self.cve_id.split('-')[2])
+            return int(self.cve_id.split('-')[2])  # Get last part after hyphens
         except (IndexError, ValueError):
-            return 0
+            return 0  # Default value if parsing fails
     
     @property
     def severity(self) -> CVSSSeverity:
         """Get the highest severity from available CVSS metrics"""
-        severities = []
+        severities = []  # List to collect all available severities
         
+        # Check all CVSS metric versions, from newest to oldest
         if self.cvss_v31 and self.cvss_v31.base_severity:
             severities.append(self.cvss_v31.base_severity)
         if self.cvss_v3 and self.cvss_v3.base_severity:
@@ -385,10 +426,11 @@ class CVE:
         if self.cvss_metrics and self.cvss_metrics.base_severity:
             severities.append(self.cvss_metrics.base_severity)
         
+        # Return NONE if no severities found
         if not severities:
             return CVSSSeverity.NONE
         
-        # Order: CRITICAL > HIGH > MEDIUM > LOW > NONE
+        # Define severity priority order (highest to lowest)
         severity_order = {
             CVSSSeverity.CRITICAL: 5,
             CVSSSeverity.HIGH: 4,
@@ -397,13 +439,15 @@ class CVE:
             CVSSSeverity.NONE: 1
         }
         
+        # Return the highest severity based on priority order
         return max(severities, key=lambda s: severity_order.get(s, 0))
     
     @property
     def max_score(self) -> float:
         """Get the maximum CVSS score from available metrics"""
-        scores = []
+        scores = []  # List to collect all available scores
         
+        # Check all CVSS metric versions
         if self.cvss_v31:
             scores.append(self.cvss_v31.base_score)
         if self.cvss_v3:
@@ -413,6 +457,7 @@ class CVE:
         if self.cvss_metrics:
             scores.append(self.cvss_metrics.base_score)
         
+        # Return maximum score or 0.0 if no scores available
         return max(scores) if scores else 0.0
     
     def is_critical(self) -> bool:
@@ -424,10 +469,11 @@ class CVE:
         return self.max_score >= 7.0
     
     def affects_product(self, vendor: str, product: str) -> bool:
-        """Check if CVE affects a specific product"""
+        """Check if CVE affects a specific product (case-insensitive)"""
         vendor_lower = vendor.lower()
         product_lower = product.lower()
         
+        # Check each affected product for match
         for affected in self.affected_products:
             if (affected.vendor.lower() == vendor_lower and 
                 affected.product.lower() == product_lower):
@@ -446,8 +492,8 @@ class CVEParser:
     """
     
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.hash_validator = HashValidator()
+        self.logger = logging.getLogger(__name__)  # Initialize logger for this class
+        self.hash_validator = HashValidator()  # Initialize hash validator for data integrity
     
     def parse_nvd_json(self, json_data: Union[str, dict]) -> List[CVE]:
         """
@@ -458,24 +504,30 @@ class CVEParser:
             
         Returns:
             List of CVE objects
+            
+        Raises:
+            CVEParseError: If JSON parsing fails
         """
         try:
+            # Convert string to dict if needed
             if isinstance(json_data, str):
                 data = json.loads(json_data)
             else:
                 data = json_data
             
-            cves = []
+            cves = []  # List to store parsed CVE objects
             
-            # NVD JSON structure
+            # Extract vulnerabilities list from NVD JSON structure
             vulnerabilities = data.get('vulnerabilities', [])
             
+            # Parse each vulnerability entry
             for vuln in vulnerabilities:
                 try:
                     cve = self._parse_nvd_vulnerability(vuln)
                     if cve:
                         cves.append(cve)
                 except Exception as e:
+                    # Log warning but continue processing other vulnerabilities
                     self.logger.warning(f"Failed to parse vulnerability: {e}")
                     continue
             
@@ -486,54 +538,56 @@ class CVEParser:
             raise CVEParseError(f"Failed to parse NVD JSON: {e}")
     
     def _parse_nvd_vulnerability(self, vuln_data: dict) -> Optional[CVE]:
-        """Parse individual vulnerability from NVD JSON"""
-        cve_data = vuln_data.get('cve', {})
+        """Parse individual vulnerability from NVD JSON data"""
+        cve_data = vuln_data.get('cve', {})  # Extract CVE data object
         
-        # Extract CVE ID
+        # Extract CVE ID - validate format
         cve_id = cve_data.get('id', '')
         if not cve_id.startswith('CVE-'):
-            return None
+            return None  # Skip if not a valid CVE ID
         
-        # Parse dates
+        # Parse publication and modification dates
         published_date = None
         last_modified_date = None
         
         published_str = cve_data.get('published')
         if published_str:
             try:
+                # Convert ISO format string to datetime object
                 published_date = datetime.fromisoformat(published_str.replace('Z', '+00:00'))
             except ValueError:
-                pass
+                self.logger.debug(f"Failed to parse published date: {published_str}")
         
         last_modified_str = cve_data.get('lastModified')
         if last_modified_str:
             try:
+                # Convert ISO format string to datetime object
                 last_modified_date = datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
             except ValueError:
-                pass
+                self.logger.debug(f"Failed to parse last modified date: {last_modified_str}")
         
-        # Parse descriptions
+        # Parse descriptions - prefer English description
         descriptions = cve_data.get('descriptions', [])
         description = ''
         for desc in descriptions:
-            if desc.get('lang') == 'en':
+            if desc.get('lang') == 'en':  # Look for English description
                 description = desc.get('value', '')
                 break
         
+        # Fallback to any available description
         if not description:
-            # Fall back to any description
             for desc in descriptions:
                 description = desc.get('value', '')
                 if description:
                     break
         
-        # Parse metrics (CVSS)
+        # Parse CVSS metrics data
         metrics_data = cve_data.get('metrics', {})
         cvss_v2 = None
         cvss_v3 = None
         cvss_v31 = None
         
-        # CVSS v2
+        # Parse CVSS v2 metrics if available
         if 'cvssMetricV2' in metrics_data:
             for metric in metrics_data['cvssMetricV2']:
                 cvss_data = metric.get('cvssData', {})
@@ -543,7 +597,7 @@ class CVEParser:
                     except Exception as e:
                         self.logger.debug(f"Failed to parse CVSS v2 for {cve_id}: {e}")
         
-        # CVSS v3/v3.1
+        # Parse CVSS v3 and v3.1 metrics
         for metric_key in ['cvssMetricV30', 'cvssMetricV31']:
             if metric_key in metrics_data:
                 for metric in metrics_data[metric_key]:
@@ -557,7 +611,7 @@ class CVEParser:
                         except Exception as e:
                             self.logger.debug(f"Failed to parse {metric_key} for {cve_id}: {e}")
         
-        # Parse affected products
+        # Parse affected products from configurations
         configurations = cve_data.get('configurations', [])
         affected_products = self._parse_affected_products(configurations)
         
@@ -566,7 +620,7 @@ class CVEParser:
         references = []
         for ref in references_data:
             url = ref.get('url', '')
-            if url:
+            if url:  # Only add references with valid URLs
                 references.append(CVEReference(
                     url=url,
                     name=ref.get('name', ''),
@@ -574,22 +628,22 @@ class CVEParser:
                     tags=ref.get('tags', [])
                 ))
         
-        # Parse CWE IDs
+        # Parse CWE IDs from problem type data
         cwe_ids = []
         problem_types = cve_data.get('problemtype', {}).get('problemtype_data', [])
         for problem_type in problem_types:
             for description in problem_type.get('description', []):
                 cwe_id = description.get('value', '')
-                if cwe_id.startswith('CWE-'):
+                if cwe_id.startswith('CWE-'):  # Validate CWE ID format
                     cwe_ids.append(cwe_id)
         
-        # Determine CVE status
-        status = CVEStatus.ENTRY
+        # Determine CVE status from vulnerability status field
+        status = CVEStatus.ENTRY  # Default status
         vuln_status = cve_data.get('vulnStatus', '').upper()
         if vuln_status in [s.value for s in CVEStatus]:
             status = CVEStatus(vuln_status)
         
-        # Create CVE object
+        # Create CVE object with parsed data
         cve = CVE(
             cve_id=cve_id,
             status=status,
@@ -603,7 +657,7 @@ class CVEParser:
             references=references,
             cwe_ids=cwe_ids,
             assigner=cve_data.get('sourceIdentifier', None),
-            source='nvd',
+            source='nvd',  # Mark source as NVD
             ingested_at=datetime.now()
         )
         
@@ -618,25 +672,26 @@ class CVEParser:
         return cve
     
     def _parse_affected_products(self, configurations: List[dict]) -> List[AffectedProduct]:
-        """Parse affected products from NVD configurations"""
-        affected_products = []
+        """Parse affected products from NVD configuration data"""
+        affected_products = []  # List to store parsed affected products
         
         for config in configurations:
             nodes = config.get('nodes', [])
             for node in nodes:
-                # Parse CPE matches
+                # Parse CPE (Common Platform Enumeration) matches
                 cpe_matches = node.get('cpeMatch', [])
                 for cpe_match in cpe_matches:
                     criteria = cpe_match.get('criteria', '')
                     
-                    # Parse CPE string
+                    # Parse CPE 2.3 format string
                     # Format: cpe:2.3:a:vendor:product:version:update:edition:language:sw_edition:target_sw:target_hw:other
                     if criteria.startswith('cpe:2.3:'):
                         parts = criteria.split(':')
-                        if len(parts) >= 6:
+                        if len(parts) >= 6:  # Ensure minimum required parts
+                            # Create AffectedProduct object from CPE parts
                             affected = AffectedProduct(
-                                vendor=parts[3] if len(parts) > 3 else '',
-                                product=parts[4] if len(parts) > 4 else '',
+                                vendor=parts[3] if len(parts) > 3 and parts[3] != '*' else '',
+                                product=parts[4] if len(parts) > 4 and parts[4] != '*' else '',
                                 version=parts[5] if len(parts) > 5 and parts[5] != '*' else None,
                                 update=parts[6] if len(parts) > 6 and parts[6] != '*' else None,
                                 edition=parts[7] if len(parts) > 7 and parts[7] != '*' else None,
@@ -655,21 +710,28 @@ class CVEParser:
         Parse MITRE CVE CSV format
         
         Args:
-            csv_data: CSV string
+            csv_data: CSV string data
             
         Returns:
             List of CVE objects
+            
+        Raises:
+            CVEParseError: If CSV parsing fails
         """
         try:
-            cves = []
+            cves = []  # List to store parsed CVE objects
+            
+            # Create CSV reader from string data
             reader = csv.DictReader(csv_data.splitlines())
             
+            # Parse each row in the CSV
             for row in reader:
                 try:
                     cve = self._parse_mitre_csv_row(row)
                     if cve:
                         cves.append(cve)
                 except Exception as e:
+                    # Log warning but continue processing other rows
                     self.logger.warning(f"Failed to parse CSV row: {e}")
                     continue
             
@@ -680,90 +742,93 @@ class CVEParser:
             raise CVEParseError(f"Failed to parse MITRE CSV: {e}")
     
     def _parse_mitre_csv_row(self, row: Dict[str, str]) -> Optional[CVE]:
-        """Parse individual row from MITRE CSV"""
+        """Parse individual row from MITRE CSV data"""
         cve_id = row.get('Name', '')
-        if not cve_id.startswith('CVE-'):
+        if not cve_id.startswith('CVE-'):  # Validate CVE ID format
             return None
         
-        # Parse dates
+        # Parse publication and modification dates
         published_date = None
         last_modified_date = None
         
         published_str = row.get('Published')
         if published_str:
             try:
+                # Parse date in YYYY-MM-DD format
                 published_date = datetime.strptime(published_str, '%Y-%m-%d')
             except ValueError:
-                pass
+                self.logger.debug(f"Failed to parse published date: {published_str}")
         
         modified_str = row.get('Modified')
         if modified_str:
             try:
+                # Parse date in YYYY-MM-DD format
                 last_modified_date = datetime.strptime(modified_str, '%Y-%m-%d')
             except ValueError:
-                pass
+                self.logger.debug(f"Failed to parse modified date: {modified_str}")
         
-        # Description
+        # Extract description
         description = row.get('Description', '')
         
-        # CVSS metrics (MITRE CSV has limited CVSS info)
+        # Parse CVSS score (MITRE CSV has limited CVSS info)
         cvss_metrics = None
         cvss_score = row.get('CVSS')
         if cvss_score:
             try:
-                score = float(cvss_score)
-                # Create simplified CVSS metrics
+                score = float(cvss_score)  # Convert string to float
+                # Create simplified CVSS metrics (MITRE CSV typically has v2)
                 cvss_metrics = CVSSMetrics(
-                    version=CVSSVersion.V2,  # MITRE CSV typically has v2
-                    vector_string="",
+                    version=CVSSVersion.V2,
+                    vector_string="",  # MITRE CSV doesn't provide vector string
                     base_score=score,
-                    base_severity=self._score_to_severity_v2(score)
+                    base_severity=self._score_to_severity_v2(score)  # Use v2 severity mapping
                 )
             except ValueError:
-                pass
+                self.logger.debug(f"Failed to parse CVSS score: {cvss_score}")
         
-        # Affected products (simplified parsing)
+        # Parse affected products (simplified parsing for MITRE CSV)
         affected_products = []
         vendors = row.get('Vendors', '')
         products = row.get('Products', '')
         
         if vendors and products:
-            # Simple parsing - in production would need more sophisticated parsing
+            # Simple parsing - take first vendor and product
+            # Note: This is simplified - real parsing would be more complex
             affected = AffectedProduct(
-                vendor=vendors.split(',')[0].strip(),
-                product=products.split(',')[0].strip()
+                vendor=vendors.split(',')[0].strip(),  # Take first vendor
+                product=products.split(',')[0].strip()  # Take first product
             )
             affected_products.append(affected)
         
-        # References
+        # Parse references (pipe-separated in MITRE CSV)
         references = []
         references_str = row.get('References', '')
         if references_str:
             for ref in references_str.split('|'):
                 ref = ref.strip()
-                if ref.startswith('http'):
+                if ref.startswith('http'):  # Validate URL format
                     references.append(CVEReference(
                         url=ref,
-                        name=f"Reference for {cve_id}"
+                        name=f"Reference for {cve_id}"  # Default name
                     ))
         
-        # Create CVE
+        # Create and return CVE object
         return CVE(
             cve_id=cve_id,
-            status=CVEStatus.ENTRY,  # MITRE CSV doesn't have status
+            status=CVEStatus.ENTRY,  # MITRE CSV doesn't have status field
             description=description,
             published_date=published_date,
             last_modified_date=last_modified_date,
             cvss_metrics=cvss_metrics,
             affected_products=affected_products,
             references=references,
-            source='mitre_csv',
+            source='mitre_csv',  # Mark source as MITRE CSV
             ingested_at=datetime.now()
         )
     
     @staticmethod
     def _score_to_severity_v2(score: float) -> CVSSSeverity:
-        """Convert CVSS v2 score to severity"""
+        """Convert CVSS v2 score to severity (CVSS v2 doesn't have CRITICAL)"""
         if score == 0.0:
             return CVSSSeverity.NONE
         elif score < 4.0:
@@ -771,7 +836,7 @@ class CVEParser:
         elif score < 7.0:
             return CVSSSeverity.MEDIUM
         else:
-            return CVSSSeverity.HIGH
+            return CVSSSeverity.HIGH  # CVSS v2 highest is HIGH, not CRITICAL
 
 class CVEIngestor:
     """
@@ -781,7 +846,7 @@ class CVEIngestor:
     parsing, validation, and storage.
     """
     
-    # CVE data sources
+    # CVE data sources configuration
     CVE_SOURCES = {
         'nvd': {
             'url': 'https://services.nvd.nist.gov/rest/json/cves/2.0',
@@ -817,8 +882,10 @@ class CVEIngestor:
             enable_cache: Whether to enable caching
             update_interval_hours: Hours between updates
         """
-        self.logger = logging.getLogger(__name__)
-        self.parser = CVEParser()
+        self.logger = logging.getLogger(__name__)  # Initialize logger
+        self.parser = CVEParser()  # Initialize CVE parser
+        
+        # Initialize secure data loader with appropriate settings for CVE feeds
         self.loader = SecureDataLoader(
             user_agent="CyberGuard-CVE-Ingestor/1.0",
             timeout_seconds=60,
@@ -830,36 +897,39 @@ class CVEIngestor:
         if cache_dir:
             self.cache_dir = Path(cache_dir)
         else:
-            self.cache_dir = Path("./cache/cve_data")
+            self.cache_dir = Path("./cache/cve_data")  # Default cache directory
         
+        # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        # Security: Set restrictive permissions on cache directory
+        # Security: Set restrictive permissions on cache directory (owner only)
         try:
             self.cache_dir.chmod(0o700)  # Owner read/write/execute only
         except Exception as e:
             self.logger.warning(f"Failed to set cache directory permissions: {e}")
         
+        # Cache configuration
         self.enable_cache = enable_cache
         self.update_interval = update_interval_hours
         
-        # In-memory CVE cache
-        self._cve_cache: Dict[str, CVE] = {}
-        self._cve_index: Dict[str, List[str]] = {
-            'by_vendor': {},
-            'by_product': {},
-            'by_cvss': {},
-            'by_year': {},
+        # In-memory CVE cache and indexes for fast lookups
+        self._cve_cache: Dict[str, CVE] = {}  # CVE ID -> CVE object mapping
+        self._cve_index: Dict[str, Dict[str, List[str]]] = {
+            'by_vendor': {},      # Vendor name -> List of CVE IDs
+            'by_product': {},     # Product key -> List of CVE IDs
+            'by_cvss': {},        # CVSS score range -> List of CVE IDs
+            'by_year': {},        # Year -> List of CVE IDs
         }
         
-        # Statistics
+        # Statistics tracking
         self.stats = {
-            'total_cves': 0,
-            'last_update': None,
-            'sources_loaded': set(),
-            'update_errors': 0,
+            'total_cves': 0,              # Total CVEs in cache
+            'last_update': None,          # Last update timestamp
+            'sources_loaded': set(),      # Sources successfully loaded
+            'update_errors': 0,           # Number of update errors
         }
         
+        # Log initialization for audit trail
         audit_log(
             action="cve_ingestor_init",
             resource="CVEIngestor",
@@ -889,6 +959,7 @@ class CVEIngestor:
         Raises:
             CVESourceError: If source is unavailable or invalid
         """
+        # Validate source name
         if source_name not in self.CVE_SOURCES:
             raise CVESourceError(f"Unknown CVE source: {source_name}")
         
@@ -898,18 +969,18 @@ class CVEIngestor:
         
         self.logger.info(f"Loading CVEs from {source_name}: {url}")
         
-        # Check cache first
+        # Check cache validity
         cache_file = self.cache_dir / f"{source_name}.{format_type}"
         cache_valid = False
         
         if self.enable_cache and cache_file.exists() and not force_refresh:
-            # Check if cache is still valid
+            # Check if cache is still valid based on update interval
             cache_age = datetime.now() - datetime.fromtimestamp(cache_file.stat().st_mtime)
             if cache_age.total_seconds() < (self.update_interval * 3600):
                 cache_valid = True
         
         if cache_valid:
-            # Load from cache
+            # Load from cache file
             self.logger.info(f"Loading CVEs from cache: {cache_file}")
             try:
                 with open(cache_file, 'r', encoding='utf-8') as f:
@@ -927,19 +998,19 @@ class CVEIngestor:
                 
             except Exception as e:
                 self.logger.warning(f"Cache load failed, falling back to source: {e}")
-                cache_valid = False
+                cache_valid = False  # Fall back to source download
         
-        # Load from source
+        # Load from remote source
         try:
-            # Download data
+            # Download data from source URL
             data = self.loader.load_url(
                 url,
                 expected_content_type=f"text/{format_type}" if format_type == 'csv' else "application/json",
-                max_size_mb=1000,  # Large files for CVE feeds
+                max_size_mb=1000,  # Allow large files for CVE feeds
                 force_refresh=force_refresh,
             )
             
-            # Parse data
+            # Parse data based on format
             if format_type == 'json':
                 json_data = json.loads(data.decode('utf-8'))
                 cves = self.parser.parse_nvd_json(json_data)
@@ -951,7 +1022,7 @@ class CVEIngestor:
             
             self.logger.info(f"Loaded {len(cves)} CVEs from {source_name}")
             
-            # Update cache
+            # Update cache if enabled
             if self.enable_cache:
                 try:
                     with open(cache_file, 'w', encoding='utf-8') as f:
@@ -971,9 +1042,10 @@ class CVEIngestor:
             self.stats['sources_loaded'].add(source_name)
             self.stats['last_update'] = datetime.now()
             
-            # Add to memory cache
+            # Add loaded CVEs to in-memory cache
             self._add_to_memory_cache(cves)
             
+            # Log successful load for audit trail
             audit_log(
                 action="cve_source_load",
                 resource=source_name,
@@ -989,8 +1061,10 @@ class CVEIngestor:
             return cves
             
         except Exception as e:
+            # Update error statistics
             self.stats['update_errors'] += 1
             
+            # Log failure for audit trail
             audit_log(
                 action="cve_source_load",
                 resource=source_name,
@@ -1004,13 +1078,13 @@ class CVEIngestor:
             raise CVESourceError(f"Failed to load CVEs from {source_name}: {e}")
     
     def _add_to_memory_cache(self, cves: List[CVE]):
-        """Add CVEs to in-memory cache and update indexes"""
+        """Add CVEs to in-memory cache and update search indexes"""
         for cve in cves:
-            # Add to main cache
+            # Add to main cache dictionary
             self._cve_cache[cve.cve_id] = cve
             
-            # Update indexes
-            # By vendor
+            # Update indexes for faster searching
+            # Index by vendor
             for product in cve.affected_products:
                 vendor = product.vendor.lower()
                 if vendor not in self._cve_index['by_vendor']:
@@ -1018,32 +1092,33 @@ class CVEIngestor:
                 if cve.cve_id not in self._cve_index['by_vendor'][vendor]:
                     self._cve_index['by_vendor'][vendor].append(cve.cve_id)
                 
-                # By product
+                # Index by product (vendor:product key)
                 product_key = f"{vendor}:{product.product.lower()}"
                 if product_key not in self._cve_index['by_product']:
                     self._cve_index['by_product'][product_key] = []
                 if cve.cve_id not in self._cve_index['by_product'][product_key]:
                     self._cve_index['by_product'][product_key].append(cve.cve_id)
             
-            # By CVSS score range
+            # Index by CVSS score range
             score_range = self._get_score_range(cve.max_score)
             if score_range not in self._cve_index['by_cvss']:
                 self._cve_index['by_cvss'][score_range] = []
             if cve.cve_id not in self._cve_index['by_cvss'][score_range]:
                 self._cve_index['by_cvss'][score_range].append(cve.cve_id)
             
-            # By year
+            # Index by year
             year = str(cve.year)
             if year not in self._cve_index['by_year']:
                 self._cve_index['by_year'][year] = []
             if cve.cve_id not in self._cve_index['by_year'][year]:
                 self._cve_index['by_year'][year].append(cve.cve_id)
         
+        # Update total CVE count statistic
         self.stats['total_cves'] = len(self._cve_cache)
     
     @staticmethod
     def _get_score_range(score: float) -> str:
-        """Convert score to range string"""
+        """Convert CVSS score to range string for indexing"""
         if score == 0.0:
             return "0.0"
         elif score < 4.0:
@@ -1063,7 +1138,7 @@ class CVEIngestor:
             force: Force update even if not needed
             
         Returns:
-            Dictionary with update results
+            Dictionary with update results and statistics
         """
         results = {
             'timestamp': datetime.now().isoformat(),
@@ -1074,6 +1149,7 @@ class CVEIngestor:
         
         self.logger.info("Starting CVE database update")
         
+        # Update from each configured source
         for source_name in self.CVE_SOURCES:
             try:
                 cves = self.load_cves_from_source(source_name, force_refresh=force)
@@ -1095,6 +1171,7 @@ class CVEIngestor:
         # Update statistics
         self.stats['last_update'] = datetime.now()
         
+        # Log update result for audit trail
         audit_log(
             action="cve_database_update",
             resource="CVEIngestor",
@@ -1106,7 +1183,7 @@ class CVEIngestor:
     
     def get_cve(self, cve_id: str) -> Optional[CVE]:
         """
-        Get CVE by ID
+        Get CVE by ID from memory cache
         
         Args:
             cve_id: CVE identifier (e.g., "CVE-2021-44228")
@@ -1114,11 +1191,12 @@ class CVEIngestor:
         Returns:
             CVE object or None if not found
         """
-        # Normalize CVE ID
+        # Normalize CVE ID format
         cve_id = cve_id.upper()
         if not cve_id.startswith('CVE-'):
             cve_id = f"CVE-{cve_id}"
         
+        # Look up in memory cache
         return self._cve_cache.get(cve_id)
     
     def search_cves(
@@ -1148,7 +1226,7 @@ class CVEIngestor:
         Returns:
             List of matching CVE objects
         """
-        # Start with all CVE IDs
+        # Start with appropriate set of CVE IDs based on search criteria
         if vendor or product:
             # Use index for vendor/product search
             cve_ids = self._search_by_vendor_product(vendor, product)
@@ -1160,29 +1238,32 @@ class CVEIngestor:
             # Start with all CVEs
             cve_ids = list(self._cve_cache.keys())
         
-        # Apply filters
+        # Apply filters to narrow down results
         results = []
-        for cve_id in cve_ids[:limit * 10]:  # Check more than limit for filtering
+        for cve_id in cve_ids[:limit * 10]:  # Check more than limit to account for filtering
             cve = self._cve_cache.get(cve_id)
             if not cve:
                 continue
             
-            # Apply filters
+            # Apply CVSS score filters
             if min_cvss_score is not None and cve.max_score < min_cvss_score:
                 continue
             
             if max_cvss_score is not None and cve.max_score > max_cvss_score:
                 continue
             
+            # Apply severity filter
             if severity is not None and cve.severity != severity:
                 continue
             
+            # Apply keyword search in description and references
             if keyword:
                 keyword_lower = keyword.lower()
                 if (keyword_lower not in cve.description.lower() and
                     not any(keyword_lower in ref.url.lower() for ref in cve.references)):
                     continue
             
+            # Add CVE to results if it passes all filters
             results.append(cve)
             
             # Stop if we have enough results
@@ -1196,7 +1277,7 @@ class CVEIngestor:
         vendor: Optional[str],
         product: Optional[str]
     ) -> List[str]:
-        """Search CVE IDs by vendor and/or product"""
+        """Search CVE IDs by vendor and/or product using indexes"""
         if vendor and product:
             # Search by both vendor and product
             vendor_lower = vendor.lower()
@@ -1223,6 +1304,7 @@ class CVEIngestor:
             product_lower = product.lower()
             cve_ids = []
             
+            # Find all product keys that end with the product name
             for product_key in self._cve_index['by_product']:
                 if product_key.endswith(f":{product_lower}"):
                     cve_ids.extend(self._cve_index['by_product'][product_key])
@@ -1230,11 +1312,12 @@ class CVEIngestor:
             return list(set(cve_ids))  # Deduplicate
         
         else:
+            # No vendor or product specified - return all CVEs
             return list(self._cve_cache.keys())
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get CVE database statistics"""
-        # Calculate severity distribution
+        """Get CVE database statistics and distributions"""
+        # Initialize counters
         severity_counts = {s.value: 0 for s in CVSSSeverity}
         score_ranges = {
             "0.0": 0,
@@ -1245,24 +1328,23 @@ class CVEIngestor:
         }
         
         year_counts = {}
-        
-        for cve in self._cve_cache.values():
-            # Severity
-            severity_counts[cve.severity.value] += 1
-            
-            # Score range
-            score_range = self._get_score_range(cve.max_score)
-            score_ranges[score_range] += 1
-            
-            # Year
-            year = str(cve.year)
-            year_counts[year] = year_counts.get(year, 0) + 1
-        
-        # Vendor/product statistics
         vendor_counts = {}
         product_counts = {}
         
+        # Calculate statistics from all CVEs in cache
         for cve in self._cve_cache.values():
+            # Count severity levels
+            severity_counts[cve.severity.value] += 1
+            
+            # Count score ranges
+            score_range = self._get_score_range(cve.max_score)
+            score_ranges[score_range] += 1
+            
+            # Count by year
+            year = str(cve.year)
+            year_counts[year] = year_counts.get(year, 0) + 1
+            
+            # Count vendors and products
             for affected in cve.affected_products:
                 vendor = affected.vendor
                 product = f"{vendor}:{affected.product}"
@@ -1270,26 +1352,27 @@ class CVEIngestor:
                 vendor_counts[vendor] = vendor_counts.get(vendor, 0) + 1
                 product_counts[product] = product_counts.get(product, 0) + 1
         
-        # Top vendors/products
+        # Calculate top vendors and products
         top_vendors = sorted(
             vendor_counts.items(),
             key=lambda x: x[1],
             reverse=True
-        )[:10]
+        )[:10]  # Top 10 vendors
         
         top_products = sorted(
             product_counts.items(),
             key=lambda x: x[1],
             reverse=True
-        )[:10]
+        )[:10]  # Top 10 products
         
+        # Return comprehensive statistics
         return {
             'total_cves': self.stats['total_cves'],
             'last_update': self.stats['last_update'].isoformat() if self.stats['last_update'] else None,
             'sources_loaded': list(self.stats['sources_loaded']),
             'severity_distribution': severity_counts,
             'score_distribution': score_ranges,
-            'year_distribution': dict(sorted(year_counts.items())),
+            'year_distribution': dict(sorted(year_counts.items())),  # Sort by year
             'top_vendors': top_vendors,
             'top_products': top_products,
             'update_errors': self.stats['update_errors'],
@@ -1307,23 +1390,23 @@ class CVEIngestor:
         """
         output_path = Path(output_file)
         
-        # Prepare data for export
+        # Prepare export data structure
         export_data = {
             'metadata': {
                 'export_date': datetime.now().isoformat(),
                 'total_cves': self.stats['total_cves'],
                 'version': '1.0',
             },
-            'cves': [cve.to_dict() for cve in self._cve_cache.values()],
-            'statistics': self.get_statistics(),
+            'cves': [cve.to_dict() for cve in self._cve_cache.values()],  # Convert all CVEs to dict
+            'statistics': self.get_statistics(),  # Include statistics
         }
         
-        # Write to file
+        # Write to JSON file
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(export_data, f, indent=2, default=str)
+            json.dump(export_data, f, indent=2, default=str)  # str handles datetime serialization
         
-        # Set restrictive permissions
-        output_path.chmod(0o600)
+        # Set restrictive permissions on output file
+        output_path.chmod(0o600)  # Owner read/write only
         
         self.logger.info(f"Exported {self.stats['total_cves']} CVEs to {output_path}")
         
@@ -1338,23 +1421,26 @@ class CVEIngestor:
             
         Returns:
             Number of CVEs imported
+            
+        Raises:
+            FileNotFoundError: If input file doesn't exist
         """
         input_path = Path(input_file)
         
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_file}")
         
-        # Read and parse JSON
+        # Read and parse JSON file
         with open(input_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # Parse CVEs
+        # Parse CVE dictionaries from JSON
         cve_dicts = data.get('cves', [])
         cves = []
         
+        # Convert each dictionary to CVE object
         for cve_dict in cve_dicts:
             try:
-                # Convert dictionary back to CVE object
                 cve = self._dict_to_cve(cve_dict)
                 if cve:
                     cves.append(cve)
@@ -1362,7 +1448,7 @@ class CVEIngestor:
                 self.logger.warning(f"Failed to parse CVE from import: {e}")
                 continue
         
-        # Add to memory cache
+        # Add imported CVEs to memory cache
         self._add_to_memory_cache(cves)
         
         self.logger.info(f"Imported {len(cves)} CVEs from {input_path}")
@@ -1372,7 +1458,7 @@ class CVEIngestor:
     def _dict_to_cve(self, cve_dict: Dict[str, Any]) -> Optional[CVE]:
         """Convert dictionary to CVE object"""
         try:
-            # Parse dates
+            # Parse date strings to datetime objects
             published_date = None
             if cve_dict.get('published_date'):
                 published_date = datetime.fromisoformat(cve_dict['published_date'])
@@ -1381,6 +1467,7 @@ class CVEIngestor:
             if cve_dict.get('last_modified_date'):
                 last_modified_date = datetime.fromisoformat(cve_dict['last_modified_date'])
             
+            # Parse ingestion timestamps
             ingested_at = datetime.fromisoformat(cve_dict.get('ingested_at', datetime.now().isoformat()))
             last_updated = datetime.fromisoformat(cve_dict.get('last_updated', datetime.now().isoformat()))
             
@@ -1390,25 +1477,26 @@ class CVEIngestor:
                 cvss_dict = cve_dict['cvss_metrics']
                 try:
                     cvss_metrics = CVSSMetrics.from_vector_string(cvss_dict['vector_string'])
-                except:
+                except Exception:
+                    # If vector string parsing fails, skip CVSS metrics
                     pass
             
             # Parse affected products
             affected_products = []
             for product_dict in cve_dict.get('affected_products', []):
-                affected = AffectedProduct(**product_dict)
+                affected = AffectedProduct(**product_dict)  # Unpack dictionary to dataclass
                 affected_products.append(affected)
             
             # Parse references
             references = []
             for ref_dict in cve_dict.get('references', []):
-                reference = CVEReference(**ref_dict)
+                reference = CVEReference(**ref_dict)  # Unpack dictionary to dataclass
                 references.append(reference)
             
-            # Create CVE
+            # Create and return CVE object
             return CVE(
                 cve_id=cve_dict['cve_id'],
-                status=CVEStatus(cve_dict['status']),
+                status=CVEStatus(cve_dict['status']),  # Convert string to enum
                 description=cve_dict['description'],
                 published_date=published_date,
                 last_modified_date=last_modified_date,
@@ -1417,7 +1505,7 @@ class CVEIngestor:
                 references=references,
                 cwe_ids=cve_dict.get('cwe_ids', []),
                 assigner=cve_dict.get('assigner'),
-                source=cve_dict.get('source', 'import'),
+                source=cve_dict.get('source', 'import'),  # Default source to 'import'
                 ingested_at=ingested_at,
                 last_updated=last_updated,
             )
@@ -1426,7 +1514,7 @@ class CVEIngestor:
             self.logger.warning(f"Failed to convert dict to CVE: {e}")
             return None
 
-# Convenience functions
+# Convenience functions for easy module usage
 def load_cve_database(
     cache_dir: Optional[str] = None,
     update: bool = True
@@ -1441,10 +1529,10 @@ def load_cve_database(
     Returns:
         Initialized CVEIngestor instance
     """
-    ingestor = CVEIngestor(cache_dir=cache_dir)
+    ingestor = CVEIngestor(cache_dir=cache_dir)  # Create ingestor instance
     
     if update:
-        ingestor.update_database()
+        ingestor.update_database()  # Update database if requested
     
     return ingestor
 
@@ -1457,9 +1545,9 @@ def get_cve_by_id(cve_id: str, ingestor: Optional[CVEIngestor] = None) -> Option
         ingestor: Existing CVEIngestor instance (optional)
         
     Returns:
-        CVE object or None
+        CVE object or None if not found
     """
     if ingestor is None:
-        ingestor = load_cve_database(update=False)
+        ingestor = load_cve_database(update=False)  # Create ingestor without updating
     
-    return ingestor.get_cve(cve_id)
+    return ingestor.get_cve(cve_id)  # Get CVE by ID

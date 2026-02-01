@@ -1,4 +1,3 @@
-# src/training/agent_trainer.py
 """
 Agent Training Module for Cybersecurity Agents
 Purpose: Train specialized security agents using reinforcement learning and imitation learning
@@ -28,6 +27,7 @@ from dataclasses import dataclass
 from enum import Enum
 import pickle
 import json
+from torch.utils.data import DataLoader  # Added missing import
 
 
 class TrainingMode(Enum):
@@ -145,20 +145,20 @@ class ExperienceReplayBuffer:
         self.state_dim = state_dim
         self.priority_replay = priority_replay
         
-        # Initialize buffers
+        # Initialize buffers with proper numpy data types
         self.states = np.zeros((buffer_size, state_dim), dtype=np.float32)
         self.actions = np.zeros(buffer_size, dtype=np.int32)
         self.rewards = np.zeros(buffer_size, dtype=np.float32)
         self.next_states = np.zeros((buffer_size, state_dim), dtype=np.float32)
-        self.dones = np.zeros(buffer_size, dtype=np.bool_)
+        self.dones = np.zeros(buffer_size, dtype=np.bool_)  # Changed from np.bool to np.bool_
         
         # For prioritized replay
         if priority_replay:
             self.priorities = np.zeros(buffer_size, dtype=np.float32)
             self.max_priority = 1.0  # Initial priority for new experiences
         
-        self.position = 0
-        self.size = 0
+        self.position = 0  # Current position in circular buffer
+        self.size = 0  # Current number of stored experiences
         
     def add(self, state: np.ndarray, action: int, reward: float,
             next_state: np.ndarray, done: bool):
@@ -174,18 +174,20 @@ class ExperienceReplayBuffer:
         """
         idx = self.position
         
+        # Store experience at current position
         self.states[idx] = state
         self.actions[idx] = action
         self.rewards[idx] = reward
         self.next_states[idx] = next_state
         self.dones[idx] = done
         
+        # Initialize priority for new experience if using prioritized replay
         if self.priority_replay:
             self.priorities[idx] = self.max_priority
         
-        # Update buffer position
+        # Update buffer position (circular buffer)
         self.position = (self.position + 1) % self.buffer_size
-        self.size = min(self.size + 1, self.buffer_size)
+        self.size = min(self.size + 1, self.buffer_size)  # Increment size, capped at buffer_size
     
     def sample(self, batch_size: int, beta: float = 0.4) -> Dict[str, np.ndarray]:
         """
@@ -198,34 +200,36 @@ class ExperienceReplayBuffer:
         Returns:
             Dictionary containing sampled experiences
         """
+        # Check if buffer has enough samples
         if self.size < batch_size:
             raise ValueError(f"Buffer size {self.size} < batch size {batch_size}")
         
         if self.priority_replay:
-            # Sample with probability proportional to priority
+            # Sample with probability proportional to priority (alpha=0.6)
             priorities = self.priorities[:self.size]
             probs = priorities ** 0.6  # alpha=0.6
-            probs = probs / probs.sum()
+            probs = probs / probs.sum()  # Normalize to probabilities
             
+            # Sample indices based on probabilities
             indices = np.random.choice(self.size, batch_size, p=probs)
             
-            # Compute importance sampling weights
+            # Compute importance sampling weights for bias correction
             weights = (self.size * probs[indices]) ** (-beta)
-            weights = weights / weights.max()  # Normalize weights
+            weights = weights / weights.max()  # Normalize weights to max=1
         else:
-            # Uniform sampling
+            # Uniform sampling - random indices from buffer
             indices = np.random.choice(self.size, batch_size, replace=False)
-            weights = np.ones(batch_size, dtype=np.float32)
+            weights = np.ones(batch_size, dtype=np.float32)  # All weights equal
         
-        # Extract experiences
+        # Extract experiences at sampled indices
         batch = {
             'states': self.states[indices],
             'actions': self.actions[indices],
             'rewards': self.rewards[indices],
             'next_states': self.next_states[indices],
             'dones': self.dones[indices],
-            'indices': indices if self.priority_replay else None,
-            'weights': weights if self.priority_replay else None
+            'indices': indices if self.priority_replay else None,  # Only return indices for priority updates
+            'weights': weights if self.priority_replay else None  # Only return weights for priority replay
         }
         
         return batch
@@ -239,9 +243,12 @@ class ExperienceReplayBuffer:
             priorities: New priorities
         """
         if not self.priority_replay:
-            return
+            return  # Nothing to update if not using prioritized replay
         
+        # Update priorities at given indices
         self.priorities[indices] = priorities
+        
+        # Update maximum priority for new experiences
         self.max_priority = max(self.max_priority, priorities.max())
     
     def save(self, filepath: str):
@@ -251,6 +258,7 @@ class ExperienceReplayBuffer:
         Args:
             filepath: Path to save buffer
         """
+        # Prepare buffer data for serialization
         buffer_data = {
             'states': self.states[:self.size],
             'actions': self.actions[:self.size],
@@ -261,10 +269,12 @@ class ExperienceReplayBuffer:
             'size': self.size
         }
         
+        # Add priority data if using prioritized replay
         if self.priority_replay:
             buffer_data['priorities'] = self.priorities[:self.size]
             buffer_data['max_priority'] = self.max_priority
         
+        # Serialize data using pickle
         with open(filepath, 'wb') as f:
             pickle.dump(buffer_data, f)
     
@@ -275,21 +285,25 @@ class ExperienceReplayBuffer:
         Args:
             filepath: Path to load buffer from
         """
+        # Deserialize data from pickle file
         with open(filepath, 'rb') as f:
             buffer_data = pickle.load(f)
         
-        # Load data
+        # Get size of loaded data
         data_size = buffer_data['states'].shape[0]
         
+        # Load data into buffer arrays
         self.states[:data_size] = buffer_data['states']
         self.actions[:data_size] = buffer_data['actions']
         self.rewards[:data_size] = buffer_data['rewards']
         self.next_states[:data_size] = buffer_data['next_states']
         self.dones[:data_size] = buffer_data['dones']
         
+        # Restore buffer state
         self.position = buffer_data['position']
         self.size = buffer_data['size']
         
+        # Load priority data if available
         if self.priority_replay and 'priorities' in buffer_data:
             self.priorities[:data_size] = buffer_data['priorities']
             self.max_priority = buffer_data.get('max_priority', 1.0)
@@ -314,38 +328,38 @@ class SecurityAgentPolicy(nn.Module):
         """
         super().__init__()
         
-        # Shared feature extractor
+        # Shared feature extractor - processes state into features
         self.feature_extractor = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU()
+            nn.Linear(state_dim, hidden_dim),  # Linear transformation
+            nn.LayerNorm(hidden_dim),  # Layer normalization for stability
+            nn.GELU(),  # Gaussian Error Linear Unit activation
+            nn.Linear(hidden_dim, hidden_dim),  # Second linear layer
+            nn.LayerNorm(hidden_dim),  # Another layer normalization
+            nn.GELU()  # Final activation
         )
         
-        # Actor network (policy)
+        # Actor network (policy) - outputs action probabilities
         self.actor = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, action_dim)
+            nn.Linear(hidden_dim, hidden_dim),  # Hidden layer
+            nn.GELU(),  # Activation function
+            nn.Linear(hidden_dim, action_dim)  # Output layer for actions
         )
         
-        # Critic network (value function)
+        # Critic network (value function) - estimates state value
         self.critic = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 1)
+            nn.Linear(hidden_dim, hidden_dim),  # Hidden layer
+            nn.GELU(),  # Activation function
+            nn.Linear(hidden_dim, 1)  # Single output for state value
         )
         
-        # Initialize weights
+        # Initialize weights using orthogonal initialization
         self.apply(self._init_weights)
     
     def _init_weights(self, module):
-        """Initialize network weights"""
-        if isinstance(module, nn.Linear):
-            nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
-            nn.init.constant_(module.bias, 0.0)
+        """Initialize network weights using orthogonal initialization"""
+        if isinstance(module, nn.Linear):  # Only initialize Linear layers
+            nn.init.orthogonal_(module.weight, gain=np.sqrt(2))  # Orthogonal init
+            nn.init.constant_(module.bias, 0.0)  # Zero bias initialization
     
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -357,16 +371,19 @@ class SecurityAgentPolicy(nn.Module):
         Returns:
             Tuple of (action_logits, state_value)
         """
+        # Extract features from state
         features = self.feature_extractor(state)
         
-        # Get action logits and value
+        # Get action logits (unnormalized probabilities) from actor
         action_logits = self.actor(features)
+        
+        # Get state value estimate from critic
         state_value = self.critic(features)
         
         return action_logits, state_value
     
     def get_action(self, state: torch.Tensor, 
-                   deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                   deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Sample action from policy
         
@@ -375,24 +392,24 @@ class SecurityAgentPolicy(nn.Module):
             deterministic: Whether to use deterministic policy
             
         Returns:
-            Tuple of (action, log_prob, entropy)
+            Tuple of (action, log_prob, entropy, state_value)
         """
-        # Get action logits and value
+        # Get action logits and value from forward pass
         action_logits, state_value = self.forward(state)
         
-        # Create categorical distribution
+        # Create categorical distribution over actions using logits
         action_dist = Categorical(logits=action_logits)
         
         if deterministic:
-            # Use mode of distribution
+            # Use mode of distribution (most probable action)
             action = torch.argmax(action_logits, dim=-1)
-            log_prob = action_dist.log_prob(action)
+            log_prob = action_dist.log_prob(action)  # Log probability of chosen action
         else:
-            # Sample from distribution
+            # Sample action from distribution (exploration)
             action = action_dist.sample()
-            log_prob = action_dist.log_prob(action)
+            log_prob = action_dist.log_prob(action)  # Log probability of sampled action
         
-        # Compute entropy (for regularization)
+        # Compute entropy of distribution (measure of uncertainty)
         entropy = action_dist.entropy()
         
         return action, log_prob, entropy, state_value
@@ -409,14 +426,16 @@ class SecurityAgentPolicy(nn.Module):
         Returns:
             Tuple of (log_probs, entropy, values)
         """
-        # Get action logits and values
+        # Get action logits and state values from forward pass
         action_logits, values = self.forward(states)
         
-        # Create categorical distribution
+        # Create categorical distribution over actions
         action_dist = Categorical(logits=action_logits)
         
-        # Compute log probabilities of actions
+        # Compute log probabilities of given actions
         log_probs = action_dist.log_prob(actions)
+        
+        # Compute entropy of distribution
         entropy = action_dist.entropy()
         
         return log_probs, entropy, values
@@ -442,10 +461,10 @@ class CurriculumManager:
         self.level_up_threshold = level_up_threshold
         
         # Current level and performance tracking
-        self.current_level = 0
-        self.level_performance = defaultdict(list)
+        self.current_level = 0  # Start at level 0 (easiest)
+        self.level_performance = defaultdict(list)  # Track performance per level
         
-        # Level configurations (increasing difficulty)
+        # Create configurations for each difficulty level
         self.level_configs = self._create_level_configs()
     
     def _create_level_configs(self) -> List[Dict[str, Any]]:
@@ -455,17 +474,18 @@ class CurriculumManager:
         Returns:
             List of level configurations
         """
-        configs = []
+        configs = []  # List to store configurations for each level
         
         for level in range(self.num_levels):
-            # Base difficulty increases with level
-            difficulty = level / (self.num_levels - 1)
+            # Base difficulty increases linearly with level (0 to 1)
+            difficulty = level / max(1, (self.num_levels - 1))  # Avoid division by zero
             
+            # Create configuration for this level
             config = {
                 'level': level,
                 'difficulty': difficulty,
                 
-                # Threat detection parameters
+                # Threat detection parameters - increase with difficulty
                 'threat_complexity': 0.1 + 0.9 * difficulty,  # 0.1 to 1.0
                 'obfuscation_level': 0.0 + 0.8 * difficulty,   # 0.0 to 0.8
                 'noise_level': 0.0 + 0.5 * difficulty,         # 0.0 to 0.5
@@ -482,12 +502,12 @@ class CurriculumManager:
                 'packing_level': 0.0 + 0.7 * difficulty,       # 0% to 70% packed
                 'polymorphic_variants': int(1 + 4 * difficulty),  # 1 to 5 variants
                 
-                # Reward scaling
+                # Reward scaling - adjust rewards based on difficulty
                 'reward_scale': 0.5 + 0.5 * difficulty,        # 0.5x to 1.0x
                 'penalty_multiplier': 1.0 + 2.0 * difficulty,  # 1x to 3x
             }
             
-            configs.append(config)
+            configs.append(config)  # Add config to list
         
         return configs
     
@@ -498,9 +518,10 @@ class CurriculumManager:
         Args:
             success: Whether agent succeeded in current task
         """
+        # Append success/failure to current level's performance history
         self.level_performance[self.current_level].append(success)
         
-        # Keep only recent performances
+        # Keep only recent performances (last 100 episodes) to prevent memory growth
         if len(self.level_performance[self.current_level]) > 100:
             self.level_performance[self.current_level] = \
                 self.level_performance[self.current_level][-100:]
@@ -512,24 +533,30 @@ class CurriculumManager:
         Returns:
             True if agent should advance to next level
         """
+        # Check if already at maximum level
         if self.current_level >= self.num_levels - 1:
             return False  # Already at max level
         
+        # Get performance history for current level
         performances = self.level_performance[self.current_level]
         
-        if len(performances) < 20:  # Need minimum samples
-            return False
+        # Need minimum samples to make level-up decision
+        if len(performances) < 20:
+            return False  # Not enough data
         
-        # Compute success rate
-        success_rate = np.mean(performances[-50:])  # Recent 50 episodes
+        # Compute success rate over recent 50 episodes
+        recent_performances = performances[-50:] if len(performances) >= 50 else performances
+        success_rate = np.mean(recent_performances)
         
         # Check if success rate exceeds threshold
         if success_rate >= self.level_up_threshold:
+            # Level up: increment current level
             self.current_level += 1
-            self.level_performance[self.current_level] = []  # Reset for new level
+            # Initialize empty performance list for new level
+            self.level_performance[self.current_level] = []
             return True
         
-        return False
+        return False  # Not ready to level up
     
     def check_level_down(self) -> bool:
         """
@@ -538,23 +565,26 @@ class CurriculumManager:
         Returns:
             True if agent should go back a level
         """
+        # Check if already at minimum level
         if self.current_level <= 0:
             return False  # Already at minimum level
         
+        # Get performance history for current level
         performances = self.level_performance[self.current_level]
         
+        # Need sufficient samples to make level-down decision
         if len(performances) < 50:
-            return False
+            return False  # Not enough data
         
-        # Compute success rate
+        # Compute overall success rate at current level
         success_rate = np.mean(performances)
         
-        # If struggling badly, go back a level
-        if success_rate < 0.3:  # Less than 30% success
-            self.current_level -= 1
+        # If agent is struggling badly (less than 30% success), go back a level
+        if success_rate < 0.3:
+            self.current_level -= 1  # Level down
             return True
         
-        return False
+        return False  # Keep at current level
     
     def get_current_config(self) -> Dict[str, Any]:
         """
@@ -563,6 +593,7 @@ class CurriculumManager:
         Returns:
             Current level configuration
         """
+        # Return configuration for current difficulty level
         return self.level_configs[self.current_level]
     
     def get_progress(self) -> Dict[str, Any]:
@@ -572,15 +603,20 @@ class CurriculumManager:
         Returns:
             Progress information
         """
+        # Calculate level progress based on previous level's performance
         if self.current_level == 0:
-            level_progress = 0.0
+            level_progress = 0.0  # Starting level has no previous performance
         else:
+            # Get performance from previous level
             performances = self.level_performance[self.current_level - 1]
             if len(performances) > 0:
-                level_progress = np.mean(performances[-20:])
+                # Compute average success rate over recent 20 episodes
+                recent_performances = performances[-20:] if len(performances) >= 20 else performances
+                level_progress = np.mean(recent_performances)
             else:
-                level_progress = 0.0
+                level_progress = 0.0  # No performance data
         
+        # Return progress information
         return {
             'current_level': self.current_level,
             'max_level': self.num_levels - 1,
@@ -614,88 +650,91 @@ class AgentTrainer:
         self.agent_policy = agent_policy
         self.config = config
         
-        # Setup device
+        # Setup device (GPU if available, otherwise CPU)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.agent_policy.to(self.device)
+        self.agent_policy.to(self.device)  # Move model to device
         
-        # Setup optimizer
+        # Setup optimizer (Adam optimizer for parameter updates)
         self.optimizer = optim.Adam(
-            self.agent_policy.parameters(),
-            lr=config.learning_rate
+            self.agent_policy.parameters(),  # Parameters to optimize
+            lr=config.learning_rate  # Learning rate from config
         )
         
-        # Setup experience replay
+        # Setup experience replay buffer
         self.replay_buffer = ExperienceReplayBuffer(
-            buffer_size=config.replay_buffer_size,
-            state_dim=config.state_dim,
-            priority_replay=config.priority_replay
+            buffer_size=config.replay_buffer_size,  # Max buffer size
+            state_dim=config.state_dim,  # State dimension
+            priority_replay=config.priority_replay  # Whether to use prioritized replay
         )
         
-        # Setup curriculum manager
+        # Setup curriculum manager if curriculum learning is enabled
         if config.curriculum_enabled:
             self.curriculum = CurriculumManager(
-                num_levels=config.curriculum_levels,
-                level_up_threshold=config.level_up_threshold
+                num_levels=config.curriculum_levels,  # Number of difficulty levels
+                level_up_threshold=config.level_up_threshold  # Threshold to advance
             )
         else:
-            self.curriculum = None
+            self.curriculum = None  # No curriculum learning
         
-        # Exploration strategy
-        self.epsilon = config.epsilon_start
-        self.exploration_decay = config.epsilon_decay
+        # Exploration strategy initialization
+        self.epsilon = config.epsilon_start  # Initial exploration rate
+        self.exploration_decay = config.epsilon_decay  # Decay rate for exploration
         
-        # Training state
-        self.episode = 0
-        self.total_steps = 0
-        self.best_reward = -float('inf')
+        # Training state tracking
+        self.episode = 0  # Current episode number
+        self.total_steps = 0  # Total training steps taken
+        self.best_reward = -float('inf')  # Best reward achieved so far
         
-        # Metrics tracking
+        # Metrics tracking dictionary
         self.metrics = {
-            'episode_rewards': [],
-            'episode_lengths': [],
-            'exploration_rate': [],
-            'value_loss': [],
-            'policy_loss': [],
-            'entropy': []
+            'episode_rewards': [],  # List of episode rewards
+            'episode_lengths': [],  # List of episode lengths
+            'exploration_rate': [],  # List of exploration rates
+            'value_loss': [],  # List of value losses
+            'policy_loss': [],  # List of policy losses
+            'entropy': []  # List of entropy values
         }
         
-        # For self-play
+        # For self-play: opponent pool initialization
         if config.self_play_enabled:
-            self.opponent_pool = []
-            self.opponent_pool_size = config.opponent_pool_size
+            self.opponent_pool = []  # List to store opponent models
+            self.opponent_pool_size = config.opponent_pool_size  # Max pool size
         
         # Setup logging
         self.logger = self._setup_logger()
         
+        # Log initialization information
         self.logger.info(f"Agent Trainer initialized for {config.agent_type}")
         self.logger.info(f"Training mode: {config.training_mode}")
     
     def _setup_logger(self) -> logging.Logger:
         """Setup logging configuration"""
+        # Create logger instance
         logger = logging.getLogger("AgentTrainer")
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.INFO)  # Set logging level to INFO
         
-        # Create logs directory
+        # Create logs directory if it doesn't exist
         log_dir = Path("logs/agents")
         log_dir.mkdir(parents=True, exist_ok=True)
         
-        # File handler
+        # File handler for logging to file
         file_handler = logging.FileHandler(
             log_dir / f"agent_training_{time.strftime('%Y%m%d_%H%M%S')}.log"
         )
         file_handler.setLevel(logging.INFO)
         
-        # Console handler
+        # Console handler for logging to console
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         
-        # Formatter
+        # Formatter for log messages
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         file_handler.setFormatter(formatter)
         console_handler.setFormatter(formatter)
         
+        # Add handlers to logger
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
         
@@ -715,18 +754,23 @@ class AgentTrainer:
         Returns:
             Array of advantages
         """
-        advantages = np.zeros_like(rewards)
-        last_advantage = 0
+        advantages = np.zeros_like(rewards)  # Initialize advantages array
+        last_advantage = 0  # Initialize last advantage for recursion
         
-        # Compute advantages in reverse order
+        # Compute advantages in reverse temporal order (from last step to first)
         for t in reversed(range(len(rewards))):
+            # Check if episode ended at this step
             if dones[t]:
+                # TD error for terminal state
                 delta = rewards[t] - values[t]
-                last_advantage = delta
+                last_advantage = delta  # Reset advantage for next episode
             else:
+                # TD error for non-terminal state
                 delta = rewards[t] + self.config.gamma * next_values[t] - values[t]
+                # GAE recursion: current delta + discounted future advantage
                 last_advantage = delta + self.config.gamma * self.config.lambda_ * last_advantage
             
+            # Store computed advantage
             advantages[t] = last_advantage
         
         return advantages
@@ -742,6 +786,7 @@ class AgentTrainer:
         Returns:
             Dictionary with collected experience
         """
+        # Initialize lists to store experience
         states = []
         actions = []
         rewards = []
@@ -750,24 +795,27 @@ class AgentTrainer:
         values = []
         log_probs = []
         
+        # Reset environment to initial state
         state = env.reset()
         
+        # Collect experience for specified number of steps
         for step in range(num_steps):
-            # Convert state to tensor
+            # Convert state to tensor and add batch dimension
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             
-            # Get action from policy
-            with torch.no_grad():
+            # Get action from policy (with exploration)
+            with torch.no_grad():  # No gradient computation during collection
                 if random.random() < self.epsilon and self.config.training_mode == TrainingMode.REINFORCEMENT_LEARNING:
-                    # Exploration: random action
+                    # Exploration: choose random action (epsilon-greedy)
                     action = torch.randint(0, self.config.action_dim, (1,)).item()
                     log_prob = torch.log(torch.tensor(1.0 / self.config.action_dim))
+                    # Estimate value for random action
                     value = self.agent_policy.critic(
                         self.agent_policy.feature_extractor(state_tensor)
                     ).item()
                     entropy = torch.log(torch.tensor(self.config.action_dim))
                 else:
-                    # Exploitation: policy action
+                    # Exploitation: get action from policy network
                     action_tensor, log_prob_tensor, entropy_tensor, value_tensor = \
                         self.agent_policy.get_action(state_tensor)
                     
@@ -775,10 +823,10 @@ class AgentTrainer:
                     log_prob = log_prob_tensor.item()
                     value = value_tensor.item()
             
-            # Take action in environment
+            # Take action in environment, get next state, reward, done flag
             next_state, reward, done, _ = env.step(action)
             
-            # Store experience
+            # Store experience components
             states.append(state)
             actions.append(action)
             rewards.append(reward)
@@ -787,14 +835,17 @@ class AgentTrainer:
             values.append(value)
             log_probs.append(log_prob)
             
-            # Update state
+            # Update state for next step
             state = next_state if not done else env.reset()
             
-            # Update exploration rate
+            # Update exploration rate (decay epsilon)
             self.epsilon = max(self.config.epsilon_end, 
                              self.epsilon * self.exploration_decay)
+            
+            # Increment total steps counter
+            self.total_steps += 1
         
-        # Convert to numpy arrays
+        # Convert lists to numpy arrays for efficiency
         states = np.array(states)
         actions = np.array(actions)
         rewards = np.array(rewards)
@@ -803,6 +854,7 @@ class AgentTrainer:
         values = np.array(values)
         log_probs = np.array(log_probs)
         
+        # Return collected experience as dictionary
         return {
             'states': states,
             'actions': actions,
@@ -824,132 +876,137 @@ class AgentTrainer:
         self.logger.info(f"Starting RL training for {num_episodes} episodes")
         
         for episode in range(num_episodes):
-            self.episode = episode + 1
-            episode_start_time = time.time()
+            self.episode = episode + 1  # Update episode counter
+            episode_start_time = time.time()  # Start timing episode
             
-            # Collect experience
+            # Collect experience by interacting with environment
             experience = self.collect_experience(env, self.config.steps_per_epoch)
             
-            # Compute advantages and returns
-            with torch.no_grad():
+            # Compute advantages and returns for PPO
+            with torch.no_grad():  # No gradients needed for advantage computation
                 # Get value estimates for next states
                 next_states_tensor = torch.FloatTensor(experience['next_states']).to(self.device)
                 next_values = self.agent_policy.critic(
                     self.agent_policy.feature_extractor(next_states_tensor)
-                ).squeeze(-1).cpu().numpy()
+                ).squeeze(-1).cpu().numpy()  # Remove extra dimension and convert to numpy
             
-            # Compute GAE advantages
+            # Compute GAE advantages using collected experience
             advantages = self.compute_gae(
-                experience['rewards'],
-                experience['values'],
-                next_values,
-                experience['dones']
+                experience['rewards'],  # Rewards
+                experience['values'],  # Current value estimates
+                next_values,  # Next state value estimates
+                experience['dones']  # Done flags
             )
             
-            # Normalize advantages
+            # Normalize advantages for training stability
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             
-            # Compute returns
+            # Compute returns (advantages + values)
             returns = advantages + experience['values']
             
-            # Convert to tensors
+            # Convert numpy arrays to PyTorch tensors
             states_tensor = torch.FloatTensor(experience['states']).to(self.device)
             actions_tensor = torch.LongTensor(experience['actions']).to(self.device)
             old_log_probs_tensor = torch.FloatTensor(experience['log_probs']).to(self.device)
             advantages_tensor = torch.FloatTensor(advantages).to(self.device)
             returns_tensor = torch.FloatTensor(returns).to(self.device)
             
-            # PPO training epochs
+            # PPO training epochs (multiple passes over collected data)
             for epoch in range(self.config.num_epochs):
                 # Shuffle indices for mini-batch training
                 indices = np.random.permutation(len(states_tensor))
                 
-                # Mini-batch training
+                # Process data in mini-batches
                 for start in range(0, len(indices), self.config.mini_batch_size):
                     end = start + self.config.mini_batch_size
                     batch_indices = indices[start:end]
                     
-                    # Get batch data
+                    # Get batch data using shuffled indices
                     batch_states = states_tensor[batch_indices]
                     batch_actions = actions_tensor[batch_indices]
                     batch_old_log_probs = old_log_probs_tensor[batch_indices]
                     batch_advantages = advantages_tensor[batch_indices]
                     batch_returns = returns_tensor[batch_indices]
                     
-                    # Get current policy outputs
+                    # Evaluate actions under current policy
                     batch_log_probs, batch_entropy, batch_values = \
                         self.agent_policy.evaluate_actions(batch_states, batch_actions)
                     
-                    # Compute policy loss (PPO clip)
-                    ratio = torch.exp(batch_log_probs - batch_old_log_probs)
-                    surr1 = ratio * batch_advantages
+                    # Compute policy loss using PPO clipping objective
+                    ratio = torch.exp(batch_log_probs - batch_old_log_probs)  # Importance ratio
+                    surr1 = ratio * batch_advantages  # Unclipped objective
                     surr2 = torch.clamp(ratio, 1 - self.config.clip_epsilon, 
-                                       1 + self.config.clip_epsilon) * batch_advantages
+                                       1 + self.config.clip_epsilon) * batch_advantages  # Clipped objective
+                    policy_loss = -torch.min(surr1, surr2).mean()  # Minimize negative advantage
                     
-                    policy_loss = -torch.min(surr1, surr2).mean()
-                    
-                    # Compute value loss
+                    # Compute value loss (mean squared error)
                     value_loss = F.mse_loss(batch_values.squeeze(-1), batch_returns)
                     
-                    # Compute entropy loss
+                    # Compute entropy loss (maximize entropy for exploration)
                     entropy_loss = -batch_entropy.mean()
                     
-                    # Total loss
+                    # Compute total loss with coefficients
                     total_loss = (policy_loss 
                                  + self.config.value_coef * value_loss
                                  + self.config.entropy_coef * entropy_loss)
                     
                     # Optimization step
-                    self.optimizer.zero_grad()
-                    total_loss.backward()
+                    self.optimizer.zero_grad()  # Clear previous gradients
+                    total_loss.backward()  # Backpropagate gradients
                     
-                    # Gradient clipping
+                    # Gradient clipping for stability
                     torch.nn.utils.clip_grad_norm_(
                         self.agent_policy.parameters(),
-                        max_norm=0.5
+                        max_norm=0.5  # Maximum gradient norm
                     )
                     
-                    self.optimizer.step()
+                    self.optimizer.step()  # Update model parameters
             
-            # Update metrics
-            episode_reward = np.sum(experience['rewards'])
-            episode_length = len(experience['rewards'])
+            # Update metrics after episode
+            episode_reward = np.sum(experience['rewards'])  # Total reward for episode
+            episode_length = len(experience['rewards'])  # Length of episode
             
+            # Store metrics for analysis
             self.metrics['episode_rewards'].append(episode_reward)
             self.metrics['episode_lengths'].append(episode_length)
             self.metrics['exploration_rate'].append(self.epsilon)
-            self.metrics['value_loss'].append(value_loss.item())
-            self.metrics['policy_loss'].append(policy_loss.item())
-            self.metrics['entropy'].append(entropy_loss.item())
+            self.metrics['value_loss'].append(value_loss.item() if 'value_loss' in locals() else 0)
+            self.metrics['policy_loss'].append(policy_loss.item() if 'policy_loss' in locals() else 0)
+            self.metrics['entropy'].append(entropy_loss.item() if 'entropy_loss' in locals() else 0)
             
             # Log episode summary
             episode_time = time.time() - episode_start_time
             self._log_episode_summary(episode, episode_reward, episode_length, 
                                      episode_time)
             
-            # Save checkpoint
+            # Save checkpoint periodically
             if self.episode % self.config.save_frequency == 0:
                 self.save_checkpoint(f"episode_{self.episode}")
             
-            # Evaluate agent
+            # Evaluate agent periodically
             if self.episode % self.config.eval_frequency == 0:
                 eval_metrics = self.evaluate(env, self.config.eval_episodes)
                 self._log_evaluation_metrics(eval_metrics)
             
-            # Curriculum learning update
+            # Curriculum learning update (if enabled)
             if self.curriculum:
-                # Update performance (simplified success metric)
-                success = episode_reward > np.mean(self.metrics['episode_rewards'][-10:])
+                # Determine if episode was successful (simplified heuristic)
+                recent_rewards = self.metrics['episode_rewards'][-10:] if len(self.metrics['episode_rewards']) >= 10 else self.metrics['episode_rewards']
+                success = episode_reward > np.mean(recent_rewards)
                 self.curriculum.update_performance(success)
                 
                 # Check for level changes
                 if self.curriculum.check_level_up():
                     self.logger.info(f"Agent leveled up to level {self.curriculum.current_level}")
-                    env.set_difficulty(self.curriculum.get_current_config())
+                    # Update environment difficulty if env has set_difficulty method
+                    if hasattr(env, 'set_difficulty'):
+                        env.set_difficulty(self.curriculum.get_current_config())
                 
                 if self.curriculum.check_level_down():
                     self.logger.info(f"Agent leveled down to level {self.curriculum.current_level}")
-                    env.set_difficulty(self.curriculum.get_current_config())
+                    # Update environment difficulty if env has set_difficulty method
+                    if hasattr(env, 'set_difficulty'):
+                        env.set_difficulty(self.curriculum.get_current_config())
     
     def train_imitation_learning(self, expert_demonstrations: List[Dict]):
         """
@@ -965,44 +1022,44 @@ class AgentTrainer:
         actions = []
         
         for demo in expert_demonstrations:
-            states.extend(demo['states'])
-            actions.extend(demo['actions'])
+            states.extend(demo['states'])  # Extract states
+            actions.extend(demo['actions'])  # Extract actions
         
-        # Convert to tensors
+        # Convert to PyTorch tensors
         states_tensor = torch.FloatTensor(states).to(self.device)
         actions_tensor = torch.LongTensor(actions).to(self.device)
         
-        # Create dataset and dataloader
+        # Create dataset and dataloader for batch processing
         dataset = torch.utils.data.TensorDataset(states_tensor, actions_tensor)
         dataloader = DataLoader(dataset, batch_size=self.config.batch_size, shuffle=True)
         
-        # Training loop
+        # Training loop for imitation learning
         num_epochs = self.config.num_epochs
         
         for epoch in range(num_epochs):
-            epoch_loss = 0
-            num_batches = 0
+            epoch_loss = 0  # Accumulate loss for epoch
+            num_batches = 0  # Count batches
             
             for batch_states, batch_actions in dataloader:
-                # Forward pass
+                # Forward pass: get action logits from policy
                 action_logits, _ = self.agent_policy(batch_states)
                 
-                # Compute loss (cross-entropy)
+                # Compute loss (cross-entropy between policy and expert actions)
                 loss = F.cross_entropy(action_logits, batch_actions)
                 
                 # Optimization step
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
+                self.optimizer.zero_grad()  # Clear gradients
+                loss.backward()  # Compute gradients
+                self.optimizer.step()  # Update parameters
                 
-                epoch_loss += loss.item()
-                num_batches += 1
+                epoch_loss += loss.item()  # Accumulate loss
+                num_batches += 1  # Increment batch counter
             
             # Log epoch summary
-            avg_loss = epoch_loss / num_batches
+            avg_loss = epoch_loss / num_batches if num_batches > 0 else 0
             self.logger.info(f"Epoch {epoch + 1}/{num_epochs} | Loss: {avg_loss:.4f}")
             
-            # Save checkpoint
+            # Save checkpoint periodically
             if (epoch + 1) % 10 == 0:
                 self.save_checkpoint(f"il_epoch_{epoch + 1}")
     
@@ -1016,62 +1073,65 @@ class AgentTrainer:
         """
         self.logger.info(f"Starting meta-learning with {len(tasks)} tasks")
         
-        # Store initial parameters
+        # Store initial parameters for reference
         initial_params = [p.clone().detach() for p in self.agent_policy.parameters()]
         
+        # Meta-learning iterations
         for iteration in range(num_iterations):
-            iteration_loss = 0
+            iteration_loss = 0  # Accumulate loss for iteration
             
             # Sample meta-batch of tasks
-            task_batch = random.sample(tasks, self.config.meta_batch_size)
+            task_batch = random.sample(tasks, min(self.config.meta_batch_size, len(tasks)))
             
             for task in task_batch:
                 # Clone model for task-specific adaptation
                 task_model = self._clone_model(self.agent_policy)
                 task_optimizer = optim.SGD(task_model.parameters(), 
-                                          lr=self.config.inner_lr)
+                                          lr=self.config.inner_lr)  # Inner loop optimizer
                 
-                # Fast adaptation on task
+                # Fast adaptation on task (inner loop)
                 for adaptation_step in range(self.config.adaptation_steps):
                     # Sample data from task
-                    task_data = task.sample_batch()
+                    task_data = task.sample_batch()  # Task should implement sample_batch method
                     states = torch.FloatTensor(task_data['states']).to(self.device)
                     actions = torch.LongTensor(task_data['actions']).to(self.device)
                     
-                    # Compute loss
+                    # Compute loss on task data
                     action_logits, _ = task_model(states)
                     loss = F.cross_entropy(action_logits, actions)
                     
-                    # Adaptation step
+                    # Adaptation step (inner loop update)
                     task_optimizer.zero_grad()
                     loss.backward()
                     task_optimizer.step()
                 
-                # Compute loss on adapted model
-                eval_data = task.sample_batch()
+                # Compute loss on adapted model (outer loop loss)
+                eval_data = task.sample_batch()  # New batch for evaluation
                 eval_states = torch.FloatTensor(eval_data['states']).to(self.device)
                 eval_actions = torch.LongTensor(eval_data['actions']).to(self.device)
                 
                 eval_logits, _ = task_model(eval_states)
                 eval_loss = F.cross_entropy(eval_logits, eval_actions)
                 
-                iteration_loss += eval_loss.item()
+                iteration_loss += eval_loss.item()  # Accumulate meta-loss
                 
                 # Compute gradients for meta-update
-                self.optimizer.zero_grad()
-                eval_loss.backward()
+                self.optimizer.zero_grad()  # Clear meta-optimizer gradients
+                eval_loss.backward()  # Backpropagate through adaptation steps
             
-            # Meta-update
+            # Meta-update (outer loop update)
             self.optimizer.step()
             
             # Log iteration summary
-            avg_loss = iteration_loss / len(task_batch)
+            avg_loss = iteration_loss / len(task_batch) if task_batch else 0
             self.logger.info(f"Iteration {iteration + 1}/{num_iterations} | "
                            f"Meta-loss: {avg_loss:.4f}")
     
     def _clone_model(self, model: nn.Module) -> nn.Module:
         """Clone model for meta-learning"""
+        # Create new instance of same model class
         clone = type(model)(self.config.state_dim, self.config.action_dim).to(self.device)
+        # Copy weights from original model
         clone.load_state_dict(model.state_dict())
         return clone
     
@@ -1088,18 +1148,21 @@ class AgentTrainer:
         # Initialize opponent pool with current agent
         self.opponent_pool.append(self._clone_model(self.agent_policy))
         
+        # Self-play training loop
         for episode in range(num_episodes):
             self.episode = episode + 1
             
-            # Select opponent from pool
+            # Select opponent from pool (if pool not empty)
             if len(self.opponent_pool) > 0:
                 opponent = random.choice(self.opponent_pool)
-                env.set_opponent(opponent)
+                # Set opponent in environment (env must implement set_opponent)
+                if hasattr(env, 'set_opponent'):
+                    env.set_opponent(opponent)
             
-            # Collect experience against opponent
+            # Collect experience by playing against opponent
             experience = self.collect_experience(env, self.config.steps_per_epoch)
             
-            # Update agent using standard RL
+            # Update agent using standard RL update
             self._update_from_experience(experience)
             
             # Update opponent pool periodically
@@ -1112,35 +1175,35 @@ class AgentTrainer:
     
     def _update_opponent_pool(self):
         """Update opponent pool with current agent"""
-        # Clone current agent
+        # Clone current agent for opponent pool
         opponent = self._clone_model(self.agent_policy)
         
-        # Add to pool
+        # Add cloned agent to opponent pool
         self.opponent_pool.append(opponent)
         
-        # Limit pool size
+        # Limit pool size by removing oldest opponent
         if len(self.opponent_pool) > self.opponent_pool_size:
-            # Remove oldest opponent
-            self.opponent_pool.pop(0)
+            self.opponent_pool.pop(0)  # Remove first (oldest) opponent
     
     def _update_from_experience(self, experience: Dict[str, Any]):
         """Update agent from collected experience"""
-        # This is a simplified version - in practice would use PPO
+        # Convert experience to tensors
         states = torch.FloatTensor(experience['states']).to(self.device)
         actions = torch.LongTensor(experience['actions']).to(self.device)
         rewards = torch.FloatTensor(experience['rewards']).to(self.device)
         
-        # Compute loss
-        action_logits, values = self.agent_policy(states)
-        action_loss = F.cross_entropy(action_logits, actions)
-        value_loss = F.mse_loss(values.squeeze(-1), rewards)
+        # Compute losses
+        action_logits, values = self.agent_policy(states)  # Forward pass
+        action_loss = F.cross_entropy(action_logits, actions)  # Action prediction loss
+        value_loss = F.mse_loss(values.squeeze(-1), rewards)  # Value estimation loss
         
+        # Total loss with balancing coefficient
         total_loss = action_loss + 0.5 * value_loss
         
         # Optimization step
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        self.optimizer.step()
+        self.optimizer.zero_grad()  # Clear gradients
+        total_loss.backward()  # Compute gradients
+        self.optimizer.step()  # Update parameters
     
     def evaluate(self, env, num_episodes: int) -> Dict[str, float]:
         """
@@ -1153,47 +1216,50 @@ class AgentTrainer:
         Returns:
             Dictionary with evaluation metrics
         """
-        self.agent_policy.eval()
+        self.agent_policy.eval()  # Set model to evaluation mode
         
-        episode_rewards = []
-        episode_lengths = []
+        episode_rewards = []  # Store rewards per episode
+        episode_lengths = []  # Store lengths per episode
         
-        with torch.no_grad():
+        with torch.no_grad():  # No gradient computation during evaluation
             for episode in range(num_episodes):
-                state = env.reset()
+                state = env.reset()  # Reset environment
                 done = False
                 episode_reward = 0
                 episode_length = 0
                 
+                # Run episode until termination
                 while not done:
                     # Convert state to tensor
                     state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
                     
-                    # Get action (deterministic for evaluation)
+                    # Get action from policy (deterministic for evaluation)
                     action, _, _, _ = self.agent_policy.get_action(
-                        state_tensor, deterministic=True
+                        state_tensor, deterministic=True  # No exploration during evaluation
                     )
                     
-                    # Take action
+                    # Take action in environment
                     next_state, reward, done, info = env.step(action.item())
                     
+                    # Accumulate episode statistics
                     episode_reward += reward
                     episode_length += 1
-                    state = next_state
+                    state = next_state  # Update state
                 
+                # Store episode results
                 episode_rewards.append(episode_reward)
                 episode_lengths.append(episode_length)
         
-        self.agent_policy.train()
+        self.agent_policy.train()  # Set model back to training mode
         
-        # Compute metrics
+        # Compute evaluation metrics
         metrics = {
-            'mean_reward': np.mean(episode_rewards),
-            'std_reward': np.std(episode_rewards),
-            'min_reward': np.min(episode_rewards),
-            'max_reward': np.max(episode_rewards),
-            'mean_length': np.mean(episode_lengths),
-            'success_rate': np.mean([r > 0 for r in episode_rewards])  # Positive reward = success
+            'mean_reward': np.mean(episode_rewards) if episode_rewards else 0,
+            'std_reward': np.std(episode_rewards) if episode_rewards else 0,
+            'min_reward': np.min(episode_rewards) if episode_rewards else 0,
+            'max_reward': np.max(episode_rewards) if episode_rewards else 0,
+            'mean_length': np.mean(episode_lengths) if episode_lengths else 0,
+            'success_rate': np.mean([r > 0 for r in episode_rewards]) if episode_rewards else 0  # Positive reward = success
         }
         
         return metrics
@@ -1209,6 +1275,7 @@ class AgentTrainer:
             length: Episode length
             time_taken: Time taken for episode
         """
+        # Format log message with episode information
         log_msg = (f"Episode {episode:4d} | "
                    f"Reward: {reward:8.2f} | "
                    f"Length: {length:4d} | "
@@ -1224,6 +1291,7 @@ class AgentTrainer:
         Args:
             metrics: Evaluation metrics
         """
+        # Format evaluation results log message
         log_msg = (f"Evaluation | "
                    f"Mean Reward: {metrics['mean_reward']:.2f} | "
                    f"Success Rate: {metrics['success_rate']:.2%} | "
@@ -1238,35 +1306,37 @@ class AgentTrainer:
         Args:
             name: Checkpoint name
         """
+        # Create checkpoint directory if it doesn't exist
         checkpoint_dir = Path(self.config.checkpoint_dir)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Prepare checkpoint data
         checkpoint = {
             'episode': self.episode,
             'total_steps': self.total_steps,
-            'agent_state_dict': self.agent_policy.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'epsilon': self.epsilon,
-            'best_reward': self.best_reward,
-            'metrics': self.metrics,
-            'config': self.config.__dict__,
+            'agent_state_dict': self.agent_policy.state_dict(),  # Model parameters
+            'optimizer_state_dict': self.optimizer.state_dict(),  # Optimizer state
+            'epsilon': self.epsilon,  # Current exploration rate
+            'best_reward': self.best_reward,  # Best reward achieved
+            'metrics': self.metrics,  # Training metrics
+            'config': self.config.__dict__,  # Training configuration
         }
         
-        # Save curriculum state if enabled
+        # Add curriculum state if curriculum learning is enabled
         if self.curriculum:
             checkpoint['curriculum_state'] = {
                 'current_level': self.curriculum.current_level,
-                'level_performance': dict(self.curriculum.level_performance)
+                'level_performance': dict(self.curriculum.level_performance)  # Convert defaultdict to dict
             }
         
-        # Save replay buffer if large enough
+        # Save replay buffer if it has sufficient data
         if self.replay_buffer.size > 1000:
             replay_buffer_path = checkpoint_dir / f"{name}_replay_buffer.pkl"
             self.replay_buffer.save(str(replay_buffer_path))
         
-        # Save checkpoint
+        # Save checkpoint file
         checkpoint_path = checkpoint_dir / f"{name}.pt"
-        torch.save(checkpoint, checkpoint_path)
+        torch.save(checkpoint, checkpoint_path)  # Save using PyTorch
         
         self.logger.info(f"Checkpoint saved: {checkpoint_path}")
     
@@ -1277,6 +1347,7 @@ class AgentTrainer:
         Args:
             checkpoint_path: Path to checkpoint file
         """
+        # Load checkpoint file
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
         # Load model and optimizer state
@@ -1290,9 +1361,10 @@ class AgentTrainer:
         self.best_reward = checkpoint['best_reward']
         self.metrics = checkpoint['metrics']
         
-        # Load curriculum state if available
+        # Load curriculum state if available and curriculum is enabled
         if 'curriculum_state' in checkpoint and self.curriculum:
             self.curriculum.current_level = checkpoint['curriculum_state']['current_level']
+            # Convert dict back to defaultdict
             self.curriculum.level_performance = defaultdict(
                 list, checkpoint['curriculum_state']['level_performance']
             )
@@ -1308,22 +1380,23 @@ class AgentTrainer:
             export_path: Path to save exported agent
             format: Export format
         """
-        self.agent_policy.eval()
+        self.agent_policy.eval()  # Set to evaluation mode for export
         
         if format == "onnx":
-            # Export to ONNX
+            # Create dummy input for tracing
             dummy_input = torch.randn(1, self.config.state_dim, device=self.device)
             
+            # Export to ONNX format
             torch.onnx.export(
-                self.agent_policy,
-                dummy_input,
-                export_path,
-                export_params=True,
-                opset_version=14,
-                do_constant_folding=True,
-                input_names=['state'],
-                output_names=['action_logits', 'value'],
-                dynamic_axes={
+                self.agent_policy,  # Model to export
+                dummy_input,  # Example input
+                export_path,  # Output file path
+                export_params=True,  # Include model parameters
+                opset_version=14,  # ONNX opset version
+                do_constant_folding=True,  # Optimize constants
+                input_names=['state'],  # Input tensor name
+                output_names=['action_logits', 'value'],  # Output tensor names
+                dynamic_axes={  # Support dynamic batch size
                     'state': {0: 'batch_size'},
                     'action_logits': {0: 'batch_size'},
                     'value': {0: 'batch_size'}
@@ -1331,9 +1404,11 @@ class AgentTrainer:
             )
         
         elif format == "torchscript":
-            # Export to TorchScript
+            # Create dummy input for tracing
             dummy_input = torch.randn(1, self.config.state_dim, device=self.device)
+            # Trace model to TorchScript
             traced_agent = torch.jit.trace(self.agent_policy, dummy_input)
+            # Save traced model
             traced_agent.save(export_path)
         
         else:

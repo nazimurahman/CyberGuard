@@ -1,0 +1,1242 @@
+API_REFERENCE.txt
+text
+==============================================
+CYBERGUARD REST API REFERENCE
+==============================================
+
+This document provides complete documentation for the CyberGuard REST API.
+All endpoints require authentication unless otherwise noted.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+API BASE URL: https://your-cyberguard-instance.com/api/v1
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. AUTHENTICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CyberGuard uses JWT (JSON Web Tokens) for authentication. All API requests
+must include an Authorization header with a valid bearer token.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1.1. POST /auth/login - User Authentication
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Authenticate a user and receive an access token.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: None                                               │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "username": "string",      // Username (required)
+  "password": "string",      // Password (required)
+  "mfa_token": "string"     // Optional: Multi-factor authentication token
+}
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ RESPONSE                                                           │
+├─────────────────────────────────────────────────────────────────────┤
+│ Status: 200 OK                                                     │
+│ Content-Type: application/json                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+Success Response:
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "token_type": "bearer",
+  "expires_in": 86400,        // Token validity in seconds (24 hours)
+  "refresh_token": "def50200...",  // For token refresh
+  "user": {
+    "id": "user_001",
+    "username": "admin",
+    "email": "admin@example.com",
+    "role": "administrator",
+    "permissions": [
+      "scan:create",
+      "scan:read",
+      "scan:delete",
+      "agent:manage",
+      "user:manage"
+    ]
+  }
+}
+
+Error Responses:
+• 401 Unauthorized - Invalid credentials
+• 400 Bad Request - Missing required fields
+• 429 Too Many Requests - Too many failed attempts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1.2. POST /auth/refresh - Token Refresh
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Refresh an expired access token using a refresh token.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: None                                               │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "refresh_token": "string"  // Refresh token from login response
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1.3. POST /auth/logout - User Logout
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Invalidate the current access token.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token required                              │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "refresh_token": "string"  // Optional: Refresh token to invalidate
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. SCAN MANAGEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Endpoints for managing security scans of websites and web applications.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.1. POST /scans - Create New Scan
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Initiate a new security scan of a website or web application.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with scan:create permission           │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "url": "https://example.com",                // Target URL (required)
+  "scan_type": "comprehensive",                // Scan type: quick|comprehensive|deep
+  "options": {
+    "max_depth": 3,                           // Maximum crawl depth (1-5)
+    "max_pages": 100,                         // Maximum pages to scan
+    "check_owasp": true,                      // Check OWASP Top-10
+    "check_headers": true,                    // Check security headers
+    "check_forms": true,                      // Analyze HTML forms
+    "check_api": true,                        // Check API endpoints
+    "check_js": true,                         // Analyze JavaScript
+    "check_ssl": true,                        // Check SSL/TLS configuration
+    "authenticated": false,                   // Use authentication
+    "auth_token": "string",                   // Authentication token if needed
+    "custom_headers": {                       // Custom HTTP headers
+      "X-Custom-Header": "value"
+    },
+    "timeout": 30,                            // Scan timeout in seconds
+    "user_agent": "CyberGuard/1.0"           // Custom User-Agent
+  },
+  "schedule": {                               // Optional scheduling
+    "immediate": true,                        // Start immediately
+    "scheduled_at": "2024-01-16T10:00:00Z",  // Schedule for later
+    "recurring": false,                       // Recurring scan
+    "cron_expression": "0 0 * * *"           // Cron expression for recurring
+  },
+  "notifications": {                          // Notification settings
+    "email": ["admin@example.com"],
+    "webhook": "https://hooks.slack.com/...",
+    "on_complete": true,
+    "on_critical": true
+  }
+}
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ RESPONSE                                                           │
+├─────────────────────────────────────────────────────────────────────┤
+│ Status: 202 Accepted                                              │
+│ Content-Type: application/json                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+Success Response:
+{
+  "scan_id": "scan_abc123def456",
+  "status": "queued",                        // queued|running|completed|failed
+  "message": "Scan queued successfully",
+  "estimated_completion": "2024-01-15T14:30:00Z",
+  "queue_position": 2,                        // Position in scan queue
+  "scan_url": "/api/v1/scans/scan_abc123def456",
+  "monitor_url": "/api/v1/scans/scan_abc123def456/monitor"
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.2. GET /scans - List All Scans
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Retrieve a list of all scans with pagination and filtering.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with scan:read permission             │
+└─────────────────────────────────────────────────────────────────────┘
+
+Query Parameters:
+• page: Page number (default: 1)
+• limit: Items per page (default: 20, max: 100)
+• status: Filter by status (queued|running|completed|failed|cancelled)
+• severity: Filter by severity (critical|high|medium|low|informational)
+• date_from: Start date (ISO 8601 format)
+• date_to: End date (ISO 8601 format)
+• url: Filter by URL (partial match)
+• user_id: Filter by user who initiated scan
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.3. GET /scans/{scan_id} - Get Scan Details
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Retrieve detailed information about a specific scan.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with scan:read permission             │
+└─────────────────────────────────────────────────────────────────────┘
+
+Path Parameters:
+• scan_id: Unique scan identifier
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.4. GET /scans/{scan_id}/results - Get Scan Results
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Retrieve the complete results of a completed scan.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with scan:read permission             │
+└─────────────────────────────────────────────────────────────────────┘
+
+Response Structure:
+{
+  "scan_id": "scan_abc123def456",
+  "url": "https://example.com",
+  "status": "completed",
+  "started_at": "2024-01-15T10:00:00Z",
+  "completed_at": "2024-01-15T10:05:30Z",
+  "duration_seconds": 330,
+  "summary": {
+    "risk_level": "high",
+    "risk_score": 0.75,
+    "total_vulnerabilities": 12,
+    "critical_vulnerabilities": 2,
+    "high_vulnerabilities": 4,
+    "medium_vulnerabilities": 3,
+    "low_vulnerabilities": 3,
+    "pages_scanned": 45,
+    "endpoints_discovered": 28,
+    "forms_analyzed": 8,
+    "security_headers_missing": 3
+  },
+  "vulnerabilities": [
+    {
+      "id": "vuln_001",
+      "type": "XSS",
+      "severity": "critical",
+      "confidence": 0.92,
+      "location": "https://example.com/search?q=<script>",
+      "description": "Reflected Cross-Site Scripting vulnerability",
+      "impact": "Attackers can execute arbitrary JavaScript in users' browsers",
+      "remediation": "Implement input validation and output encoding",
+      "evidence": "Found script tag in URL parameter",
+      "cwe_id": "CWE-79",
+      "cvss_score": 8.2,
+      "agent_detected": "threat_detection_001",
+      "timestamp": "2024-01-15T10:02:15Z"
+    }
+  ],
+  "security_headers": {
+    "Content-Security-Policy": {
+      "present": false,
+      "secure": false,
+      "recommendation": "Add CSP header to prevent XSS attacks"
+    },
+    "Strict-Transport-Security": {
+      "present": true,
+      "value": "max-age=31536000; includeSubDomains",
+      "secure": true
+    }
+  },
+  "technology_stack": [
+    {
+      "technology": "nginx",
+      "version": "1.18.0",
+      "confidence": 0.95,
+      "vulnerabilities": ["CVE-2021-23017"]
+    },
+    {
+      "technology": "jQuery",
+      "version": "3.5.1",
+      "confidence": 0.88,
+      "vulnerabilities": []
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": "critical",
+      "action": "Implement Content Security Policy",
+      "description": "Prevent XSS attacks by defining allowed content sources",
+      "implementation": "Add header: Content-Security-Policy: default-src 'self'",
+      "effort": "low",
+      "impact": "high"
+    }
+  ],
+  "agent_contributions": {
+    "threat_detection_001": {
+      "confidence": 0.92,
+      "findings_count": 8,
+      "threat_level": 0.85
+    },
+    "traffic_anomaly_001": {
+      "confidence": 0.78,
+      "findings_count": 2,
+      "threat_level": 0.45
+    }
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.5. GET /scans/{scan_id}/monitor - Monitor Scan Progress
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Monitor the progress of a running scan in real-time (Server-Sent Events).
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: text/event-stream                                    │
+│ Authentication: Bearer token with scan:read permission             │
+└─────────────────────────────────────────────────────────────────────┘
+
+Event Stream Example:
+data: {"progress": 25, "status": "scanning_forms", "pages_scanned": 12}
+data: {"progress": 50, "status": "analyzing_javascript", "vulnerabilities_found": 3}
+data: {"progress": 100, "status": "completed", "total_vulnerabilities": 8}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.6. DELETE /scans/{scan_id} - Delete Scan
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Delete a scan and its associated results.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: DELETE                                                     │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with scan:delete permission           │
+└─────────────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.7. POST /scans/bulk - Bulk Scan Operations
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Perform bulk operations on multiple scans.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with scan:manage permission           │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body (example for bulk delete):
+{
+  "operation": "delete",
+  "scan_ids": ["scan_001", "scan_002", "scan_003"],
+  "confirm": true
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. VULNERABILITY MANAGEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Endpoints for managing vulnerabilities discovered during scans.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3.1. GET /vulnerabilities - List Vulnerabilities
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Retrieve all vulnerabilities with filtering and pagination.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with vuln:read permission             │
+└─────────────────────────────────────────────────────────────────────┘
+
+Query Parameters:
+• severity: critical|high|medium|low
+• status: open|in_progress|resolved|false_positive
+• type: XSS|SQLi|CSRF|SSRF|etc.
+• date_from: Vulnerabilities discovered after date
+• date_to: Vulnerabilities discovered before date
+• url: Filter by affected URL
+• cwe_id: Filter by CWE identifier
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3.2. GET /vulnerabilities/{vuln_id} - Get Vulnerability Details
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Get detailed information about a specific vulnerability.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with vuln:read permission             │
+└─────────────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3.3. PATCH /vulnerabilities/{vuln_id} - Update Vulnerability Status
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Update the status or metadata of a vulnerability.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: PATCH                                                      │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with vuln:update permission           │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "status": "in_progress",          // open|in_progress|resolved|false_positive
+  "assigned_to": "user_001",        // User assigned to fix
+  "priority": "high",               // Updated priority
+  "notes": "Working on fix",        // Additional notes
+  "remediation_date": "2024-01-20", // Expected remediation date
+  "custom_fields": {                // Custom metadata
+    "jira_ticket": "SEC-123",
+    "slack_thread": "thread_abc"
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3.4. GET /vulnerabilities/stats - Vulnerability Statistics
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Get statistical information about vulnerabilities.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with vuln:read permission             │
+└─────────────────────────────────────────────────────────────────────┘
+
+Response:
+{
+  "total": 156,
+  "by_severity": {
+    "critical": 12,
+    "high": 45,
+    "medium": 67,
+    "low": 32
+  },
+  "by_status": {
+    "open": 89,
+    "in_progress": 34,
+    "resolved": 28,
+    "false_positive": 5
+  },
+  "by_type": {
+    "XSS": 45,
+    "SQLi": 23,
+    "CSRF": 18,
+    "SSRF": 9,
+    "Command Injection": 7
+  },
+  "trends": {
+    "last_7_days": {
+      "new": 23,
+      "resolved": 15,
+      "net_change": 8
+    },
+    "last_30_days": {
+      "new": 89,
+      "resolved": 67,
+      "net_change": 22
+    }
+  },
+  "mean_time_to_remediation": {
+    "critical": "3.5 days",
+    "high": "7.2 days",
+    "medium": "14.8 days"
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. AGENT MANAGEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Endpoints for managing security agents and their configuration.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4.1. GET /agents - List All Agents
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Retrieve information about all registered security agents.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with agent:read permission            │
+└─────────────────────────────────────────────────────────────────────┘
+
+Response:
+{
+  "agents": [
+    {
+      "id": "threat_detection_001",
+      "name": "Web Threat Detection Agent",
+      "type": "threat_detection",
+      "status": "active",                    // active|inactive|error
+      "confidence": 0.92,
+      "last_activity": "2024-01-15T14:30:00Z",
+      "metrics": {
+        "analyses_completed": 1245,
+        "threats_detected": 567,
+        "false_positives": 23,
+        "avg_processing_time": 0.45
+      },
+      "capabilities": [
+        "OWASP Top-10 detection",
+        "XSS detection",
+        "SQL injection detection",
+        "CSRF detection"
+      ],
+      "configuration": {
+        "confidence_threshold": 0.6,
+        "max_findings": 20,
+        "enabled_rules": ["XSS", "SQLi", "CSRF", "SSRF"]
+      }
+    }
+  ],
+  "orchestrator_metrics": {
+    "total_coordinations": 892,
+    "avg_coordination_time": 0.78,
+    "agent_conflict_rate": 0.02,
+    "mhc_stability": 0.95
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4.2. GET /agents/{agent_id} - Get Agent Details
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Get detailed information about a specific agent.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with agent:read permission            │
+└─────────────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4.3. PATCH /agents/{agent_id} - Update Agent Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Update configuration for a specific agent.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: PATCH                                                      │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with agent:update permission          │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "configuration": {
+    "confidence_threshold": 0.7,
+    "max_findings": 15,
+    "enabled_rules": ["XSS", "SQLi"],
+    "scan_depth": 2
+  },
+  "enabled": true,                 // Enable/disable agent
+  "priority": "high"               // Processing priority
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4.4. POST /agents/{agent_id}/test - Test Agent
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Test an agent with sample data.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with agent:test permission            │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "test_data": {
+    "url": "https://test.example.com",
+    "headers": {"User-Agent": "Test"},
+    "body": "test=payload"
+  },
+  "expected_threats": ["XSS", "SQLi"]
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4.5. POST /agents/{agent_id}/train - Train Agent
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Retrain an agent with new data.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with agent:train permission           │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "training_data": [
+    {
+      "input": {"url": "https://example.com/search?q=<script>"},
+      "output": {"threat": "XSS", "confidence": 0.95}
+    }
+  ],
+  "epochs": 10,
+  "validation_split": 0.2,
+  "save_model": true
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. THREAT INTELLIGENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Endpoints for accessing threat intelligence data and feeds.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5.1. GET /threat-intelligence/feeds - List Threat Feeds
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Get information about available threat intelligence feeds.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with threat:intel:read permission     │
+└─────────────────────────────────────────────────────────────────────┘
+
+Response:
+{
+  "feeds": [
+    {
+      "id": "cve_feed",
+      "name": "CVE Database",
+      "source": "https://cve.mitre.org",
+      "type": "vulnerability",
+      "last_updated": "2024-01-15T08:00:00Z",
+      "total_entries": 235678,
+      "update_frequency": "daily",
+      "enabled": true,
+      "statistics": {
+        "last_24h": 124,
+        "last_7d": 856,
+        "critical": 23,
+        "high": 156
+      }
+    },
+    {
+      "id": "exploit_db",
+      "name": "Exploit Database",
+      "source": "https://www.exploit-db.com",
+      "type": "exploit",
+      "last_updated": "2024-01-15T10:30:00Z",
+      "total_entries": 45623,
+      "update_frequency": "hourly",
+      "enabled": true
+    }
+  ]
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5.2. GET /threat-intelligence/cves - Search CVEs
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Search for Common Vulnerabilities and Exposures (CVEs).
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with threat:intel:read permission     │
+└─────────────────────────────────────────────────────────────────────┘
+
+Query Parameters:
+• cve_id: CVE identifier (e.g., CVE-2021-44228)
+• product: Affected product
+• vendor: Vendor name
+• severity: critical|high|medium|low
+• date_from: CVEs published after date
+• date_to: CVEs published before date
+• keyword: Search in description
+• cvss_score_min: Minimum CVSS score (0-10)
+• cvss_score_max: Maximum CVSS score (0-10)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5.3. GET /threat-intelligence/cves/{cve_id} - Get CVE Details
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Get detailed information about a specific CVE.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with threat:intel:read permission     │
+└─────────────────────────────────────────────────────────────────────┘
+
+Response:
+{
+  "id": "CVE-2021-44228",
+  "summary": "Apache Log4j2 JNDI features do not protect against attacker controlled LDAP and other JNDI related endpoints.",
+  "cvss_score": 10.0,
+  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+  "severity": "critical",
+  "published_date": "2021-12-10T00:00:00Z",
+  "last_modified": "2021-12-14T00:00:00Z",
+  "affected_products": [
+    {
+      "vendor": "Apache",
+      "product": "Log4j",
+      "version": "2.0-beta9 to 2.14.1"
+    }
+  ],
+  "references": [
+    {
+      "url": "https://logging.apache.org/log4j/2.x/security.html",
+      "type": "vendor"
+    }
+  ],
+  "exploit_available": true,
+  "exploit_maturity": "weaponized",
+  "patch_available": true,
+  "workarounds": [
+    "Set system property 'log4j2.formatMsgNoLookups' to 'true'",
+    "Remove JndiLookup class from classpath"
+  ],
+  "detection_rules": {
+    "yara": "rule log4shell {...}",
+    "sigma": "detection: ...",
+    "suricata": "alert ..."
+  },
+  "related_vulnerabilities": ["CVE-2021-45046", "CVE-2021-45105"]
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. SYSTEM MANAGEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Endpoints for system administration and monitoring.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6.1. GET /system/health - System Health Check
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Check the health status of all system components.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with system:monitor permission        │
+└─────────────────────────────────────────────────────────────────────┘
+
+Response:
+{
+  "status": "healthy",              // healthy|degraded|unhealthy
+  "timestamp": "2024-01-15T14:30:00Z",
+  "components": {
+    "api": {
+      "status": "healthy",
+      "response_time": 45,          // ms
+      "uptime": "15d 6h 30m"
+    },
+    "database": {
+      "status": "healthy",
+      "connection_pool": {
+        "active": 12,
+        "idle": 8,
+        "max": 50
+      },
+      "query_performance": "good"
+    },
+    "agents": {
+      "status": "healthy",
+      "active": 10,
+      "total": 10,
+      "avg_confidence": 0.87
+    },
+    "scanner": {
+      "status": "healthy",
+      "queue_size": 3,
+      "active_scans": 2,
+      "scans_today": 45
+    },
+    "storage": {
+      "status": "healthy",
+      "disk_usage": "65%",
+      "available_space": "450GB"
+    }
+  },
+  "metrics": {
+    "total_scans": 12456,
+    "vulnerabilities_found": 89234,
+    "false_positive_rate": "2.3%",
+    "avg_scan_time": "4m 30s"
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6.2. GET /system/metrics - System Metrics
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Get detailed system performance metrics (Prometheus format).
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: text/plain                                           │
+│ Authentication: Bearer token with system:monitor permission        │
+└─────────────────────────────────────────────────────────────────────┘
+
+Response (Prometheus format):
+# HELP cyberguard_scans_total Total number of scans performed
+# TYPE cyberguard_scans_total counter
+cyberguard_scans_total 12456
+
+# HELP cyberguard_vulnerabilities_total Total vulnerabilities found
+# TYPE cyberguard_vulnerabilities_total counter
+cyberguard_vulnerabilities_total 89234
+
+# HELP cyberguard_agent_confidence Average agent confidence
+# TYPE cyberguard_agent_confidence gauge
+cyberguard_agent_confidence{agent="threat_detection_001"} 0.92
+cyberguard_agent_confidence{agent="traffic_anomaly_001"} 0.78
+
+# HELP cyberguard_scan_duration_seconds Scan duration histogram
+# TYPE cyberguard_scan_duration_seconds histogram
+cyberguard_scan_duration_seconds_bucket{le="30"} 3456
+cyberguard_scan_duration_seconds_bucket{le="60"} 7890
+cyberguard_scan_duration_seconds_bucket{le="300"} 12456
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6.3. GET /system/logs - System Logs
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Retrieve system logs with filtering.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: GET                                                        │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with system:logs permission           │
+└─────────────────────────────────────────────────────────────────────┘
+
+Query Parameters:
+• level: DEBUG|INFO|WARNING|ERROR|CRITICAL
+• component: api|agent|scanner|database
+• date_from: Logs after timestamp
+• date_to: Logs before timestamp
+• search: Text search in log messages
+• limit: Maximum number of log entries (default: 100)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6.4. POST /system/backup - Create System Backup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create a backup of the system data and configuration.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ REQUEST                                                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Method: POST                                                       │
+│ Content-Type: application/json                                     │
+│ Authentication: Bearer token with system:backup permission         │
+└─────────────────────────────────────────────────────────────────────┘
+
+Request Body:
+{
+  "backup_type": "full",            // full|incremental|config_only
+  "include_logs": true,
+  "include_scans": true,
+  "encrypt": true,
+  "password": "backup_password",    // Optional encryption password
+  "description": "Weekly backup"
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. REAL-TIME NOTIFICATIONS (WebSocket)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WebSocket endpoint for real-time notifications and updates.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7.1. WS /ws/notifications - Real-time Notifications
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Connect to WebSocket for real-time notifications.
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ CONNECTION                                                         │
+├─────────────────────────────────────────────────────────────────────┤
+│ Protocol: WebSocket                                                │
+│ URL: wss://your-cyberguard-instance.com/api/v1/ws/notifications   │
+│ Authentication: Bearer token in query parameter                    │
+└─────────────────────────────────────────────────────────────────────┘
+
+Connection URL:
+wss://your-cyberguard-instance.com/api/v1/ws/notifications?token=eyJ0eXAi...
+
+Message Types:
+1. Scan Progress Updates:
+{
+  "type": "scan_progress",
+  "scan_id": "scan_abc123",
+  "progress": 65,
+  "status": "analyzing_javascript",
+  "vulnerabilities_found": 8
+}
+
+2. Vulnerability Detected:
+{
+  "type": "vulnerability_detected",
+  "scan_id": "scan_abc123",
+  "vulnerability": {
+    "id": "vuln_001",
+    "type": "XSS",
+    "severity": "critical",
+    "location": "https://example.com/search"
+  }
+}
+
+3. Agent Status Change:
+{
+  "type": "agent_status",
+  "agent_id": "threat_detection_001",
+  "status": "error",
+  "message": "Agent encountered an error",
+  "timestamp": "2024-01-15T14:30:00Z"
+}
+
+4. System Alert:
+{
+  "type": "system_alert",
+  "level": "warning",
+  "message": "High memory usage detected",
+  "component": "database",
+  "value": "85%",
+  "threshold": "80%"
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. ERROR HANDLING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+All API endpoints return consistent error responses.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8.1. Common Error Responses
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 400 Bad Request                                                    │
+├─────────────────────────────────────────────────────────────────────┤
+{
+  "error": "validation_error",
+  "message": "Invalid request parameters",
+  "details": {
+    "url": ["This field is required"],
+    "scan_type": ["Must be one of: quick, comprehensive, deep"]
+  },
+  "code": "VALIDATION_ERROR",
+  "timestamp": "2024-01-15T14:30:00Z"
+}
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 401 Unauthorized                                                   │
+├─────────────────────────────────────────────────────────────────────┤
+{
+  "error": "authentication_error",
+  "message": "Invalid or expired authentication token",
+  "code": "INVALID_TOKEN",
+  "timestamp": "2024-01-15T14:30:00Z"
+}
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 403 Forbidden                                                      │
+├─────────────────────────────────────────────────────────────────────┤
+{
+  "error": "authorization_error",
+  "message": "Insufficient permissions to perform this action",
+  "required_permission": "scan:create",
+  "user_permissions": ["scan:read", "vuln:read"],
+  "code": "INSUFFICIENT_PERMISSIONS",
+  "timestamp": "2024-01-15T14:30:00Z"
+}
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 404 Not Found                                                      │
+├─────────────────────────────────────────────────────────────────────┤
+{
+  "error": "not_found",
+  "message": "Scan with ID 'scan_abc123' not found",
+  "resource": "scan",
+  "resource_id": "scan_abc123",
+  "code": "RESOURCE_NOT_FOUND",
+  "timestamp": "2024-01-15T14:30:00Z"
+}
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 429 Too Many Requests                                              │
+├─────────────────────────────────────────────────────────────────────┤
+{
+  "error": "rate_limit_exceeded",
+  "message": "Rate limit exceeded. Please try again later.",
+  "limit": "100 requests per minute",
+  "reset_in": 30,  // seconds until reset
+  "code": "RATE_LIMIT_EXCEEDED",
+  "timestamp": "2024-01-15T14:30:00Z"
+}
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 500 Internal Server Error                                          │
+├─────────────────────────────────────────────────────────────────────┤
+{
+  "error": "internal_error",
+  "message": "An unexpected error occurred",
+  "error_id": "err_abc123def456",  // For support reference
+  "code": "INTERNAL_ERROR",
+  "timestamp": "2024-01-15T14:30:00Z"
+}
+└─────────────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. RATE LIMITING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Rate limits are applied per API key and IP address.
+
+Default Rate Limits:
+• Authentication endpoints: 10 requests per minute
+• Scan creation: 5 requests per minute
+• Scan results: 50 requests per minute
+• Vulnerability queries: 100 requests per minute
+• System endpoints: 20 requests per minute
+
+Rate limit headers included in responses:
+• X-RateLimit-Limit: Maximum requests per period
+• X-RateLimit-Remaining: Remaining requests
+• X-RateLimit-Reset: Seconds until reset
+• Retry-After: Seconds to wait after limit exceeded
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. API CLIENT EXAMPLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10.1. Python Client Example
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+```python
+import requests
+import json
+
+class CyberGuardClient:
+    def __init__(self, base_url, api_key):
+        self.base_url = base_url.rstrip('/')
+        self.api_key = api_key
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'CyberGuard-Python-Client/1.0'
+        })
+    
+    def create_scan(self, url, scan_type='comprehensive'):
+        """Create a new security scan"""
+        endpoint = f"{self.base_url}/api/v1/scans"
+        payload = {
+            'url': url,
+            'scan_type': scan_type,
+            'options': {
+                'max_depth': 3,
+                'check_owasp': True,
+                'check_headers': True
+            }
+        }
+        
+        response = self.session.post(endpoint, json=payload)
+        response.raise_for_status()
+        return response.json()
+    
+    def get_scan_results(self, scan_id):
+        """Retrieve scan results"""
+        endpoint = f"{self.base_url}/api/v1/scans/{scan_id}/results"
+        response = self.session.get(endpoint)
+        response.raise_for_status()
+        return response.json()
+    
+    def monitor_scan(self, scan_id, callback):
+        """Monitor scan progress with WebSocket"""
+        import websocket
+        import threading
+        
+        def on_message(ws, message):
+            data = json.loads(message)
+            if data.get('type') == 'scan_progress':
+                callback(data)
+        
+        ws_url = f"wss://{self.base_url.split('//')[1]}/api/v1/ws/notifications"
+        ws = websocket.WebSocketApp(
+            f"{ws_url}?token={self.api_key}",
+            on_message=on_message
+        )
+        
+        thread = threading.Thread(target=ws.run_forever)
+        thread.daemon = True
+        thread.start()
+
+# Usage example
+client = CyberGuardClient(
+    base_url='https://your-cyberguard-instance.com',
+    api_key='your_api_key_here'
+)
+
+# Create scan
+scan = client.create_scan('https://example.com')
+print(f"Scan created: {scan['scan_id']}")
+
+# Monitor progress
+def progress_callback(data):
+    print(f"Progress: {data['progress']}% - {data['status']}")
+
+client.monitor_scan(scan['scan_id'], progress_callback)
+
+# Get results when complete
+results = client.get_scan_results(scan['scan_id'])
+print(f"Found {results['summary']['total_vulnerabilities']} vulnerabilities")
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10.2. cURL Examples
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Authenticate
+curl -X POST https://your-cyberguard-instance.com/api/v1/auth/login
+-H "Content-Type: application/json"
+-d '{"username":"admin","password":"your_password"}'
+
+Create scan
+curl -X POST https://your-cyberguard-instance.com/api/v1/scans
+-H "Authorization: Bearer YOUR_TOKEN"
+-H "Content-Type: application/json"
+-d '{"url":"https://example.com","scan_type":"comprehensive"}'
+
+Get scan results
+curl -X GET https://your-cyberguard-instance.com/api/v1/scans/scan_id/results
+-H "Authorization: Bearer YOUR_TOKEN"
+
+List vulnerabilities
+curl -X GET "https://your-cyberguard-instance.com/api/v1/vulnerabilities?severity=critical"
+-H "Authorization: Bearer YOUR_TOKEN"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+11. SECURITY CONSIDERATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+API Keys and Authentication:
+• Store API keys securely (environment variables, secret managers)
+• Rotate API keys regularly (recommended every 90 days)
+• Use different API keys for different applications
+• Implement IP whitelisting for production use
+
+Input Validation:
+• Always validate and sanitize input parameters
+• Use parameterized queries for database operations
+• Implement request size limits
+
+Transport Security:
+• Always use HTTPS (never HTTP)
+• Implement HSTS headers
+• Use TLS 1.2 or higher
+• Regularly update SSL/TLS certificates
+
+Error Handling:
+• Don't expose internal error details to clients
+• Log errors securely with appropriate context
+• Implement proper exception handling
+
+Rate Limiting:
+• Implement appropriate rate limits per endpoint
+• Use exponential backoff for retries
+• Monitor for abuse patterns
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DOCUMENT VERSION: 1.0.0
+LAST UPDATED: 2024-01-15
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

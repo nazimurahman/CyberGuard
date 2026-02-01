@@ -30,6 +30,7 @@ from collections import defaultdict, Counter
 import base64
 import zlib
 import ipaddress
+import pickle  # Added missing import for save/load vocabulary
 
 
 class SecurityFeatureEncoder:
@@ -69,25 +70,27 @@ class SecurityFeatureEncoder:
         self.max_seq_len = max_seq_len
         self.feature_dim = feature_dim
         
-        # Attack pattern database
+        # Attack pattern database - loads regex patterns for different attack types
         self.attack_patterns = self._load_attack_patterns()
         
-        # Feature vocabulary
+        # Feature vocabulary - maps feature strings to integer IDs
         self.feature_vocab = {}
+        # Reverse vocabulary - maps integer IDs back to feature strings
         self.reverse_vocab = {}
-        self.next_vocab_id = 0
+        self.next_vocab_id = 0  # Tracks next available ID for new features
         
-        # Initialize with common security features
+        # Initialize with common security features (HTTP methods, headers, etc.)
         self._initialize_vocabulary()
         
-        # Learnable embeddings if enabled
+        # Learnable embeddings if enabled - converts integer IDs to dense vectors
         if use_embedding:
             self.embedding = nn.Embedding(vocab_size, feature_dim)
+            # Initialize embedding weights with normal distribution
             nn.init.normal_(self.embedding.weight, mean=0.0, std=0.02)
         else:
             self.embedding = None
         
-        # Feature extractors for different data types
+        # Feature extractors for different data types - maps data type to extraction function
         self.extractors = {
             'http_request': self._extract_http_features,
             'http_response': self._extract_response_features,
@@ -98,12 +101,12 @@ class SecurityFeatureEncoder:
             'javascript': self._extract_javascript_features,
         }
         
-        # Feature normalization statistics
+        # Feature normalization statistics - tracks mean/std for numerical features
         self.feature_stats = defaultdict(lambda: {'mean': 0.0, 'std': 1.0, 'count': 0})
         
-        # Cache for performance
+        # Cache for performance - stores recently computed feature vectors
         self.feature_cache = {}
-        self.cache_max_size = 1000
+        self.cache_max_size = 1000  # Maximum number of entries to cache
         
     def _load_attack_patterns(self) -> Dict[str, List[str]]:
         """
@@ -117,72 +120,72 @@ class SecurityFeatureEncoder:
         """
         return {
             'xss': [
-                r'<script[^>]*>.*?</script>',
-                r'javascript:',
-                r'onload\s*=',
+                r'<script[^>]*>.*?</script>',  # Basic script tag patterns
+                r'javascript:',  # JavaScript protocol in URLs
+                r'onload\s*=',  # Event handler attributes
                 r'onerror\s*=',
                 r'onclick\s*=',
-                r'eval\s*\(',
-                r'alert\s*\(',
-                r'document\.cookie',
-                r'window\.location',
-                r'innerHTML\s*=',
+                r'eval\s*\(',  # JavaScript eval function
+                r'alert\s*\(',  # Alert function often used in XSS tests
+                r'document\.cookie',  # Cookie access attempts
+                r'window\.location',  # Page redirection attempts
+                r'innerHTML\s*=',  # Direct DOM manipulation
             ],
             'sql_injection': [
-                r"'\s+OR\s+'.*'='",
-                r"UNION\s+SELECT",
-                r";\s*DROP\s+TABLE",
-                r"--\s*$",
+                r"'\s+OR\s+'.*'='",  # Basic SQL injection pattern
+                r"UNION\s+SELECT",  # UNION-based SQL injection
+                r";\s*DROP\s+TABLE",  # Table deletion attempts
+                r"--\s*$",  # SQL comment to truncate query
                 r"'\s+AND\s+'.*'='",
-                r"EXEC\s*\(",
-                r"xp_cmdshell",
-                r"SELECT\s+\*\s+FROM",
+                r"EXEC\s*\(",  # Stored procedure execution
+                r"xp_cmdshell",  # MSSQL command execution
+                r"SELECT\s+\*\s+FROM",  # Generic SELECT statements
                 r"INSERT\s+INTO",
                 r"DELETE\s+FROM",
             ],
             'command_injection': [
-                r";\s*(ls|dir|cat|type)\s+",
-                r"\|\s*(ls|dir|cat|type)\s+",
-                r"`.*`",
-                r"\$\(.*\)",
-                r"exec\(.*\)",
-                r"system\(.*\)",
-                r"popen\(.*\)",
-                r"shell_exec\(.*\)",
+                r";\s*(ls|dir|cat|type)\s+",  # Command chaining with file operations
+                r"\|\s*(ls|dir|cat|type)\s+",  # Pipe operators with commands
+                r"`.*`",  # Backticks for command substitution
+                r"\$\(.*\)",  # Command substitution in bash
+                r"exec\(.*\)",  # Python/Ruby exec functions
+                r"system\(.*\)",  # System command execution
+                r"popen\(.*\)",  # Pipe opening for commands
+                r"shell_exec\(.*\)",  # PHP shell execution
             ],
             'path_traversal': [
-                r"\.\./",
-                r"\.\.\\",
-                r"/etc/passwd",
-                r"C:\\Windows\\",
-                r"/proc/self/",
-                r"file://",
-                r"\\..\\",
+                r"\.\./",  # Directory traversal patterns
+                r"\.\.\\",  # Windows directory traversal
+                r"/etc/passwd",  # Sensitive Unix file
+                r"C:\\Windows\\",  # Windows system directory
+                r"/proc/self/",  # Linux proc filesystem
+                r"file://",  # File protocol URLs
+                r"\\..\\",  # Alternative Windows traversal
             ],
             'csrf': [
-                r"cross-site request",
-                r"state-changing.*without.*token",
-                r"missing.*referer",
-                r"origin.*mismatch",
+                r"cross-site request",  # CSRF attack descriptions
+                r"state-changing.*without.*token",  # Token bypass patterns
+                r"missing.*referer",  # Missing referer header
+                r"origin.*mismatch",  # Origin header mismatch
             ],
             'ssrf': [
-                r"localhost",
-                r"127\.0\.0\.1",
-                r"192\.168\.",
+                r"localhost",  # Localhost references
+                r"127\.0\.0\.1",  # Loopback IP addresses
+                r"192\.168\.",  # Private network ranges
                 r"10\.\.",
                 r"172\.(1[6-9]|2[0-9]|3[0-1])\.",
-                r"internal",
+                r"internal",  # Internal domain references
                 r"private",
-                r"metadata\.google\.internal",
-                r"169\.254\.169\.254",
+                r"metadata\.google\.internal",  # Cloud metadata endpoints
+                r"169\.254\.169\.254",  # AWS metadata endpoint
             ],
             'xxe': [
-                r"<!ENTITY",
-                r"SYSTEM",
+                r"<!ENTITY",  # XML entity declarations
+                r"SYSTEM",  # External entity references
                 r"PUBLIC",
-                r"]>",
-                r"xmlns:",
-                r"<!DOCTYPE",
+                r"]>",  # DTD closing
+                r"xmlns:",  # XML namespace declarations
+                r"<!DOCTYPE",  # Document type declarations
             ],
         }
     
@@ -192,7 +195,7 @@ class SecurityFeatureEncoder:
         
         This creates a mapping from security features to numerical IDs
         """
-        # Common HTTP methods
+        # Common HTTP methods - each gets a unique feature ID
         http_methods = ['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH', 'TRACE']
         for method in http_methods:
             self._add_to_vocab(f'HTTP_METHOD_{method}')
@@ -202,7 +205,7 @@ class SecurityFeatureEncoder:
         for code in status_codes:
             self._add_to_vocab(f'STATUS_{code}')
         
-        # Security headers
+        # Security headers - important for security posture analysis
         security_headers = [
             'Content-Security-Policy', 'X-Frame-Options', 'X-Content-Type-Options',
             'X-XSS-Protection', 'Strict-Transport-Security', 'Referrer-Policy',
@@ -210,9 +213,10 @@ class SecurityFeatureEncoder:
             'Cross-Origin-Embedder-Policy', 'Cross-Origin-Resource-Policy',
         ]
         for header in security_headers:
+            # Convert header names to consistent format (uppercase with underscores)
             self._add_to_vocab(f'HEADER_{header.upper().replace("-", "_")}')
         
-        # Attack types
+        # Attack types - for labeling detected attacks
         attack_types = [
             'XSS', 'SQL_INJECTION', 'COMMAND_INJECTION', 'PATH_TRAVERSAL',
             'CSRF', 'SSRF', 'XXE', 'IDOR', 'RCE', 'LFI', 'RFI',
@@ -222,7 +226,7 @@ class SecurityFeatureEncoder:
         for attack in attack_types:
             self._add_to_vocab(f'ATTACK_{attack}')
         
-        # Common file extensions
+        # Common file extensions - can indicate attack targets or file uploads
         extensions = [
             '.php', '.asp', '.aspx', '.jsp', '.js', '.html', '.htm',
             '.xml', '.json', '.txt', '.log', '.config', '.env',
@@ -231,7 +235,7 @@ class SecurityFeatureEncoder:
         for ext in extensions:
             self._add_to_vocab(f'EXT_{ext.upper().replace(".", "")}')
         
-        # Special tokens
+        # Special tokens - for sequence processing
         special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]']
         for token in special_tokens:
             self._add_to_vocab(token)
@@ -247,6 +251,7 @@ class SecurityFeatureEncoder:
             int: Assigned vocabulary ID
         """
         if feature not in self.feature_vocab:
+            # Assign new ID and update both forward and reverse mappings
             self.feature_vocab[feature] = self.next_vocab_id
             self.reverse_vocab[self.next_vocab_id] = feature
             self.next_vocab_id += 1
@@ -271,63 +276,65 @@ class SecurityFeatureEncoder:
             ... }
             >>> features = encoder.encode_http_request(request)
         """
-        # Generate cache key
+        # Generate cache key based on request content
         cache_key = self._generate_cache_key(request_data)
         
-        # Check cache
+        # Check cache for previously computed features
         if cache_key in self.feature_cache:
             return self.feature_cache[cache_key]
         
-        # Extract features
+        # Extract features - each function returns a list of feature IDs
         feature_ids = []
         
-        # 1. HTTP method
+        # 1. HTTP method - basic request type
         method = request_data.get('method', 'GET').upper()
         method_id = self._add_to_vocab(f'HTTP_METHOD_{method}')
         feature_ids.append(method_id)
         
-        # 2. URL path features
+        # 2. URL path features - extract domain, path, parameters
         url = request_data.get('url', '')
         url_features = self._extract_url_features(url)
         feature_ids.extend(url_features)
         
-        # 3. Header features
+        # 3. Header features - security headers, suspicious values
         headers = request_data.get('headers', {})
         header_features = self._extract_header_features(headers)
         feature_ids.extend(header_features)
         
-        # 4. Parameter features
+        # 4. Parameter features - query and form parameters
         params = request_data.get('parameters', {})
         param_features = self._extract_parameter_features(params)
         feature_ids.extend(param_features)
         
-        # 5. Body features
+        # 5. Body features - request payload analysis
         body = request_data.get('body', '')
         body_features = self._extract_body_features(body)
         feature_ids.extend(body_features)
         
-        # 6. Attack pattern detection
+        # 6. Attack pattern detection - check for known attack signatures
         attack_features = self._detect_attack_patterns(request_data)
         feature_ids.extend(attack_features)
         
-        # 7. Behavioral features
+        # 7. Behavioral features - IP, timing, frequency patterns
         behavioral_features = self._extract_behavioral_features(request_data)
         feature_ids.extend(behavioral_features)
         
-        # 8. Add special tokens
+        # 8. Add special tokens for transformer processing
+        # [CLS] at beginning, [SEP] at end for sequence classification
         feature_ids = [self.feature_vocab['[CLS]']] + feature_ids + [self.feature_vocab['[SEP]']]
         
-        # Truncate or pad to max_seq_len
+        # Truncate or pad to max_seq_len for consistent tensor size
         if len(feature_ids) > self.max_seq_len:
             feature_ids = feature_ids[:self.max_seq_len]
         else:
             padding_needed = self.max_seq_len - len(feature_ids)
+            # Pad with [PAD] tokens to reach max_seq_len
             feature_ids = feature_ids + [self.feature_vocab['[PAD]']] * padding_needed
         
-        # Convert to tensor
+        # Convert list of IDs to PyTorch tensor
         feature_tensor = torch.tensor(feature_ids, dtype=torch.long)
         
-        # Cache result
+        # Cache result for future identical requests
         self._update_cache(cache_key, feature_tensor)
         
         return feature_tensor
@@ -345,54 +352,55 @@ class SecurityFeatureEncoder:
         features = []
         
         try:
+            # Parse URL into components using standard library
             parsed = urllib.parse.urlparse(url)
             
-            # Scheme
+            # Scheme (http, https, ftp, etc.)
             scheme_id = self._add_to_vocab(f'SCHEME_{parsed.scheme.upper()}')
             features.append(scheme_id)
             
-            # Netloc (domain)
+            # Netloc (domain) - extract domain and TLD
             domain_parts = parsed.netloc.split('.')
             for part in domain_parts[-2:]:  # Last two parts (domain and TLD)
                 if part:
                     domain_id = self._add_to_vocab(f'DOMAIN_{part.upper()}')
                     features.append(domain_id)
             
-            # Path components
+            # Path components - analyze directory structure
             path = parsed.path
             if path:
-                # Split path and extract features
+                # Split path and extract features from components
                 path_parts = [p for p in path.split('/') if p]
                 for part in path_parts[:5]:  # First 5 path components
-                    # Check for common patterns
+                    # Check for alphanumeric path components
                     if re.match(r'^[a-zA-Z0-9_\-]+$', part):
                         path_id = self._add_to_vocab(f'PATH_{part.upper()}')
                         features.append(path_id)
                     
-                    # Check for file extensions
+                    # Check for file extensions in path
                     if '.' in part:
                         ext = part.split('.')[-1].lower()
                         if len(ext) <= 5:  # Reasonable extension length
                             ext_id = self._add_to_vocab(f'EXT_{ext.upper()}')
                             features.append(ext_id)
             
-            # Query parameters
+            # Query parameters - analyze URL parameters
             query = parsed.query
             if query:
-                # Count parameters
+                # Count number of parameters
                 param_count = len(urllib.parse.parse_qs(query))
                 if param_count > 10:
                     features.append(self._add_to_vocab('MANY_PARAMS'))
                 elif param_count > 0:
                     features.append(self._add_to_vocab('HAS_PARAMS'))
                 
-                # Check for sensitive parameters
+                # Check for sensitive parameter names
                 sensitive_params = ['password', 'token', 'key', 'secret', 'auth']
                 for param in sensitive_params:
                     if param in query.lower():
                         features.append(self._add_to_vocab(f'SENSITIVE_PARAM_{param.upper()}'))
             
-            # Fragment
+            # Fragment identifier
             if parsed.fragment:
                 features.append(self._add_to_vocab('HAS_FRAGMENT'))
         
@@ -414,16 +422,17 @@ class SecurityFeatureEncoder:
         """
         features = []
         
-        # Security headers
+        # Track security headers for summary feature
         security_headers_present = []
         for header, value in headers.items():
+            # Normalize header name for consistent feature naming
             header_upper = header.upper().replace('-', '_')
             
             # Add header presence feature
             header_id = self._add_to_vocab(f'HEADER_{header_upper}')
             features.append(header_id)
             
-            # Check for security headers
+            # Check for important security headers
             if header.lower() in [
                 'content-security-policy',
                 'x-frame-options',
@@ -432,7 +441,7 @@ class SecurityFeatureEncoder:
             ]:
                 security_headers_present.append(header_upper)
             
-            # Check for suspicious header values
+            # Check for suspicious values in specific headers
             self._check_suspicious_header_value(header, value, features)
         
         # Security header summary features
@@ -461,7 +470,7 @@ class SecurityFeatureEncoder:
         header_lower = header.lower()
         value_lower = value.lower()
         
-        # User-Agent anomalies
+        # User-Agent anomalies - check for scanning tools or unusual agents
         if header_lower == 'user-agent':
             suspicious_agents = [
                 'curl', 'wget', 'python', 'scanner', 'nmap',
@@ -476,12 +485,12 @@ class SecurityFeatureEncoder:
             if 'text/html' in value_lower and 'charset' not in value_lower:
                 features.append(self._add_to_vocab('HTML_NO_CHARSET'))
         
-        # Referer anomalies
+        # Referer anomalies - check for malformed referers
         elif header_lower == 'referer':
             if not value_lower.startswith(('http://', 'https://')):
                 features.append(self._add_to_vocab('SUSPICIOUS_REFERER'))
         
-        # Origin anomalies
+        # Origin anomalies - check for dangerous origins
         elif header_lower == 'origin':
             suspicious_origins = ['null', 'file://', 'data:', 'javascript:']
             if any(origin in value_lower for origin in suspicious_origins):
@@ -503,7 +512,7 @@ class SecurityFeatureEncoder:
             features.append(self._add_to_vocab('NO_PARAMS'))
             return features
         
-        # Parameter count feature
+        # Parameter count feature - helps detect parameter flooding
         param_count = len(parameters)
         if param_count > 20:
             features.append(self._add_to_vocab('VERY_MANY_PARAMS'))
@@ -512,11 +521,11 @@ class SecurityFeatureEncoder:
         elif param_count > 0:
             features.append(self._add_to_vocab('HAS_PARAMS'))
         
-        # Check individual parameters
+        # Check individual parameters for sensitive data and attacks
         for param_name, param_value in parameters.items():
             param_name_lower = param_name.lower()
             
-            # Sensitive parameter names
+            # Sensitive parameter names - check for credential parameters
             sensitive_patterns = [
                 'pass', 'token', 'key', 'secret', 'auth',
                 'credit', 'ssn', 'social', 'security',
@@ -528,13 +537,13 @@ class SecurityFeatureEncoder:
                     features.append(self._add_to_vocab(f'SENSITIVE_PARAM_{pattern.upper()}'))
                     break
             
-            # Check parameter values for attacks
+            # Check parameter values for attack patterns
             if isinstance(param_value, str):
-                # Length anomaly
+                # Length anomaly - very long parameter values
                 if len(param_value) > 1000:
                     features.append(self._add_to_vocab('LONG_PARAM_VALUE'))
                 
-                # Check for attack patterns
+                # Check for specific attack patterns in parameter values
                 attack_features = self._check_parameter_value(param_value)
                 features.extend(attack_features)
         
@@ -553,7 +562,7 @@ class SecurityFeatureEncoder:
         features = []
         value_lower = value.lower()
         
-        # Check each attack pattern category
+        # Check each attack pattern category against the parameter value
         for attack_type, patterns in self.attack_patterns.items():
             for pattern in patterns:
                 if re.search(pattern, value_lower, re.IGNORECASE):
@@ -561,18 +570,18 @@ class SecurityFeatureEncoder:
                     features.append(self._add_to_vocab(feature_name))
                     break  # Found one pattern in this category
         
-        # Check for encoded attacks
+        # Check for encoded/obfuscated attacks
         encoded_patterns = [
-            (r'%3Cscript%3E', 'URLENCODED_XSS'),
-            (r'%27OR%27', 'URLENCODED_SQL'),
-            (r'PHNjcmlwdD4=', 'BASE64_XSS'),  # <script> in base64
+            (r'%3Cscript%3E', 'URLENCODED_XSS'),  # URL-encoded <script>
+            (r'%27OR%27', 'URLENCODED_SQL'),  # URL-encoded SQL OR
+            (r'PHNjcmlwdD4=', 'BASE64_XSS'),  # Base64 encoded <script>
         ]
         
         for pattern, feature in encoded_patterns:
             if re.search(pattern, value, re.IGNORECASE):
                 features.append(self._add_to_vocab(feature))
         
-        # Check for suspicious characters
+        # Check for high frequency of suspicious characters
         suspicious_chars = ['<', '>', "'", '"', ';', '|', '&', '$', '`']
         char_count = sum(1 for char in value if char in suspicious_chars)
         if char_count > 5:
@@ -596,19 +605,23 @@ class SecurityFeatureEncoder:
             features.append(self._add_to_vocab('EMPTY_BODY'))
             return features
         
-        # Convert to string for analysis
+        # Convert body to string for consistent analysis
         body_str = ''
         if isinstance(body, bytes):
             try:
+                # Attempt UTF-8 decoding, ignore errors for binary data
                 body_str = body.decode('utf-8', errors='ignore')
             except:
+                # Fallback to string representation
                 body_str = str(body)[:1000]  # Truncate if decoding fails
         elif isinstance(body, dict):
+            # Convert dictionary to JSON string
             body_str = json.dumps(body)
         else:
+            # Already string or string-convertible
             body_str = str(body)
         
-        # Length features
+        # Length features - detect unusually large requests
         body_length = len(body_str)
         if body_length > 1000000:  # 1MB
             features.append(self._add_to_vocab('VERY_LARGE_BODY'))
@@ -617,20 +630,21 @@ class SecurityFeatureEncoder:
         elif body_length > 0:
             features.append(self._add_to_vocab('HAS_BODY'))
         
-        # Content type detection
-        if body_str.strip().startswith('{') and body_str.strip().endswith('}'):
+        # Content type detection based on structure
+        stripped_body = body_str.strip()
+        if stripped_body.startswith('{') and stripped_body.endswith('}'):
             features.append(self._add_to_vocab('JSON_BODY'))
-            # Check for nested JSON (potential for deep parsing attacks)
+            # Check for deeply nested JSON (potential for parser attacks)
             if body_str.count('{') > 5:
                 features.append(self._add_to_vocab('DEEP_JSON'))
         
-        elif body_str.strip().startswith('<') and body_str.strip().endswith('>'):
+        elif stripped_body.startswith('<') and stripped_body.endswith('>'):
             features.append(self._add_to_vocab('XML_BODY'))
         
         elif '=' in body_str and '&' in body_str:
             features.append(self._add_to_vocab('FORM_URLENCODED'))
         
-        # Check for attack patterns in body
+        # Check for attack patterns in body content
         body_lower = body_str.lower()
         for attack_type, patterns in self.attack_patterns.items():
             for pattern in patterns:
@@ -639,7 +653,7 @@ class SecurityFeatureEncoder:
                     features.append(self._add_to_vocab(feature_name))
                     break
         
-        # Check for file upload patterns
+        # Check for file upload patterns (multipart form data)
         file_patterns = [
             r'Content-Disposition.*filename',
             r'------WebKitFormBoundary',
@@ -664,14 +678,14 @@ class SecurityFeatureEncoder:
         """
         features = []
         
-        # Combine all text for pattern detection
+        # Combine all text components for comprehensive pattern matching
         all_text = []
         
         # URL
         url = request_data.get('url', '')
         all_text.append(url)
         
-        # Headers
+        # Headers as key:value pairs
         headers = request_data.get('headers', {})
         for header, value in headers.items():
             all_text.append(f"{header}: {value}")
@@ -681,14 +695,15 @@ class SecurityFeatureEncoder:
         for param, value in params.items():
             all_text.append(f"{param}={value}")
         
-        # Body
+        # Body content
         body = request_data.get('body', '')
         if isinstance(body, (str, bytes)):
             all_text.append(str(body))
         
-        # Check combined text for attacks
+        # Join all text for pattern matching
         combined_text = ' '.join(all_text).lower()
         
+        # Check combined text against all attack patterns
         for attack_type, patterns in self.attack_patterns.items():
             for pattern in patterns:
                 if re.search(pattern, combined_text, re.IGNORECASE):
@@ -710,17 +725,18 @@ class SecurityFeatureEncoder:
         """
         features = []
         
-        # Request timing (if available)
+        # Request timing analysis (requires timestamp data)
         timestamp = request_data.get('timestamp')
         if timestamp:
-            # Check for rapid requests (potential DoS)
-            # This would require request history context
+            # This would require request history context for time-based analysis
+            # Placeholder for time-based anomaly detection
             pass
         
-        # IP address features (if available)
+        # IP address analysis
         ip = request_data.get('ip_address')
         if ip:
             try:
+                # Parse IP address to determine its properties
                 ip_obj = ipaddress.ip_address(ip)
                 if ip_obj.is_private:
                     features.append(self._add_to_vocab('PRIVATE_IP'))
@@ -728,24 +744,26 @@ class SecurityFeatureEncoder:
                     features.append(self._add_to_vocab('LOOPBACK_IP'))
                 if ip_obj.is_multicast:
                     features.append(self._add_to_vocab('MULTICAST_IP'))
-            except:
+            except ValueError:
+                # Invalid IP address format
                 pass
         
-        # Request frequency (would require context)
-        # Unusual user agent patterns
+        # User agent analysis
         user_agent = request_data.get('headers', {}).get('User-Agent', '')
         if user_agent:
+            # Very short user agents are suspicious
             if len(user_agent) < 10:
                 features.append(self._add_to_vocab('SHORT_USER_AGENT'))
+            # Non-standard user agents (not containing Mozilla)
             if 'mozilla' not in user_agent.lower():
                 features.append(self._add_to_vocab('NON_STANDARD_UA'))
         
-        # Referer analysis
+        # Referer analysis for CSRF detection
         referer = request_data.get('headers', {}).get('Referer', '')
         if referer:
             url = request_data.get('url', '')
             if referer and url:
-                # Check if referer matches expected patterns
+                # Check if referer is valid for the target URL
                 if not self._is_valid_referer(referer, url):
                     features.append(self._add_to_vocab('SUSPICIOUS_REFERER'))
         
@@ -763,10 +781,11 @@ class SecurityFeatureEncoder:
             bool: True if referer appears valid
         """
         try:
+            # Parse both URLs for comparison
             referer_parsed = urllib.parse.urlparse(referer)
             current_parsed = urllib.parse.urlparse(current_url)
             
-            # Same origin check
+            # Same origin - referer from same domain
             if referer_parsed.netloc == current_parsed.netloc:
                 return True
             
@@ -774,7 +793,7 @@ class SecurityFeatureEncoder:
             if not referer:
                 return True
             
-            # Common legitimate referers
+            # Check against common legitimate referers (search engines, social media)
             common_referers = [
                 'google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com',
                 'facebook.com', 'twitter.com', 'linkedin.com', 'reddit.com',
@@ -784,8 +803,10 @@ class SecurityFeatureEncoder:
                 if domain in referer_parsed.netloc:
                     return True
             
+            # If none of the above, referer might be suspicious
             return False
         except:
+            # If parsing fails, assume invalid
             return False
     
     def _generate_cache_key(self, data: Dict[str, Any]) -> str:
@@ -798,43 +819,46 @@ class SecurityFeatureEncoder:
         Returns:
             str: Cache key
         """
-        # Create deterministic string representation
+        # Create deterministic string representation using MD5 hashes
         key_parts = []
         
-        # URL
+        # URL hash (first 8 chars of MD5)
         url = data.get('url', '')
         key_parts.append(f"url:{hashlib.md5(url.encode()).hexdigest()[:8]}")
         
-        # Method
+        # HTTP method
         method = data.get('method', 'GET')
         key_parts.append(f"method:{method}")
         
-        # Headers hash
+        # Headers hash (sorted for consistency)
         headers = data.get('headers', {})
         headers_str = json.dumps(sorted(headers.items()), sort_keys=True)
         key_parts.append(f"headers:{hashlib.md5(headers_str.encode()).hexdigest()[:8]}")
         
-        # Body hash (truncated)
+        # Body hash (truncated to first 100 chars for performance)
         body = data.get('body', '')
         if isinstance(body, (str, bytes)):
             body_str = str(body)[:100]  # First 100 chars
             key_parts.append(f"body:{hashlib.md5(body_str.encode()).hexdigest()[:8]}")
         
+        # Join all parts with pipe separator
         return '|'.join(key_parts)
     
     def _update_cache(self, key: str, value: torch.Tensor):
         """
-        Update feature cache
+        Update feature cache with FIFO eviction
         
         Args:
             key: Cache key
             value: Cached value
         """
+        # If cache is full, remove oldest entry (FIFO)
         if len(self.feature_cache) >= self.cache_max_size:
-            # Remove oldest entry (FIFO)
+            # Get first key (oldest in Python 3.7+ dict maintains insertion order)
             oldest_key = next(iter(self.feature_cache))
             del self.feature_cache[oldest_key]
         
+        # Add new entry to cache
         self.feature_cache[key] = value
     
     def get_embeddings(self, feature_ids: torch.Tensor) -> torch.Tensor:
@@ -854,6 +878,7 @@ class SecurityFeatureEncoder:
         if self.embedding is None:
             raise ValueError("Encoder was initialized with use_embedding=False")
         
+        # Use embedding layer to convert integer IDs to dense vectors
         return self.embedding(feature_ids)
     
     def decode_features(self, feature_ids: List[int]) -> List[str]:
@@ -870,6 +895,7 @@ class SecurityFeatureEncoder:
             >>> ids = [1, 2, 3, 4]
             >>> features = encoder.decode_features(ids)
         """
+        # Map each ID to its string representation, defaulting to [UNK:ID] for unknown IDs
         return [self.reverse_vocab.get(id, f'[UNK:{id}]') for id in feature_ids]
     
     def get_vocabulary_size(self) -> int:
@@ -888,8 +914,7 @@ class SecurityFeatureEncoder:
         Args:
             filepath: Path to save vocabulary
         """
-        import pickle
-        
+        # Use pickle to serialize vocabulary data
         with open(filepath, 'wb') as f:
             pickle.dump({
                 'feature_vocab': self.feature_vocab,
@@ -904,11 +929,11 @@ class SecurityFeatureEncoder:
         Args:
             filepath: Path to vocabulary file
         """
-        import pickle
-        
+        # Load and deserialize vocabulary data
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
         
+        # Restore vocabulary state
         self.feature_vocab = data['feature_vocab']
         self.reverse_vocab = data['reverse_vocab']
         self.next_vocab_id = data['next_vocab_id']
@@ -935,19 +960,19 @@ class StreamingSecurityEncoder(SecurityFeatureEncoder):
         """
         super().__init__(*args, **kwargs)
         self.window_size = window_size
-        self.request_window = []
-        self.feature_window = []
+        self.request_window = []  # Stores recent raw requests
+        self.feature_window = []  # Stores recent feature tensors
         
-        # Statistics for adaptive thresholding
+        # Statistics for adaptive thresholding and anomaly detection
         self.request_stats = {
-            'count': 0,
-            'avg_features': 0.0,
-            'attack_rate': 0.0,
+            'count': 0,           # Total request count
+            'avg_features': 0.0,  # Exponential moving average of feature count
+            'attack_rate': 0.0,   # Exponential moving average of attack probability
         }
     
     def encode_streaming(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Encode request in streaming mode
+        Encode request in streaming mode with context
         
         Args:
             request_data: Request data dictionary
@@ -955,65 +980,72 @@ class StreamingSecurityEncoder(SecurityFeatureEncoder):
         Returns:
             Dict with encoded features and streaming context
         """
-        # Encode current request
+        # Encode current request using parent class method
         current_features = self.encode_http_request(request_data)
         
-        # Update sliding windows
+        # Update sliding windows with new data
         self.request_window.append(request_data)
         self.feature_window.append(current_features)
         
-        # Maintain window size
+        # Maintain window size by removing oldest entries
         if len(self.request_window) > self.window_size:
             self.request_window.pop(0)
             self.feature_window.pop(0)
         
-        # Update statistics
+        # Update streaming statistics with exponential moving averages
         self._update_statistics(request_data)
         
-        # Calculate context features from window
+        # Calculate context features from recent request window
         context_features = self._extract_context_features()
         
+        # Return comprehensive streaming analysis
         return {
-            'current_features': current_features,
-            'context_features': context_features,
-            'window_size': len(self.request_window),
-            'stats': self.request_stats.copy(),
-            'anomaly_score': self._calculate_anomaly_score(request_data),
+            'current_features': current_features,  # Features of current request
+            'context_features': context_features,  # Aggregated window features
+            'window_size': len(self.request_window),  # Current window size
+            'stats': self.request_stats.copy(),  # Current statistics snapshot
+            'anomaly_score': self._calculate_anomaly_score(request_data),  # Anomaly score 0-1
         }
     
     def _update_statistics(self, request_data: Dict[str, Any]):
-        """Update streaming statistics"""
+        """Update streaming statistics with exponential moving averages"""
         self.request_stats['count'] += 1
         
-        # Update average features
+        # Update average parameter count (90% old, 10% new)
         feature_count = len(request_data.get('parameters', {}))
         self.request_stats['avg_features'] = (
             self.request_stats['avg_features'] * 0.9 + feature_count * 0.1
         )
         
-        # Check for attacks in this request
+        # Update attack rate based on current request
         if self._has_attack_patterns(request_data):
+            # Increase attack rate (95% old, 5% new)
             self.request_stats['attack_rate'] = (
                 self.request_stats['attack_rate'] * 0.95 + 0.05
             )
         else:
+            # Decrease attack rate (99% old, 1% new)
             self.request_stats['attack_rate'] = (
                 self.request_stats['attack_rate'] * 0.99
             )
     
     def _has_attack_patterns(self, request_data: Dict[str, Any]) -> bool:
-        """Check if request has attack patterns"""
+        """Check if request has attack patterns (simplified detection)"""
         all_text = []
         
+        # Extract text from URL
         url = request_data.get('url', '')
         all_text.append(url)
         
+        # Extract text from body (truncated)
         body = request_data.get('body', '')
         if body:
             all_text.append(str(body)[:1000])
         
+        # Combine text for pattern matching
         combined_text = ' '.join(all_text).lower()
         
+        # Check against all attack patterns
         for patterns in self.attack_patterns.values():
             for pattern in patterns:
                 if re.search(pattern, combined_text, re.IGNORECASE):
@@ -1024,54 +1056,57 @@ class StreamingSecurityEncoder(SecurityFeatureEncoder):
     def _extract_context_features(self) -> torch.Tensor:
         """Extract features from current window context"""
         if not self.feature_window:
+            # Return zeros if window is empty
             return torch.zeros(self.max_seq_len, dtype=torch.long)
         
-        # Combine features from window
-        # Simple approach: average the feature vectors
+        # Combine features from window by averaging
+        # Stack all feature tensors in window
         stacked = torch.stack(self.feature_window)
+        # Compute mean across window dimension
         context = stacked.mean(dim=0).long()
         
         return context
     
     def _calculate_anomaly_score(self, request_data: Dict[str, Any]) -> float:
-        """Calculate anomaly score for current request"""
+        """Calculate anomaly score for current request (0.0 to 1.0)"""
         score = 0.0
         
-        # Check against window statistics
+        # Only calculate if we have enough historical data
         if len(self.request_window) > 10:
             # Check for parameter count anomaly
             param_count = len(request_data.get('parameters', {}))
             avg_params = self.request_stats['avg_features']
             
+            # Parameter count significantly higher than average
             if param_count > avg_params * 3:
                 score += 0.3
             elif param_count > avg_params * 2:
                 score += 0.1
             
-            # Check for attack rate anomaly
+            # Attack rate anomaly: attack when attack rate is normally low
             current_has_attack = self._has_attack_patterns(request_data)
             if current_has_attack and self.request_stats['attack_rate'] < 0.1:
-                # Attack when attack rate is normally low
                 score += 0.4
         
-        # Request size anomaly
+        # Request size anomaly - very large request bodies
         body_size = len(str(request_data.get('body', '')))
         if body_size > 100000:  # 100KB
             score += 0.2
         
+        # Ensure score doesn't exceed 1.0
         return min(1.0, score)
 
 
 def test_security_encoder():
     """
-    Test security feature encoder
+    Test security feature encoder with example malicious request
     """
-    print("🧪 Testing Security Encoder...")
+    print("Testing Security Encoder...")
     
-    # Create encoder
+    # Create encoder instance
     encoder = SecurityFeatureEncoder(vocab_size=10000, max_seq_len=256)
     
-    # Test request
+    # Test request with SQL injection attempt
     test_request = {
         'method': 'POST',
         'url': 'https://example.com/login?redirect=/admin',
@@ -1082,44 +1117,46 @@ def test_security_encoder():
         },
         'parameters': {
             'username': 'admin',
-            'password': "' OR '1'='1",
+            'password': "' OR '1'='1",  # SQL injection payload
             'remember': 'true',
         },
         'body': '{"action": "login", "data": {"user": "admin"}}',
         'ip_address': '192.168.1.100',
     }
     
-    # Encode request
+    # Encode request into feature tensor
     features = encoder.encode_http_request(test_request)
     
-    # Verify
+    # Verify tensor shape and type
     assert features.shape == (256,), f"Expected shape (256,), got {features.shape}"
     assert features.dtype == torch.long, f"Expected long dtype, got {features.dtype}"
     
-    # Decode and check for attack features
-    decoded = encoder.decode_features(features.tolist()[:20])  # First 20 features
+    # Decode first 20 features for inspection
+    decoded = encoder.decode_features(features.tolist()[:20])
     print(f"   First 10 features: {decoded[:10]}")
     
-    # Check that SQL injection was detected
+    # Check that SQL injection was detected in features
     sql_features = [f for f in decoded if 'SQL' in f or 'ATTACK' in f]
     assert len(sql_features) > 0, "SQL injection should have been detected!"
     
-    print("✅ Security Encoder tests passed!")
+    print("Security Encoder tests passed!")
     print(f"   Vocabulary size: {encoder.get_vocabulary_size()}")
     print(f"   Features with attacks: {len(sql_features)}")
     
-    # Test streaming encoder
+    # Test streaming encoder functionality
     streaming_encoder = StreamingSecurityEncoder(window_size=50)
     streaming_result = streaming_encoder.encode_streaming(test_request)
     
+    # Verify streaming result structure
     assert 'current_features' in streaming_result
     assert 'context_features' in streaming_result
     assert 'anomaly_score' in streaming_result
     
-    print("✅ Streaming Encoder tests passed!")
+    print("Streaming Encoder tests passed!")
     
     return True
 
 
 if __name__ == "__main__":
+    # Run tests when script is executed directly
     test_security_encoder()

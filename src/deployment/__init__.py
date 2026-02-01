@@ -19,42 +19,44 @@ Key Features:
 - Security hardening
 """
 
-# Core deployment components
-from .website_plugin import WebsitePlugin
-from .reverse_proxy import ReverseProxySecurityLayer
-from .api_middleware import APISecurityMiddleware
-from .security_dashboard import SecurityDashboard
+# Core deployment components - Import from submodules (these need to exist)
+# Note: These imports assume the classes exist in their respective modules
+from .website_plugin import WebsitePlugin  # Import WebsitePlugin class from website_plugin.py
+from .reverse_proxy import ReverseProxySecurityLayer  # Import ReverseProxySecurityLayer from reverse_proxy.py
+from .api_middleware import APISecurityMiddleware  # Import APISecurityMiddleware from api_middleware.py
+from .security_dashboard import SecurityDashboard  # Import SecurityDashboard from security_dashboard.py
 
-# Deployment orchestrator
-from .deployment_orchestrator import DeploymentOrchestrator
+# Deployment orchestrator - Import orchestrator class
+from .deployment_orchestrator import DeploymentOrchestrator  # Import DeploymentOrchestrator from deployment_orchestrator.py
 
-# Configuration utilities
-from .config_manager import DeploymentConfigManager
+# Configuration utilities - Import configuration manager
+from .config_manager import DeploymentConfigManager  # Import DeploymentConfigManager from config_manager.py
 
-# Health and monitoring
-from .health_monitor import DeploymentHealthMonitor
+# Health and monitoring - Import health monitor
+from .health_monitor import DeploymentHealthMonitor  # Import DeploymentHealthMonitor from health_monitor.py
 
-# Version information
-__version__ = "1.0.0"
-__author__ = "CyberGuard Security Team"
-__license__ = "Apache 2.0"
+# Version information - Module metadata
+__version__ = "1.0.0"  # Current module version
+__author__ = "CyberGuard Security Team"  # Author/team name
+__license__ = "Apache 2.0"  # Software license
 
-# Public API
+# Public API - List of symbols to export when using "from module import *"
 __all__ = [
-    'WebsitePlugin',
-    'ReverseProxySecurityLayer', 
-    'APISecurityMiddleware',
-    'SecurityDashboard',
-    'DeploymentOrchestrator',
-    'DeploymentConfigManager',
-    'DeploymentHealthMonitor',
+    'WebsitePlugin',  # Export WebsitePlugin
+    'ReverseProxySecurityLayer',  # Export ReverseProxySecurityLayer
+    'APISecurityMiddleware',  # Export APISecurityMiddleware
+    'SecurityDashboard',  # Export SecurityDashboard
+    'DeploymentOrchestrator',  # Export DeploymentOrchestrator
+    'DeploymentConfigManager',  # Export DeploymentConfigManager
+    'DeploymentHealthMonitor',  # Export DeploymentHealthMonitor
 ]
 
 # Initialize logging for deployment module
-import logging
+import logging  # Import Python's standard logging module
 
 # Create module-specific logger
-logger = logging.getLogger(__name__)
+# __name__ gives the fully qualified module name (e.g., "src.deployment")
+logger = logging.getLogger(__name__)  # Create a logger specific to this module
 
 def setup_deployment_logging(level=logging.INFO):
     """
@@ -67,24 +69,28 @@ def setup_deployment_logging(level=logging.INFO):
         >>> from src.deployment import setup_deployment_logging
         >>> setup_deployment_logging(logging.DEBUG)
     """
-    # Create formatter
+    # Create formatter to define log message format
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - [DEPLOYMENT] - %(message)s'
-    )
+    )  # Create formatter with timestamp, logger name, level, and deployment tag
     
     # Create handler (console for now, can be extended to file)
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
+    handler = logging.StreamHandler()  # Create a stream handler that outputs to console
+    handler.setFormatter(formatter)  # Apply the formatter to the handler
+    
+    # Remove existing handlers to avoid duplicate logs if reconfiguring
+    for hdlr in logger.handlers[:]:
+        logger.removeHandler(hdlr)
     
     # Configure module logger
-    logger.setLevel(level)
-    logger.addHandler(handler)
+    logger.setLevel(level)  # Set the logging level for this logger
+    logger.addHandler(handler)  # Add the handler to the logger
     
-    logger.info(f"Deployment module logging configured at level: {logging.getLevelName(level)}")
+    logger.info(f"Deployment module logging configured at level: {logging.getLevelName(level)}")  # Log the configuration
 
 # Auto-configure logging if not already configured
-if not logger.handlers:
-    setup_deployment_logging()
+if not logger.handlers:  # Check if logger has no handlers
+    setup_deployment_logging()  # Set up default logging configuration
 
 # Export version and configuration check
 def get_deployment_info():
@@ -100,31 +106,36 @@ def get_deployment_info():
         1.0.0
     """
     return {
-        'version': __version__,
-        'components': __all__,
-        'logging_configured': bool(logger.handlers),
-        'log_level': logging.getLevelName(logger.level)
+        'version': __version__,  # Module version
+        'components': __all__,  # List of exported components
+        'logging_configured': bool(logger.handlers),  # Whether logging is configured
+        'log_level': logging.getLevelName(logger.level)  # Current log level as string
     }
 
 # Initialize module with default configuration
 try:
-    # Import configuration
-    from ..config import get_deployment_config
+    # Import configuration from parent package
+    from ..config import get_deployment_config  # Import config function from parent's config module
     
     # Get deployment configuration
-    deployment_config = get_deployment_config()
+    deployment_config = get_deployment_config()  # Call function to get configuration
     
     # Update logging level from config if available
     if deployment_config and 'log_level' in deployment_config:
-        log_level_name = deployment_config['log_level']
-        log_level = getattr(logging, log_level_name.upper(), logging.INFO)
-        setup_deployment_logging(log_level)
+        log_level_name = deployment_config['log_level']  # Get log level from config
+        log_level = getattr(logging, log_level_name.upper(), logging.INFO)  # Convert string to logging level constant
+        setup_deployment_logging(log_level)  # Reconfigure logging with config level
     
-    logger.info(f"CyberGuard Deployment Module v{__version__} initialized successfully")
+    logger.info(f"CyberGuard Deployment Module v{__version__} initialized successfully")  # Log successful initialization
     
 except ImportError:
-    logger.warning("Could not load deployment configuration, using defaults")
-    logger.info(f"CyberGuard Deployment Module v{__version__} initialized with default configuration")
+    # Handle case where config module is not available
+    logger.warning("Could not load deployment configuration, using defaults")  # Log warning
+    logger.info(f"CyberGuard Deployment Module v{__version__} initialized with default configuration")  # Log default initialization
 
-# Clean up namespace
-del logging
+# Clean up namespace - Remove imported names we don't want to export
+del logging  # Remove the logging module from namespace to keep it clean
+
+# Note: The del statement only removes it from this module's namespace,
+# not from where it was imported elsewhere. It's optional but helps
+# with clean namespace management.

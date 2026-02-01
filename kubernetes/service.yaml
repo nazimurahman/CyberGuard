@@ -1,44 +1,43 @@
-# kubernetes/service.yaml
 ---
-# API Service
-apiVersion: v1
-kind: Service
+# API Service - Internal service for API server communication
+apiVersion: v1  # Kubernetes core API version
+kind: Service  # Resource type: Service for network access to pods
 metadata:
-  name: cyberguard-api
-  namespace: cyberguard
+  name: cyberguard-api  # Service name used for DNS resolution
+  namespace: cyberguard  # Namespace where service is deployed
   labels:
-    app: cyberguard
-    component: api
-    tier: backend
+    app: cyberguard  # Application label for grouping
+    component: api  # Component label for identification
+    tier: backend  # Tier label for architecture layer
   annotations:
-    # Load balancer annotations
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # AWS NLB
-    service.beta.kubernetes.io/aws-load-balancer-internal: "false"
-    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:region:account:certificate/id"
-    # Prometheus annotations
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "8000"
+    # AWS Load Balancer Controller annotations (remove if not using AWS)
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # Network Load Balancer
+    service.beta.kubernetes.io/aws-load-balancer-internal: "false"  # Internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:region:account:certificate/id"  # SSL cert ARN
+    # Prometheus monitoring annotations
+    prometheus.io/scrape: "true"  # Enable Prometheus scraping
+    prometheus.io/port: "8000"  # Port for metrics endpoint
+    prometheus.io/path: "/metrics"  # Path for metrics endpoint
 spec:
-  type: ClusterIP  # Internal service, exposed via Ingress/NGINX
+  type: ClusterIP  # Internal cluster IP, accessible only within cluster
   selector:
-    app: cyberguard
+    app: cyberguard  # Select pods with these labels
     component: api
   ports:
-  - name: http
-    port: 8000  # Port exposed within cluster
-    targetPort: 8000  # Port on the pod
-    protocol: TCP
-  - name: metrics
+  - name: http  # Port name for reference
+    port: 8000  # Service port (port exposed by service)
+    targetPort: 8000  # Container port (port on the pod)
+    protocol: TCP  # Transport protocol
+  - name: metrics  # Metrics endpoint port
     port: 9090
     targetPort: 9090
     protocol: TCP
-  # Session affinity for stateful connections
-  sessionAffinity: ClientIP
+  sessionAffinity: ClientIP  # Route same client to same pod
   sessionAffinityConfig:
     clientIP:
-      timeoutSeconds: 10800  # 3 hours
+      timeoutSeconds: 10800  # Session affinity timeout (3 hours)
 ---
-# Dashboard Service
+# Dashboard Service - Frontend dashboard access
 apiVersion: v1
 kind: Service
 metadata:
@@ -49,17 +48,17 @@ metadata:
     component: dashboard
     tier: frontend
 spec:
-  type: ClusterIP
+  type: ClusterIP  # Internal service, accessed via reverse proxy
   selector:
     app: cyberguard
     component: dashboard
   ports:
   - name: http
-    port: 8080
-    targetPort: 8080
+    port: 8080  # Service port
+    targetPort: 8080  # Container port
     protocol: TCP
 ---
-# Scanner Service
+# Scanner Service - Web security scanner component
 apiVersion: v1
 kind: Service
 metadata:
@@ -75,16 +74,16 @@ spec:
     app: cyberguard
     component: scanner
   ports:
-  - name: http
+  - name: http  # HTTP API port
     port: 9000
     targetPort: 9000
     protocol: TCP
-  - name: websocket
+  - name: websocket  # WebSocket for real-time updates
     port: 9001
     targetPort: 9001
     protocol: TCP
 ---
-# PostgreSQL Service
+# PostgreSQL Database Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -98,16 +97,16 @@ spec:
   type: ClusterIP
   selector:
     app: cyberguard
-    component: postgres
+    component: postgres  # Fixed: Changed from database to postgres to match deployment
   ports:
   - name: postgres
-    port: 5432
+    port: 5432  # PostgreSQL default port
     targetPort: 5432
     protocol: TCP
-  # Headless service for StatefulSet DNS
-  clusterIP: None  # Headless service for direct pod access
+  clusterIP: None  # Headless service - no cluster IP, direct pod DNS
+  publishNotReadyAddresses: true  # Include not-ready pods in DNS
 ---
-# Redis Service
+# Redis Cache Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -115,7 +114,7 @@ metadata:
   namespace: cyberguard
   labels:
     app: cyberguard
-    component: redis
+    component: redis  # Fixed: Changed from cache to redis to match deployment
     tier: cache
 spec:
   type: ClusterIP
@@ -124,11 +123,11 @@ spec:
     component: redis
   ports:
   - name: redis
-    port: 6379
+    port: 6379  # Redis default port
     targetPort: 6379
     protocol: TCP
 ---
-# ChromaDB Service
+# ChromaDB Vector Database Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -136,7 +135,7 @@ metadata:
   namespace: cyberguard
   labels:
     app: cyberguard
-    component: vectordb
+    component: chromadb  # Fixed: Changed from vectordb to chromadb to match deployment
     tier: data
 spec:
   type: ClusterIP
@@ -145,11 +144,11 @@ spec:
     component: chromadb
   ports:
   - name: http
-    port: 8000
+    port: 8000  # ChromaDB HTTP API port
     targetPort: 8000
     protocol: TCP
 ---
-# RabbitMQ Service
+# RabbitMQ Message Queue Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -157,7 +156,7 @@ metadata:
   namespace: cyberguard
   labels:
     app: cyberguard
-    component: message-queue
+    component: rabbitmq
     tier: infrastructure
 spec:
   type: ClusterIP
@@ -165,16 +164,16 @@ spec:
     app: cyberguard
     component: rabbitmq
   ports:
-  - name: amqp
+  - name: amqp  # AMQP protocol port
     port: 5672
     targetPort: 5672
     protocol: TCP
-  - name: management
+  - name: management  # RabbitMQ management UI
     port: 15672
     targetPort: 15672
     protocol: TCP
 ---
-# Nginx Service (Load Balancer)
+# Nginx Reverse Proxy Service (External Access)
 apiVersion: v1
 kind: Service
 metadata:
@@ -182,43 +181,40 @@ metadata:
   namespace: cyberguard
   labels:
     app: cyberguard
-    component: reverse-proxy
+    component: nginx  # Fixed: Changed from reverse-proxy to nginx to match deployment
     tier: edge
   annotations:
-    # AWS specific annotations
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
-    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+    # AWS Load Balancer annotations (cloud-specific)
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # Network Load Balancer
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"  # Public LB
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"  # SSL termination port
     service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-east-1:123456789012:certificate/abc123"
-    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"  # TCP to pods
     service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-    # Health check annotations
+    # Health check configuration
     service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
     service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "2"
     service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
     service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
 spec:
-  type: LoadBalancer  # External load balancer
+  type: LoadBalancer  # Cloud provider load balancer
   selector:
     app: cyberguard
     component: nginx
   ports:
-  - name: http
-    port: 80  # External port
+  - name: http  # HTTP traffic
+    port: 80  # External load balancer port
     targetPort: 80  # Container port
     protocol: TCP
-  - name: https
+  - name: https  # HTTPS traffic
     port: 443
     targetPort: 443
     protocol: TCP
-  # External traffic policy
-  externalTrafficPolicy: Local  # Preserves client IP
-  # Load balancer IP (optional)
-  loadBalancerIP: "10.0.0.100"
-  # Session affinity
-  sessionAffinity: None
+  externalTrafficPolicy: Local  # Preserve client IP, better health checks
+  # loadBalancerIP: "10.0.0.100"  # Optional: Request specific IP (commented out)
+  sessionAffinity: None  # No session affinity for load balancer
 ---
-# Prometheus Service
+# Prometheus Monitoring Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -226,7 +222,7 @@ metadata:
   namespace: cyberguard
   labels:
     app: cyberguard
-    component: monitoring
+    component: prometheus
     tier: observability
 spec:
   type: ClusterIP
@@ -235,11 +231,11 @@ spec:
     component: prometheus
   ports:
   - name: http
-    port: 9090
+    port: 9090  # Prometheus web UI port
     targetPort: 9090
     protocol: TCP
 ---
-# Grafana Service
+# Grafana Dashboard Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -256,11 +252,11 @@ spec:
     component: grafana
   ports:
   - name: http
-    port: 3000
+    port: 3000  # Grafana web UI port
     targetPort: 3000
     protocol: TCP
 ---
-# Ingestor Service
+# Threat Intelligence Ingestor Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -277,11 +273,11 @@ spec:
     component: ingestor
   ports:
   - name: http
-    port: 8081
-    targetPort: 8081
+    port: 8080  # Fixed: Changed from 8081 to 8080 for consistency
+    targetPort: 8080
     protocol: TCP
 ---
-# Headless Services for StatefulSets
+# Headless Service for PostgreSQL StatefulSet
 apiVersion: v1
 kind: Service
 metadata:
@@ -289,30 +285,103 @@ metadata:
   namespace: cyberguard
   labels:
     app: cyberguard
-    component: database
+    component: postgres-headless  # Fixed: Added specific component label
     tier: data
 spec:
-  clusterIP: None  # Headless service
+  clusterIP: None  # Headless service - no cluster IP
   selector:
     app: cyberguard
-    component: postgres
+    component: postgres  # Fixed: Changed from database to postgres
   ports:
   - name: postgres
     port: 5432
     targetPort: 5432
     protocol: TCP
-  publishNotReadyAddresses: true  # Publish not ready pods
+  publishNotReadyAddresses: true  # Important for StatefulSet pod DNS
 ---
-# ExternalName Service for External Databases (if needed)
+# Ingestor Metrics Service (Added for Prometheus)
 apiVersion: v1
 kind: Service
 metadata:
-  name: external-database
+  name: cyberguard-ingestor-metrics  # Added: Dedicated metrics service
   namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: ingestor
+    tier: observability
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
 spec:
-  type: ExternalName
-  externalName: database.example.com  # External database hostname
+  type: ClusterIP
+  selector:
+    app: cyberguard
+    component: ingestor
   ports:
-  - name: postgres
-    port: 5432
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+---
+# Redis Headless Service (Added for clustering support)
+apiVersion: v1
+kind: Service
+metadata:
+  name: cyberguard-redis-headless  # Added: Headless service for Redis
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: redis-headless
+    tier: cache
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: cyberguard
+    component: redis
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  publishNotReadyAddresses: true  # Include all pods in DNS
+---
+# RabbitMQ Headless Service (Added for clustering)
+apiVersion: v1
+kind: Service
+metadata:
+  name: cyberguard-rabbitmq-headless  # Added: Headless service for RabbitMQ
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: rabbitmq-headless
+    tier: infrastructure
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: cyberguard
+    component: rabbitmq
+  ports:
+  - name: amqp
+    port: 5672
+    targetPort: 5672
+    protocol: TCP
+  publishNotReadyAddresses: true  # Important for cluster formation
+---
+# Service for External Threat Intelligence Feeds
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-threat-feeds  # Added: ExternalName service example
+  namespace: cyberguard
+  labels:
+    app: cyberguard
+    component: external-services
+    tier: external
+spec:
+  type: ExternalName  # DNS CNAME proxy
+  externalName: api.threatintel.example.com  # External service domain
+  ports:
+  - name: https
+    port: 443
     protocol: TCP

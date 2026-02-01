@@ -17,7 +17,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import grad
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Any, Callable
+from typing import Dict, List, Tuple, Optional, Any, Callable, Union
 import time
 import logging
 from pathlib import Path
@@ -78,8 +78,8 @@ class AdversarialTrainingConfig:
     warmup_epochs: int = 10  # Train normally before adversarial training
     
     # Robustness evaluation
-    eval_attacks: List[AttackMethod] = None  # Attacks to evaluate against
-    eval_epsilons: List[float] = None  # Perturbation sizes to evaluate
+    eval_attacks: Optional[List[AttackMethod]] = None  # Attacks to evaluate against
+    eval_epsilons: Optional[List[float]] = None  # Perturbation sizes to evaluate
     
     # Certified robustness
     certified_smoothing: bool = False
@@ -131,8 +131,8 @@ class AdversarialAttacker:
         Returns:
             Adversarial images
         """
-        # Enable gradient computation
-        images.requires_grad = True
+        # Ensure images require gradients for attack generation
+        images = images.clone().detach().requires_grad_(True)
         
         # Forward pass
         outputs = self.model(images)
@@ -148,7 +148,7 @@ class AdversarialAttacker:
         # Create adversarial examples
         adversarial_images = images + self.config.epsilon * gradient_sign
         
-        # Clip to valid range
+        # Clip to valid range [0, 1] for image data
         adversarial_images = torch.clamp(adversarial_images, 0, 1)
         
         return adversarial_images.detach()
@@ -164,16 +164,17 @@ class AdversarialAttacker:
         Returns:
             Adversarial images
         """
-        # Initialize adversarial examples with random noise
+        # Initialize adversarial examples with random noise within epsilon bound
         adversarial_images = images.clone().detach()
-        adversarial_images = adversarial_images + torch.empty_like(adversarial_images).uniform_(
+        noise = torch.empty_like(adversarial_images).uniform_(
             -self.config.epsilon, self.config.epsilon
         )
+        adversarial_images = adversarial_images + noise
         adversarial_images = torch.clamp(adversarial_images, 0, 1)
         
-        # PGD iterations
+        # PGD iterations for iterative optimization
         for i in range(self.config.num_steps):
-            adversarial_images.requires_grad = True
+            adversarial_images.requires_grad_(True)
             
             # Forward pass
             outputs = self.model(adversarial_images)
@@ -183,18 +184,18 @@ class AdversarialAttacker:
             self.model.zero_grad()
             loss.backward()
             
-            # Get gradient
+            # Get gradient of loss with respect to input
             gradient = adversarial_images.grad.data
             
-            # Update adversarial images
+            # Update adversarial images in direction of gradient sign
             adversarial_images = adversarial_images.detach() + self.config.step_size * gradient.sign()
             
-            # Project back to epsilon ball
+            # Project back to epsilon ball around original images
             delta = torch.clamp(adversarial_images - images, 
                               -self.config.epsilon, self.config.epsilon)
             adversarial_images = images + delta
             
-            # Clip to valid range
+            # Clip to valid pixel range [0, 1]
             adversarial_images = torch.clamp(adversarial_images, 0, 1)
         
         return adversarial_images.detach()
@@ -212,34 +213,34 @@ class AdversarialAttacker:
         """
         batch_size = images.shape[0]
         
-        # Variables to optimize
+        # Initialize optimization variable w in tanh space for box constraints
         w = torch.zeros_like(images, requires_grad=True)
         
         # Optimizer for CW attack
         optimizer = optim.Adam([w], lr=self.config.cw_learning_rate)
         
-        # Target labels (least likely class)
+        # Target labels (least likely class to increase attack difficulty)
         with torch.no_grad():
             outputs = self.model(images)
             target_labels = torch.argmin(outputs, dim=1)
         
         # CW optimization loop
         for iteration in range(self.config.cw_iterations):
-            # Compute adversarial images from w
+            # Map w from (-inf, inf) to [0, 1] using tanh
             adversarial_images = 0.5 * (torch.tanh(w) + 1)
             
-            # Forward pass
+            # Forward pass through model
             outputs = self.model(adversarial_images)
             
             # CW loss components
-            # 1. Distance loss (L2 norm)
+            # 1. Distance loss (L2 norm between original and adversarial)
             l2_distance = torch.norm(adversarial_images - images, p=2, dim=(1, 2, 3))
             
-            # 2. Classification loss
+            # 2. Classification loss to encourage misclassification
             correct_logits = outputs[range(batch_size), labels]
             target_logits = outputs[range(batch_size), target_labels]
             
-            # CW loss function
+            # CW loss function: balance distance and misclassification
             loss = l2_distance.sum() + torch.clamp(correct_logits - target_logits + self.config.cw_confidence, min=0).sum()
             
             # Optimization step
@@ -247,7 +248,7 @@ class AdversarialAttacker:
             loss.backward()
             optimizer.step()
         
-        # Final adversarial images
+        # Final adversarial images after optimization
         adversarial_images = 0.5 * (torch.tanh(w) + 1).detach()
         
         return adversarial_images
@@ -267,18 +268,18 @@ class AdversarialAttacker:
         image_shape = images.shape[1:]
         
         adversarial_images = images.clone().detach()
-        adversarial_images.requires_grad = True
+        adversarial_images.requires_grad_(True)
         
-        # Forward pass
+        # Forward pass to get initial outputs
         outputs = self.model(adversarial_images)
         
-        # Get number of classes
+        # Get number of classes from output dimension
         num_classes = outputs.shape[1]
         
-        # Compute gradient for each class
+        # Compute gradient for each class (needed for DeepFool)
         grads = []
         for c in range(num_classes):
-            # Zero gradients
+            # Zero gradients before computing for each class
             if adversarial_images.grad is not None:
                 adversarial_images.grad.zero_()
             
@@ -288,49 +289,53 @@ class AdversarialAttacker:
             
             grads.append(adversarial_images.grad.clone())
         
-        # Compute DeepFool perturbation for each sample
+        # Reset adversarial_images for per-sample processing
+        adversarial_images = images.clone().detach()
+        
+        # Compute DeepFool perturbation for each sample individually
         for i in range(batch_size):
-            image = images[i]
-            label = labels[i]
+            image = images[i].unsqueeze(0)  # Keep batch dimension
+            label = labels[i].unsqueeze(0)
             
             # Initialize perturbation
             perturbation = torch.zeros_like(image)
             
-            # DeepFool iterations
-            for iteration in range(50):
+            # DeepFool iterations for minimal perturbation
+            for iteration in range(50):  # Max 50 iterations per sample
                 adversarial_image = image + perturbation
-                adversarial_image.requires_grad = True
+                adversarial_image.requires_grad_(True)
                 
                 # Forward pass
-                output = self.model(adversarial_image.unsqueeze(0))
+                output = self.model(adversarial_image)
                 
-                # Get top-2 classes
+                # Get top-2 classes (current prediction and runner-up)
                 sorted_indices = torch.argsort(output[0], descending=True)
                 
-                if sorted_indices[0] != label:
-                    # Already misclassified
-                    break
+                # Check if already misclassified
+                if sorted_indices[0] != label.item():
+                    break  # Attack successful
                 
-                # Compute perturbation
-                w = grads[sorted_indices[1]][i] - grads[label][i]
-                f = output[0, sorted_indices[1]] - output[0, label]
+                # Compute perturbation direction using linear approximation
+                w = grads[sorted_indices[1]][i] - grads[label.item()][i]
+                f = output[0, sorted_indices[1]] - output[0, label.item()]
                 
-                perturbation_i = (torch.abs(f) / torch.norm(w.flatten())) * w
-                perturbation += perturbation_i
+                # Compute minimal perturbation
+                perturbation_i = (torch.abs(f) / (torch.norm(w.flatten()) + 1e-8)) * w
+                perturbation = perturbation + perturbation_i.unsqueeze(0)
                 
-                # Check if misclassified
+                # Early stopping if perturbation becomes too large
                 if torch.norm(perturbation) > 10 * self.config.epsilon:
                     break
             
-            # Apply perturbation with epsilon constraint
+            # Apply perturbation with epsilon constraint for consistency
             perturbation = torch.clamp(perturbation, -self.config.epsilon, self.config.epsilon)
             adversarial_images[i] = image + perturbation
         
         return adversarial_images.detach()
     
-    def generate_attack(self, images: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    def jsma_attack(self, images: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """
-        Generate adversarial examples using configured attack method
+        Jacobian-based Saliency Map Attack (JSMA)
         
         Args:
             images: Clean images
@@ -339,20 +344,24 @@ class AdversarialAttacker:
         Returns:
             Adversarial images
         """
-        if self.config.attack_method == AttackMethod.FGSM:
-            return self.fgsm_attack(images, labels)
-        elif self.config.attack_method == AttackMethod.PGD:
-            return self.pgd_attack(images, labels)
-        elif self.config.attack_method == AttackMethod.CW:
-            return self.cw_attack(images, labels)
-        elif self.config.attack_method == AttackMethod.DEEPFOOL:
-            return self.deepfool_attack(images, labels)
-        elif self.config.attack_method == AttackMethod.BIM:
-            return self.bim_attack(images, labels)
-        elif self.config.attack_method == AttackMethod.MIM:
-            return self.mim_attack(images, labels)
-        else:
-            raise ValueError(f"Unknown attack method: {self.config.attack_method}")
+        # Note: JSMA attack implementation would be complex and omitted for brevity
+        # It typically involves computing saliency maps and iterative pixel modification
+        raise NotImplementedError("JSMA attack not fully implemented in this version")
+    
+    def autoattack_attack(self, images: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        AutoAttack - ensemble of attacks
+        
+        Args:
+            images: Clean images
+            labels: True labels
+            
+        Returns:
+            Adversarial images
+        """
+        # Note: AutoAttack combines multiple attacks
+        # For simplicity, using PGD as baseline
+        return self.pgd_attack(images, labels)
     
     def bim_attack(self, images: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """
@@ -369,10 +378,11 @@ class AdversarialAttacker:
         original_step_size = self.config.step_size
         original_num_steps = self.config.num_steps
         
-        # Use smaller step size for BIM
+        # Use smaller step size for BIM (typical: epsilon/10)
         self.config.step_size = self.config.epsilon / 10
         self.config.num_steps = min(100, original_num_steps * 2)
         
+        # Generate adversarial examples using PGD with BIM parameters
         adversarial_images = self.pgd_attack(images, labels)
         
         # Restore original configuration
@@ -396,11 +406,12 @@ class AdversarialAttacker:
         momentum = torch.zeros_like(images)
         
         # MIM hyperparameters
-        decay_factor = 1.0
+        decay_factor = 1.0  # Momentum decay factor
         num_iterations = self.config.num_steps
         
+        # Iterative attack with momentum
         for i in range(num_iterations):
-            adversarial_images.requires_grad = True
+            adversarial_images.requires_grad_(True)
             
             # Forward pass
             outputs = self.model(adversarial_images)
@@ -410,11 +421,11 @@ class AdversarialAttacker:
             self.model.zero_grad()
             loss.backward()
             
-            # Accumulate momentum
+            # Accumulate momentum (normalized gradient)
             gradient = adversarial_images.grad.data
-            momentum = decay_factor * momentum + gradient / torch.norm(gradient.view(gradient.shape[0], -1), p=1, dim=1).view(-1, 1, 1, 1)
+            momentum = decay_factor * momentum + gradient / (torch.norm(gradient.view(gradient.shape[0], -1), p=1, dim=1).view(-1, 1, 1, 1) + 1e-8)
             
-            # Update adversarial images
+            # Update adversarial images in direction of momentum
             adversarial_images = adversarial_images.detach() + self.config.step_size * momentum.sign()
             
             # Project back to epsilon ball
@@ -422,10 +433,41 @@ class AdversarialAttacker:
                               -self.config.epsilon, self.config.epsilon)
             adversarial_images = images + delta
             
-            # Clip to valid range
+            # Clip to valid range [0, 1]
             adversarial_images = torch.clamp(adversarial_images, 0, 1)
         
         return adversarial_images.detach()
+    
+    def generate_attack(self, images: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        Generate adversarial examples using configured attack method
+        
+        Args:
+            images: Clean images
+            labels: True labels
+            
+        Returns:
+            Adversarial images
+        """
+        # Route to appropriate attack method based on configuration
+        if self.config.attack_method == AttackMethod.FGSM:
+            return self.fgsm_attack(images, labels)
+        elif self.config.attack_method == AttackMethod.PGD:
+            return self.pgd_attack(images, labels)
+        elif self.config.attack_method == AttackMethod.CW:
+            return self.cw_attack(images, labels)
+        elif self.config.attack_method == AttackMethod.DEEPFOOL:
+            return self.deepfool_attack(images, labels)
+        elif self.config.attack_method == AttackMethod.JSMA:
+            return self.jsma_attack(images, labels)
+        elif self.config.attack_method == AttackMethod.BIM:
+            return self.bim_attack(images, labels)
+        elif self.config.attack_method == AttackMethod.MIM:
+            return self.mim_attack(images, labels)
+        elif self.config.attack_method == AttackMethod.AUTOATTACK:
+            return self.autoattack_attack(images, labels)
+        else:
+            raise ValueError(f"Unknown attack method: {self.config.attack_method}")
 
 
 class RandomizedSmoothing:
@@ -441,7 +483,7 @@ class RandomizedSmoothing:
         
         Args:
             base_model: Base classification model
-            sigma: Noise standard deviation
+            sigma: Noise standard deviation for Gaussian smoothing
         """
         self.base_model = base_model
         self.sigma = sigma
@@ -453,7 +495,7 @@ class RandomizedSmoothing:
         
         Args:
             images: Input images
-            num_samples: Number of noise samples
+            num_samples: Number of noise samples for Monte Carlo estimation
             alpha: Confidence level for certification
             
         Returns:
@@ -461,77 +503,84 @@ class RandomizedSmoothing:
         """
         batch_size = images.shape[0]
         
-        # Sample noise
+        # Sample Gaussian noise for randomization
         noise = torch.randn(num_samples, *images.shape, device=images.device) * self.sigma
         
         # Repeat images for each noise sample
         images_repeated = images.repeat(num_samples, 1, 1, 1)
         
-        # Add noise
+        # Add noise to create noisy versions
         noisy_images = images_repeated + noise
         
-        # Get predictions
+        # Get predictions for all noisy samples
         with torch.no_grad():
             outputs = self.base_model(noisy_images)
             predictions = torch.argmax(outputs, dim=1)
         
-        # Reshape predictions
+        # Reshape predictions to [num_samples, batch_size]
         predictions = predictions.view(num_samples, batch_size)
         
-        # Count votes for each class
+        # Count votes for each class across all samples
         votes = torch.zeros(batch_size, outputs.shape[1], device=images.device)
         for b in range(batch_size):
             for s in range(num_samples):
                 votes[b, predictions[s, b]] += 1
         
-        # Get top-2 classes
+        # Get top-2 classes (most and second most frequent)
         top_values, top_indices = torch.topk(votes, 2, dim=1)
         
-        # Predictions (most voted class)
+        # Final predictions (most voted class)
         pred_labels = top_indices[:, 0]
         
         # Compute robustness radius using binomial confidence interval
-        p_a = top_values[:, 0] / num_samples
-        p_b = top_values[:, 1] / num_samples
+        p_a = top_values[:, 0] / num_samples  # Proportion for top class
+        p_b = top_values[:, 1] / num_samples  # Proportion for second class
         
-        # Lower bound for p_a
+        # Lower confidence bound for p_a
         p_a_lower = self._binomial_lower_bound(p_a, num_samples, alpha)
         
-        # Upper bound for p_b
+        # Upper confidence bound for p_b
         p_b_upper = self._binomial_upper_bound(p_b, num_samples, alpha)
         
-        # Certified radius
+        # Certified radius formula for randomized smoothing
         radii = (self.sigma / 2) * (p_a_lower - p_b_upper)
-        radii = torch.clamp(radii, min=0)
+        radii = torch.clamp(radii, min=0)  # Ensure non-negative radii
         
         return pred_labels, radii
     
     def _binomial_lower_bound(self, p: torch.Tensor, n: int, alpha: float) -> torch.Tensor:
-        """Compute lower confidence bound for binomial proportion"""
-        # Clopper-Pearson exact interval
-        import scipy.stats as stats
+        """Compute lower confidence bound for binomial proportion using Clopper-Pearson interval"""
+        try:
+            import scipy.stats as stats
+        except ImportError:
+            raise ImportError("scipy is required for certified robustness computations")
         
         lower_bounds = []
         for p_val in p.cpu().numpy():
-            k = int(p_val * n)
+            k = int(p_val * n)  # Number of successes
             if k == 0:
-                lower = 0.0
+                lower = 0.0  # No successes, lower bound is 0
             else:
+                # Clopper-Pearson exact lower bound
                 lower = stats.beta.ppf(alpha / 2, k, n - k + 1)
             lower_bounds.append(lower)
         
         return torch.tensor(lower_bounds, device=p.device)
     
     def _binomial_upper_bound(self, p: torch.Tensor, n: int, alpha: float) -> torch.Tensor:
-        """Compute upper confidence bound for binomial proportion"""
-        import scipy.stats as stats
+        """Compute upper confidence bound for binomial proportion using Clopper-Pearson interval"""
+        try:
+            import scipy.stats as stats
+        except ImportError:
+            raise ImportError("scipy is required for certified robustness computations")
         
         upper_bounds = []
         for p_val in p.cpu().numpy():
-            k = int(p_val * n)
+            k = int(p_val * n)  # Number of successes
             if k == n:
-                upper = 1.0
+                upper = 1.0  # All successes, upper bound is 1
             else:
+                # Clopper-Pearson exact upper bound
                 upper = stats.beta.ppf(1 - alpha / 2, k + 1, n - k)
             upper_bounds.append(upper)
         
@@ -556,21 +605,21 @@ class AdversarialTrainer:
         self.model = model
         self.config = config
         
-        # Setup device
+        # Setup device (GPU if available, otherwise CPU)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         
-        # Setup optimizer
+        # Setup optimizer for model training
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=config.learning_rate,
-            weight_decay=1e-4
+            weight_decay=1e-4  # L2 regularization
         )
         
-        # Setup adversarial attacker
+        # Setup adversarial attacker for generating attacks during training
         self.attacker = AdversarialAttacker(self.model, config)
         
-        # Setup randomized smoothing if enabled
+        # Setup randomized smoothing if certified robustness is enabled
         if config.certified_smoothing:
             self.smoothing = RandomizedSmoothing(
                 self.model,
@@ -579,11 +628,11 @@ class AdversarialTrainer:
         else:
             self.smoothing = None
         
-        # Training state
+        # Training state tracking
         self.epoch = 0
         self.best_robust_accuracy = 0.0
         
-        # Metrics tracking
+        # Metrics tracking for training history
         self.metrics = {
             'train_loss': [],
             'train_accuracy': [],
@@ -594,40 +643,47 @@ class AdversarialTrainer:
             'certified_radii': []
         }
         
-        # Setup logging
+        # Setup logging for training progress
         self.logger = self._setup_logger()
         
-        self.logger.info(f"Adversarial Trainer initialized")
+        # Log initialization information
+        self.logger.info("Adversarial Trainer initialized")
         self.logger.info(f"Attack method: {config.attack_method}")
         self.logger.info(f"Defense method: {config.defense_method}")
         self.logger.info(f"Epsilon: {config.epsilon}")
+        self.logger.info(f"Device: {self.device}")
     
     def _setup_logger(self) -> logging.Logger:
-        """Setup logging configuration"""
+        """Setup logging configuration for training progress tracking"""
         logger = logging.getLogger("AdversarialTrainer")
         logger.setLevel(logging.INFO)
         
-        # Create logs directory
+        # Prevent duplicate handlers if logger already exists
+        if logger.handlers:
+            return logger
+        
+        # Create logs directory if it doesn't exist
         log_dir = Path("logs/adversarial")
         log_dir.mkdir(parents=True, exist_ok=True)
         
-        # File handler
+        # File handler for logging to file
         file_handler = logging.FileHandler(
             log_dir / f"adversarial_training_{time.strftime('%Y%m%d_%H%M%S')}.log"
         )
         file_handler.setLevel(logging.INFO)
         
-        # Console handler
+        # Console handler for logging to terminal
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         
-        # Formatter
+        # Formatter for log messages
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         file_handler.setFormatter(formatter)
         console_handler.setFormatter(formatter)
         
+        # Add handlers to logger
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
         
@@ -636,42 +692,42 @@ class AdversarialTrainer:
     def adversarial_training_step(self, images: torch.Tensor, 
                                 labels: torch.Tensor) -> Dict[str, float]:
         """
-        Adversarial training step
+        Adversarial training step - train on both clean and adversarial examples
         
         Args:
             images: Clean images
             labels: True labels
             
         Returns:
-            Training metrics
+            Training metrics dictionary
         """
         self.model.train()
         
-        # Move data to device
+        # Move data to appropriate device (GPU/CPU)
         images = images.to(self.device)
         labels = labels.to(self.device)
         
-        # Generate adversarial examples
+        # Generate adversarial examples using configured attack method
         adversarial_images = self.attacker.generate_attack(images, labels)
         
-        # Forward pass on clean and adversarial images
+        # Forward pass on both clean and adversarial images
         clean_outputs = self.model(images)
         adversarial_outputs = self.model(adversarial_images)
         
-        # Compute losses
+        # Compute losses for clean and adversarial examples
         clean_loss = F.cross_entropy(clean_outputs, labels)
         adversarial_loss = F.cross_entropy(adversarial_outputs, labels)
         
-        # Combined loss
+        # Combined loss weighted by adversarial_weight parameter
         loss = (1 - self.config.adversarial_weight) * clean_loss + \
                self.config.adversarial_weight * adversarial_loss
         
-        # Optimization step
+        # Optimization step: zero gradients, backward pass, update weights
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         
-        # Compute accuracies
+        # Compute accuracies for monitoring
         clean_accuracy = (clean_outputs.argmax(dim=1) == labels).float().mean().item()
         robust_accuracy = (adversarial_outputs.argmax(dim=1) == labels).float().mean().item()
         
@@ -686,46 +742,48 @@ class AdversarialTrainer:
                                  teacher_model: nn.Module, 
                                  temperature: float = 4.0) -> Dict[str, float]:
         """
-        Defensive distillation training step
+        Defensive distillation training step - train student model using teacher's soft labels
         
         Args:
             images: Clean images
             labels: True labels
             teacher_model: Teacher model for distillation
-            temperature: Distillation temperature
+            temperature: Distillation temperature for softening probabilities
             
         Returns:
-            Training metrics
+            Training metrics dictionary
         """
         self.model.train()
         teacher_model.eval()
         
+        # Move data to device
         images = images.to(self.device)
         labels = labels.to(self.device)
         
-        # Get teacher predictions
+        # Get teacher predictions (without training teacher)
         with torch.no_grad():
             teacher_logits = teacher_model(images)
+            # Soften probabilities using temperature scaling
             teacher_probs = F.softmax(teacher_logits / temperature, dim=-1)
         
-        # Generate adversarial examples
+        # Generate adversarial examples for training
         adversarial_images = self.attacker.generate_attack(images, labels)
         
-        # Student forward pass
+        # Student forward pass on adversarial examples
         student_logits = self.model(adversarial_images)
         student_probs = F.softmax(student_logits / temperature, dim=-1)
         
-        # Distillation loss (KL divergence)
+        # Distillation loss: KL divergence between teacher and student distributions
         distillation_loss = F.kl_div(
-            student_probs.log(),
-            teacher_probs,
-            reduction='batchmean'
+            student_probs.log(),  # Student log probabilities
+            teacher_probs,        # Teacher probabilities (target)
+            reduction='batchmean' # Average over batch
         )
         
-        # Standard cross-entropy loss
+        # Standard cross-entropy loss for true labels
         ce_loss = F.cross_entropy(student_logits, labels)
         
-        # Combined loss
+        # Combined loss balancing distillation and classification
         loss = 0.5 * distillation_loss + 0.5 * ce_loss
         
         # Optimization step
@@ -733,7 +791,7 @@ class AdversarialTrainer:
         loss.backward()
         self.optimizer.step()
         
-        # Compute accuracy
+        # Compute accuracy on adversarial examples
         accuracy = (student_logits.argmax(dim=1) == labels).float().mean().item()
         
         return {
@@ -743,131 +801,143 @@ class AdversarialTrainer:
             'ce_loss': ce_loss.item()
         }
     
-    def train_epoch(self, train_loader, defense_method: DefenseMethod = None):
+    def train_epoch(self, train_loader, defense_method: DefenseMethod = None) -> Tuple[float, float, float]:
         """
-        Train for one epoch
+        Train for one complete epoch
         
         Args:
             train_loader: Training data loader
-            defense_method: Defense method to use (overrides config)
+            defense_method: Defense method to use (overrides config if provided)
+            
+        Returns:
+            Tuple of (average loss, clean accuracy, robust accuracy)
         """
         if defense_method is None:
             defense_method = self.config.defense_method
         
-        epoch_loss = 0
-        epoch_clean_accuracy = 0
-        epoch_robust_accuracy = 0
+        # Initialize metrics accumulation
+        epoch_loss = 0.0
+        epoch_clean_accuracy = 0.0
+        epoch_robust_accuracy = 0.0
         num_batches = 0
         
+        # Iterate through training batches
         for batch_idx, (images, labels) in enumerate(train_loader):
-            # Skip warmup epochs for adversarial training
+            # Warmup phase: standard training without adversarial examples
             if self.epoch < self.config.warmup_epochs:
-                # Standard training
+                # Move data to device
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 
+                # Standard forward pass
                 outputs = self.model(images)
                 loss = F.cross_entropy(outputs, labels)
                 
+                # Optimization step
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
                 
+                # Compute accuracy
                 accuracy = (outputs.argmax(dim=1) == labels).float().mean().item()
                 
+                # Create metrics dictionary (same format for consistency)
                 metrics = {
                     'loss': loss.item(),
                     'clean_accuracy': accuracy,
-                    'robust_accuracy': accuracy
+                    'robust_accuracy': accuracy  # Same as clean during warmup
                 }
             else:
-                # Adversarial training based on defense method
+                # Adversarial training phase based on selected defense method
                 if defense_method == DefenseMethod.ADVERSARIAL_TRAINING:
                     metrics = self.adversarial_training_step(images, labels)
                 elif defense_method == DefenseMethod.DISTILLATION:
-                    # Need teacher model for distillation
-                    # For simplicity, using self as teacher
+                    # For distillation, use current model as teacher (self-distillation)
                     metrics = self.distillation_training_step(
                         images, labels, self.model
                     )
                 else:
-                    # Default to adversarial training
+                    # Default to adversarial training for other defense methods
                     metrics = self.adversarial_training_step(images, labels)
             
-            # Accumulate metrics
+            # Accumulate metrics across batches
             epoch_loss += metrics['loss']
             epoch_clean_accuracy += metrics.get('clean_accuracy', 0)
             epoch_robust_accuracy += metrics.get('robust_accuracy', 0)
             num_batches += 1
             
-            # Log batch progress
+            # Log batch progress periodically
             if batch_idx % 100 == 0:
                 self.logger.info(f"Batch {batch_idx} | "
                                f"Loss: {metrics['loss']:.4f} | "
                                f"Clean Acc: {metrics.get('clean_accuracy', 0):.2%} | "
                                f"Robust Acc: {metrics.get('robust_accuracy', 0):.2%}")
         
-        # Compute epoch averages
-        avg_loss = epoch_loss / num_batches
-        avg_clean_accuracy = epoch_clean_accuracy / num_batches
-        avg_robust_accuracy = epoch_robust_accuracy / num_batches
+        # Compute epoch averages by dividing by number of batches
+        avg_loss = epoch_loss / num_batches if num_batches > 0 else 0.0
+        avg_clean_accuracy = epoch_clean_accuracy / num_batches if num_batches > 0 else 0.0
+        avg_robust_accuracy = epoch_robust_accuracy / num_batches if num_batches > 0 else 0.0
         
-        # Update metrics
+        # Update metrics history
         self.metrics['train_loss'].append(avg_loss)
         self.metrics['train_accuracy'].append(avg_clean_accuracy)
         self.metrics['train_robust_accuracy'].append(avg_robust_accuracy)
         
         return avg_loss, avg_clean_accuracy, avg_robust_accuracy
     
-    def evaluate(self, val_loader, attacker: AdversarialAttacker = None):
+    def evaluate(self, val_loader, attacker: Optional[AdversarialAttacker] = None) -> Dict[str, float]:
         """
-        Evaluate model on validation set
+        Evaluate model on validation set with and without attacks
         
         Args:
             val_loader: Validation data loader
-            attacker: Adversarial attacker for evaluation
+            attacker: Adversarial attacker for evaluation (uses default if None)
             
         Returns:
-            Evaluation metrics
+            Evaluation metrics dictionary
         """
-        self.model.eval()
+        self.model.eval()  # Set model to evaluation mode
         
+        # Use default attacker if none provided
         if attacker is None:
             attacker = self.attacker
         
-        total_loss = 0
-        total_clean_accuracy = 0
-        total_robust_accuracy = 0
+        # Initialize metrics accumulation
+        total_loss = 0.0
+        total_clean_accuracy = 0.0
+        total_robust_accuracy = 0.0
         num_samples = 0
         
+        # Disable gradient computation for evaluation
         with torch.no_grad():
             for images, labels in val_loader:
+                # Move data to device
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 
-                # Clean accuracy
+                # Clean accuracy evaluation (no attack)
                 clean_outputs = self.model(images)
                 clean_loss = F.cross_entropy(clean_outputs, labels)
                 clean_accuracy = (clean_outputs.argmax(dim=1) == labels).float().mean().item()
                 
-                # Robust accuracy (under attack)
+                # Robust accuracy evaluation (under attack)
                 adversarial_images = attacker.generate_attack(images, labels)
                 adversarial_outputs = self.model(adversarial_images)
                 robust_accuracy = (adversarial_outputs.argmax(dim=1) == labels).float().mean().item()
                 
-                # Accumulate
+                # Accumulate metrics weighted by batch size
                 batch_size = images.shape[0]
                 total_loss += clean_loss.item() * batch_size
                 total_clean_accuracy += clean_accuracy * batch_size
                 total_robust_accuracy += robust_accuracy * batch_size
                 num_samples += batch_size
         
-        # Compute averages
-        avg_loss = total_loss / num_samples
-        avg_clean_accuracy = total_clean_accuracy / num_samples
-        avg_robust_accuracy = total_robust_accuracy / num_samples
+        # Compute average metrics
+        avg_loss = total_loss / num_samples if num_samples > 0 else 0.0
+        avg_clean_accuracy = total_clean_accuracy / num_samples if num_samples > 0 else 0.0
+        avg_robust_accuracy = total_robust_accuracy / num_samples if num_samples > 0 else 0.0
         
-        # Update metrics
+        # Update validation metrics history
         self.metrics['val_loss'].append(avg_loss)
         self.metrics['val_accuracy'].append(avg_clean_accuracy)
         self.metrics['val_robust_accuracy'].append(avg_robust_accuracy)
@@ -878,50 +948,57 @@ class AdversarialTrainer:
             'robust_accuracy': avg_robust_accuracy
         }
     
-    def evaluate_robustness(self, test_loader, attacks: List[AttackMethod] = None,
-                          epsilons: List[float] = None):
+    def evaluate_robustness(self, test_loader, attacks: Optional[List[AttackMethod]] = None,
+                          epsilons: Optional[List[float]] = None) -> Dict[str, Any]:
         """
-        Evaluate model robustness against multiple attacks
+        Evaluate model robustness against multiple attacks with different perturbation sizes
         
         Args:
             test_loader: Test data loader
-            attacks: List of attack methods to evaluate
-            epsilons: List of epsilon values to evaluate
+            attacks: List of attack methods to evaluate (uses config defaults if None)
+            epsilons: List of epsilon values to evaluate (uses config defaults if None)
             
         Returns:
-            Robustness evaluation results
+            Nested dictionary with robustness evaluation results
         """
+        # Use default attacks and epsilons if not provided
         if attacks is None:
             attacks = self.config.eval_attacks
         
         if epsilons is None:
             epsilons = self.config.eval_epsilons
         
+        # Initialize results dictionary
         results = {}
         
+        # Evaluate against each attack method
         for attack_method in attacks:
             results[attack_method.value] = {}
             
+            # Evaluate with each epsilon value
             for epsilon in epsilons:
-                # Create attacker with current epsilon
+                # Create attacker configuration for current epsilon
                 attack_config = AdversarialTrainingConfig(
                     attack_method=attack_method,
                     epsilon=epsilon,
-                    step_size=epsilon / 4,
-                    num_steps=40
+                    step_size=epsilon / 4,  # Standard step size: epsilon/4
+                    num_steps=40  # Fixed number of attack iterations
                 )
                 
+                # Create attacker with current configuration
                 attacker = AdversarialAttacker(self.model, attack_config)
                 
-                # Evaluate under this attack
+                # Evaluate model under this specific attack
                 eval_metrics = self.evaluate(test_loader, attacker)
                 
+                # Store results for this attack and epsilon
                 results[attack_method.value][epsilon] = {
                     'clean_accuracy': eval_metrics['clean_accuracy'],
                     'robust_accuracy': eval_metrics['robust_accuracy'],
                     'accuracy_drop': eval_metrics['clean_accuracy'] - eval_metrics['robust_accuracy']
                 }
                 
+                # Log evaluation results
                 self.logger.info(f"Attack: {attack_method.value} | "
                                f"Epsilon: {epsilon} | "
                                f"Clean Acc: {eval_metrics['clean_accuracy']:.2%} | "
@@ -929,42 +1006,47 @@ class AdversarialTrainer:
         
         return results
     
-    def compute_certified_robustness(self, test_loader, num_samples: int = None):
+    def compute_certified_robustness(self, test_loader, num_samples: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         Compute certified robustness using randomized smoothing
         
         Args:
             test_loader: Test data loader
-            num_samples: Number of noise samples
+            num_samples: Number of noise samples for certification
             
         Returns:
-            Certified robustness metrics
+            Certified robustness metrics or None if smoothing not enabled
         """
+        # Check if randomized smoothing is enabled
         if self.smoothing is None:
-            self.logger.warning("Randomized smoothing not enabled")
+            self.logger.warning("Randomized smoothing not enabled, skipping certified robustness computation")
             return None
         
+        # Use default number of samples if not specified
         if num_samples is None:
             num_samples = self.config.smoothing_samples
         
         self.model.eval()
         
+        # Initialize certification metrics
         certified_correct = 0
         total_certified = 0
         radii = []
         
+        # Disable gradients for certification
         with torch.no_grad():
             for images, labels in test_loader:
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 
+                # Process each sample individually for certification
                 for i in range(images.shape[0]):
-                    image = images[i:i+1]
+                    image = images[i:i+1]  # Keep batch dimension
                     label = labels[i:i+1]
                     
                     # Get smoothed prediction and certified radius
                     pred, radius = self.smoothing.predict(
-                        image, num_samples, alpha=0.001
+                        image, num_samples, alpha=0.001  # 99.9% confidence
                     )
                     
                     # Check if prediction is correct
@@ -974,11 +1056,11 @@ class AdversarialTrainer:
                     
                     total_certified += 1
         
-        # Compute metrics
-        certified_accuracy = certified_correct / total_certified if total_certified > 0 else 0
-        avg_radius = np.mean(radii) if radii else 0
+        # Compute certification metrics
+        certified_accuracy = certified_correct / total_certified if total_certified > 0 else 0.0
+        avg_radius = np.mean(radii) if radii else 0.0
         
-        # Update metrics
+        # Update metrics history
         self.metrics['certified_radii'].extend(radii)
         
         return {
@@ -987,36 +1069,39 @@ class AdversarialTrainer:
             'total_certified': total_certified
         }
     
-    def train(self, train_loader, val_loader, num_epochs: int = None):
+    def train(self, train_loader, val_loader, num_epochs: Optional[int] = None) -> Dict[str, List[float]]:
         """
-        Main training loop
+        Main training loop for adversarial training
         
         Args:
             train_loader: Training data loader
             val_loader: Validation data loader
-            num_epochs: Number of epochs to train
+            num_epochs: Number of epochs to train (uses config if None)
             
         Returns:
-            Training metrics
+            Training metrics history
         """
+        # Use configured number of epochs if not specified
         if num_epochs is None:
             num_epochs = self.config.num_epochs
         
         self.logger.info(f"Starting adversarial training for {num_epochs} epochs")
         
+        # Main training loop
         for epoch in range(num_epochs):
             self.epoch = epoch + 1
             epoch_start_time = time.time()
             
-            # Training phase
+            # Training phase for one epoch
             train_loss, train_clean_acc, train_robust_acc = self.train_epoch(train_loader)
             
-            # Validation phase
+            # Validation phase after training
             val_metrics = self.evaluate(val_loader)
             
-            # Log epoch summary
+            # Compute epoch duration
             epoch_time = time.time() - epoch_start_time
             
+            # Log comprehensive epoch summary
             self.logger.info("\n" + "="*80)
             self.logger.info(f"Epoch {self.epoch:3d} Summary:")
             self.logger.info(f"  Time: {epoch_time:.2f}s")
@@ -1027,17 +1112,17 @@ class AdversarialTrainer:
             self.logger.info(f"  Val Robust Acc: {val_metrics['robust_accuracy']:.2%}")
             self.logger.info("="*80 + "\n")
             
-            # Save checkpoint
+            # Save checkpoint periodically
             if self.epoch % self.config.save_frequency == 0:
                 self.save_checkpoint(f"epoch_{self.epoch}")
             
-            # Save best model
+            # Save best model based on robust accuracy
             if val_metrics['robust_accuracy'] > self.best_robust_accuracy:
                 self.best_robust_accuracy = val_metrics['robust_accuracy']
                 self.save_checkpoint("best_robust")
                 self.logger.info(f"New best robust accuracy: {self.best_robust_accuracy:.2%}")
             
-            # Compute certified robustness periodically
+            # Compute certified robustness periodically (if enabled)
             if self.smoothing and self.epoch % 20 == 0:
                 certified_metrics = self.compute_certified_robustness(val_loader)
                 if certified_metrics:
@@ -1046,25 +1131,27 @@ class AdversarialTrainer:
         
         self.logger.info("Adversarial training completed!")
         
-        # Final evaluation
+        # Final robustness evaluation with all configured attacks
         self.logger.info("Performing final robustness evaluation...")
         robustness_results = self.evaluate_robustness(val_loader)
         
-        # Save final model
+        # Save final model checkpoint
         self.save_checkpoint("final")
         
         return self.metrics
     
     def save_checkpoint(self, name: str):
         """
-        Save training checkpoint
+        Save training checkpoint including model, optimizer, and metrics
         
         Args:
-            name: Checkpoint name
+            name: Checkpoint name for file naming
         """
+        # Create checkpoint directory if it doesn't exist
         checkpoint_dir = Path(self.config.checkpoint_dir)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Prepare checkpoint dictionary
         checkpoint = {
             'epoch': self.epoch,
             'model_state_dict': self.model.state_dict(),
@@ -1074,6 +1161,7 @@ class AdversarialTrainer:
             'config': self.config.__dict__,
         }
         
+        # Save checkpoint to file
         checkpoint_path = checkpoint_dir / f"{name}.pt"
         torch.save(checkpoint, checkpoint_path)
         
@@ -1081,20 +1169,24 @@ class AdversarialTrainer:
     
     def load_checkpoint(self, checkpoint_path: str):
         """
-        Load training checkpoint
+        Load training checkpoint to resume training
         
         Args:
             checkpoint_path: Path to checkpoint file
         """
+        # Load checkpoint from file
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
+        # Restore model and optimizer states
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
+        # Restore training state
         self.epoch = checkpoint['epoch']
         self.best_robust_accuracy = checkpoint['best_robust_accuracy']
         self.metrics = checkpoint['metrics']
         
+        # Log checkpoint loading
         self.logger.info(f"Checkpoint loaded from {checkpoint_path}")
         self.logger.info(f"Resuming from epoch {self.epoch}")
     
@@ -1104,14 +1196,17 @@ class AdversarialTrainer:
         
         Args:
             export_path: Path to save exported model
-            format: Export format
+            format: Export format ("onnx" or "torchscript")
+            
+        Raises:
+            ValueError: If unknown export format is specified
         """
         self.model.eval()
         
         if format == "onnx":
-            # For ONNX export, we need to handle randomized smoothing differently
+            # ONNX export for interoperability
             if self.smoothing:
-                # Export the base model
+                # Export the base model (randomized smoothing applied separately)
                 dummy_input = torch.randn(1, 3, 32, 32, device=self.device)
                 
                 torch.onnx.export(
@@ -1129,10 +1224,10 @@ class AdversarialTrainer:
                     }
                 )
                 
-                # Note: Randomized smoothing must be applied separately in deployment
+                # Note for deployment: Randomized smoothing must be applied separately
                 self.logger.info("Exported base model. Apply randomized smoothing in deployment.")
             else:
-                # Standard ONNX export
+                # Standard ONNX export for non-smoothed models
                 dummy_input = torch.randn(1, 3, 32, 32, device=self.device)
                 
                 torch.onnx.export(
@@ -1151,7 +1246,7 @@ class AdversarialTrainer:
                 )
         
         elif format == "torchscript":
-            # Export to TorchScript
+            # TorchScript export for PyTorch deployment
             dummy_input = torch.randn(1, 3, 32, 32, device=self.device)
             traced_model = torch.jit.trace(self.model, dummy_input)
             traced_model.save(export_path)
@@ -1165,66 +1260,74 @@ class AdversarialTrainer:
 def create_adversarial_dataset(clean_dataset, attacker: AdversarialAttacker, 
                              num_samples: int = 1000):
     """
-    Create dataset of adversarial examples
+    Create dataset of adversarial examples from clean dataset
     
     Args:
-        clean_dataset: Clean dataset
-        attacker: Adversarial attacker
+        clean_dataset: Clean dataset (images, labels)
+        attacker: Adversarial attacker for generating examples
         num_samples: Number of adversarial examples to generate
         
     Returns:
-        Adversarial dataset
+        TensorDataset containing adversarial images, true labels, and clean labels
     """
     adversarial_images = []
     adversarial_labels = []
     clean_labels = []
     
+    # Limit samples to dataset size or requested number
+    actual_samples = min(num_samples, len(clean_dataset))
+    
     # Generate adversarial examples
-    for i in range(min(num_samples, len(clean_dataset))):
+    for i in range(actual_samples):
         image, label = clean_dataset[i]
         
-        # Convert to batch format
+        # Convert to batch format (add batch dimension)
         image_batch = image.unsqueeze(0)
         label_batch = torch.tensor([label])
         
-        # Generate adversarial example
+        # Generate adversarial example using attacker
         adversarial_image = attacker.generate_attack(image_batch, label_batch)
         
+        # Store results (remove batch dimension)
         adversarial_images.append(adversarial_image.squeeze(0))
-        adversarial_labels.append(label)  # True labels
-        clean_labels.append(label)  # For comparison
+        adversarial_labels.append(label)  # True labels for evaluation
+        clean_labels.append(label)  # Clean labels for comparison
     
-    # Create dataset
+    # Create TensorDataset from collected data
     from torch.utils.data import TensorDataset
     
     adversarial_images = torch.stack(adversarial_images)
     adversarial_labels = torch.tensor(adversarial_labels)
     clean_labels = torch.tensor(clean_labels)
     
+    # Return dataset with adversarial images, true labels, and clean labels
     return TensorDataset(adversarial_images, adversarial_labels, clean_labels)
 
 
 def analyze_adversarial_examples(model: nn.Module, adversarial_dataset, 
-                               num_examples: int = 10):
+                               num_examples: int = 10) -> Dict[str, Any]:
     """
-    Analyze adversarial examples
+    Analyze adversarial examples to understand attack effectiveness
     
     Args:
         model: Model to analyze
         adversarial_dataset: Dataset of adversarial examples
-        num_examples: Number of examples to analyze
+        num_examples: Number of examples to analyze in detail
         
     Returns:
-        Analysis results
+        Analysis results including statistics and example details
     """
     model.eval()
     
     results = []
     
-    for i in range(min(num_examples, len(adversarial_dataset))):
+    # Analyze specified number of examples
+    actual_examples = min(num_examples, len(adversarial_dataset))
+    
+    for i in range(actual_examples):
         adversarial_image, true_label, _ = adversarial_dataset[i]
         
-        # Add batch dimension
+        # Add batch dimension for model input
         adversarial_image = adversarial_image.unsqueeze(0)
         
         # Get model predictions
@@ -1233,9 +1336,10 @@ def analyze_adversarial_examples(model: nn.Module, adversarial_dataset,
             prediction = output.argmax(dim=1).item()
             confidence = torch.softmax(output, dim=1).max().item()
         
-        # Check if adversarial example succeeded
+        # Check if adversarial example succeeded (caused misclassification)
         is_adversarial = prediction != true_label
         
+        # Store analysis for this example
         results.append({
             'index': i,
             'true_label': true_label,
@@ -1245,16 +1349,17 @@ def analyze_adversarial_examples(model: nn.Module, adversarial_dataset,
             'adversarial_success': is_adversarial
         })
     
-    # Compute statistics
+    # Compute overall statistics
     total_examples = len(results)
     adversarial_success = sum(r['adversarial_success'] for r in results)
-    success_rate = adversarial_success / total_examples if total_examples > 0 else 0
+    success_rate = adversarial_success / total_examples if total_examples > 0 else 0.0
     
+    # Compile analysis summary
     analysis = {
         'total_examples': total_examples,
         'adversarial_success': adversarial_success,
         'success_rate': success_rate,
-        'examples': results[:10]  # First 10 examples
+        'examples': results[:10]  # Include first 10 examples for detailed inspection
     }
     
     return analysis

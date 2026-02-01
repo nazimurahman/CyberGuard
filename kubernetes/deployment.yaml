@@ -1,6 +1,5 @@
 # kubernetes/deployment.yaml
----
-# Main API Server Deployment
+# Main CyberGuard API Server Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,42 +11,51 @@ metadata:
     tier: backend
     version: v1.0.0
 spec:
-  # Number of pod replicas for high availability
+  # Number of pod replicas for high availability and load distribution
   replicas: 3
-  # Deployment strategy for zero-downtime updates
+  
+  # Deployment update strategy for zero-downtime deployments
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1  # Maximum number of pods that can be created above desired count during update
-      maxUnavailable: 0  # No pods should be unavailable during update
+      maxSurge: 1  # Can create 1 extra pod during update
+      maxUnavailable: 0  # No pods unavailable during update (zero downtime)
+  
+  # Label selector to identify pods managed by this deployment
   selector:
     matchLabels:
       app: cyberguard
       component: api
+  
+  # Pod template specification
   template:
     metadata:
+      # Labels for pod identification and service selection
       labels:
         app: cyberguard
         component: api
         version: v1.0.0
+      
+      # Annotations for monitoring and service mesh configuration
       annotations:
-        # Prometheus scraping annotations
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
-        prometheus.io/path: "/metrics"
-        # Sidecar injection annotations
-        sidecar.istio.io/inject: "false"  # Set to true if using Istio
+        prometheus.io/scrape: "true"  # Enable Prometheus metrics scraping
+        prometheus.io/port: "8000"    # Port where metrics are exposed
+        prometheus.io/path: "/metrics" # Path to metrics endpoint
+        sidecar.istio.io/inject: "false"  # Disable Istio sidecar injection
+    
     spec:
-      # Service account for pod permissions
+      # Service account for pod-level RBAC permissions
       serviceAccountName: cyberguard-sa
-      # Security context for container security
+      
+      # Pod-level security context
       securityContext:
-        runAsUser: 1000  # Non-root user for security
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 1000  # Run as non-root user ID 1000
+        runAsGroup: 1000 # Group ID for the user
+        fsGroup: 1000    # Filesystem group ownership
         seccompProfile:
-          type: RuntimeDefault  # Default seccomp profile for security
-      # Affinity rules for pod distribution
+          type: RuntimeDefault  # Default seccomp profile for container security
+      
+      # Pod anti-affinity rules for high availability
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -63,23 +71,54 @@ spec:
                   operator: In
                   values:
                   - api
-              topologyKey: "kubernetes.io/hostname"  # Spread pods across different nodes
-      # Tolerations for node scheduling
+              topologyKey: "kubernetes.io/hostname"  # Spread across different nodes
+      
+      # Tolerations for node scheduling constraints
       tolerations:
       - key: "node.kubernetes.io/not-ready"
         operator: "Exists"
         effect: "NoExecute"
-        tolerationSeconds: 300  # Wait 5 minutes before eviction
+        tolerationSeconds: 300  # Wait 5 minutes before eviction from not-ready node
       - key: "node.kubernetes.io/unreachable"
         operator: "Exists"
         effect: "NoExecute"
-        tolerationSeconds: 300
-      # Container specification
+        tolerationSeconds: 300  # Wait 5 minutes before eviction from unreachable node
+      
+      # Init containers run before main containers start
+      initContainers:
+      - name: init-db
+        image: busybox:1.35  # Fixed: Use specific version instead of latest
+        command: 
+        - sh
+        - -c
+        - |
+          # Wait for PostgreSQL to be ready
+          until nc -z cyberguard-postgres 5432; do 
+            echo "Waiting for PostgreSQL..."; 
+            sleep 2; 
+          done
+          echo "PostgreSQL is ready!"
+      
+      - name: init-redis
+        image: busybox:1.35
+        command: 
+        - sh
+        - -c
+        - |
+          # Wait for Redis to be ready
+          until nc -z cyberguard-redis 6379; do 
+            echo "Waiting for Redis..."; 
+            sleep 2; 
+          done
+          echo "Redis is ready!"
+      
+      # Main application container
       containers:
       - name: cyberguard-api
         image: cyberguard/api:v1.0.0
-        imagePullPolicy: IfNotPresent
-        # Ports exposed by the container
+        imagePullPolicy: IfNotPresent  # Only pull if not present locally
+        
+        # Ports exposed by this container
         ports:
         - name: http
           containerPort: 8000
@@ -87,77 +126,93 @@ spec:
         - name: metrics
           containerPort: 9090
           protocol: TCP
-        # Environment variables from ConfigMap and Secrets
+        
+        # Environment variables configuration
         env:
+        # Application configuration from ConfigMap
         - name: APP_ENVIRONMENT
           valueFrom:
             configMapKeyRef:
               name: cyberguard-config
               key: APP_ENVIRONMENT
+        
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
               name: cyberguard-config
               key: LOG_LEVEL
+        
+        # Secrets for sensitive data
         - name: API_SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: API_SECRET_KEY
+        
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: JWT_SECRET
-        # Database connection environment variables
-        - name: DATABASE_URL
-          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@cyberguard-postgres:5432/$(POSTGRES_DB)"
+        
+        # Database connection with secret references
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_USER
+        
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_PASSWORD
+        
         - name: POSTGRES_DB
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_DB
-        # Redis connection
-        - name: REDIS_URL
-          value: "redis://:$(REDIS_PASSWORD)@cyberguard-redis:6379/0"
+        
+        # Construct DATABASE_URL using environment variable substitution
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@cyberguard-postgres:5432/$(POSTGRES_DB)"
+        
+        # Redis connection configuration
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: REDIS_PASSWORD
-        # Resource limits and requests
+        
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@cyberguard-redis:6379/0"
+        
+        # Resource limits and requests for scheduling
         resources:
           requests:
             memory: "512Mi"  # Minimum memory required
-            cpu: "500m"     # 0.5 CPU cores minimum
+            cpu: "500m"      # 0.5 CPU cores minimum (500 millicores)
           limits:
-            memory: "2Gi"   # Maximum memory allowed
-            cpu: "2"        # Maximum 2 CPU cores
-        # Liveness probe - checks if container is running
+            memory: "2Gi"    # Maximum memory allowed
+            cpu: "2"         # Maximum 2 CPU cores
+        
+        # Liveness probe - determines if container should be restarted
         livenessProbe:
           httpGet:
-            path: /health
-            port: 8000
-            scheme: HTTP
-          initialDelaySeconds: 30  # Wait 30 seconds before first check
+            path: /health    # Health check endpoint
+            port: 8000       # Port to check
+            scheme: HTTP     # HTTP protocol
+          initialDelaySeconds: 30  # Wait 30s before first check
           periodSeconds: 10        # Check every 10 seconds
           timeoutSeconds: 5        # Timeout after 5 seconds
           successThreshold: 1      # 1 successful check = healthy
-          failureThreshold: 3      # 3 failed checks = restart container
-        # Readiness probe - checks if container is ready to serve traffic
+          failureThreshold: 3      # 3 consecutive failures = restart
+        
+        # Readiness probe - determines if container can receive traffic
         readinessProbe:
           httpGet:
-            path: /ready
+            path: /ready     # Readiness endpoint
             port: 8000
             scheme: HTTP
           initialDelaySeconds: 5
@@ -165,56 +220,56 @@ spec:
           timeoutSeconds: 3
           successThreshold: 1
           failureThreshold: 3
-        # Startup probe - for slow-starting containers
+        
+        # Startup probe - for slow-starting applications
         startupProbe:
           httpGet:
             path: /health
             port: 8000
             scheme: HTTP
-          failureThreshold: 30  # Allow up to 30 failures (5 minutes)
+          failureThreshold: 30  # Allow up to 30 failures (5 minutes at 10s intervals)
           periodSeconds: 10
+        
         # Volume mounts for persistent storage
         volumeMounts:
         - name: models-volume
-          mountPath: /models
-          readOnly: false
+          mountPath: /models  # Directory for ML models
+          readOnly: false     # Read-write access
+        
         - name: logs-volume
-          mountPath: /var/log/cyberguard
+          mountPath: /var/log/cyberguard  # Log directory
           readOnly: false
+        
         - name: config-volume
-          mountPath: /app/config
-          readOnly: true
-        # Security context for container
+          mountPath: /app/config  # Configuration files
+          readOnly: true          # Read-only access
+        
+        # Container-specific security context
         securityContext:
-          allowPrivilegeEscalation: false
+          allowPrivilegeEscalation: false  # Prevent privilege escalation
           capabilities:
             drop:
             - ALL  # Drop all Linux capabilities
-          readOnlyRootFilesystem: true  # Root filesystem is read-only
-          runAsNonRoot: true  # Must run as non-root user
-      # Init containers for setup tasks
-      initContainers:
-      - name: init-db
-        image: busybox:latest
-        command: ['sh', '-c', 'until nc -z cyberguard-postgres 5432; do echo "Waiting for PostgreSQL..."; sleep 2; done']
-      - name: init-redis
-        image: busybox:latest
-        command: ['sh', '-c', 'until nc -z cyberguard-redis 6379; do echo "Waiting for Redis..."; sleep 2; done']
-      # Volumes for the pod
+          readOnlyRootFilesystem: true  # Root filesystem is read-only (security best practice)
+          runAsNonRoot: true  # Container must run as non-root user
+      
+      # Volumes definition for the pod
       volumes:
       - name: models-volume
         persistentVolumeClaim:
-          claimName: cyberguard-models-pvc
+          claimName: cyberguard-models-pvc  # PVC for model storage
+      
       - name: logs-volume
         persistentVolumeClaim:
-          claimName: cyberguard-logs-pvc
+          claimName: cyberguard-logs-pvc  # PVC for log storage
+      
       - name: config-volume
         configMap:
-          name: cyberguard-config
+          name: cyberguard-config  # Mount ConfigMap as volume
           items:
-          - key: nginx.conf
-            path: nginx.conf
----
+          - key: nginx.conf  # Specific file from ConfigMap
+            path: nginx.conf  # Mount as nginx.conf file
+
 # Dashboard Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -225,45 +280,59 @@ metadata:
     app: cyberguard
     component: dashboard
     tier: frontend
+    version: v1.0.0  # Added version label for consistency
 spec:
-  replicas: 2
+  replicas: 2  # Two replicas for dashboard availability
+  
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
+  
   selector:
     matchLabels:
       app: cyberguard
       component: dashboard
+  
   template:
     metadata:
       labels:
         app: cyberguard
         component: dashboard
         version: v1.0.0
+    
     spec:
-      serviceAccountName: cyberguard-sa
+      serviceAccountName: cyberguard-sa  # Fixed: Use same service account
+      
+      # Pod security context
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      
       containers:
       - name: cyberguard-dashboard
         image: cyberguard/dashboard:v1.0.0
         imagePullPolicy: IfNotPresent
+        
         ports:
         - name: http
           containerPort: 8080
           protocol: TCP
+        
+        # Environment configuration
         env:
         - name: API_URL
-          value: "http://cyberguard-api:8000"
-        - name: DASHBOARD_REFRESH_INTERVAL
+          value: "http://cyberguard-api.cyberguard.svc.cluster.local:8000"  # Fixed: Use full DNS name
+        
+        - name: DASHBOARD_REFRESH_INTERVAL_SECONDS  # Fixed: Corrected variable name
           valueFrom:
             configMapKeyRef:
               name: cyberguard-config
               key: DASHBOARD_REFRESH_INTERVAL_SECONDS
+        
+        # Resource allocation
         resources:
           requests:
             memory: "256Mi"
@@ -271,27 +340,47 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1"
+        
+        # Health checks
         livenessProbe:
           httpGet:
-            path: /
+            path: /health  # Fixed: Changed from / to /health
             port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 3  # Added timeout
+          failureThreshold: 3  # Added failure threshold
+        
         readinessProbe:
           httpGet:
             path: /health
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # Volume mounts
         volumeMounts:
         - name: dashboard-config
           mountPath: /app/config
           readOnly: true
+        
+        # Container security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+      
       volumes:
       - name: dashboard-config
         configMap:
           name: cyberguard-config
----
+
+
 # Web Security Scanner Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -302,58 +391,77 @@ metadata:
     app: cyberguard
     component: scanner
     tier: backend
+    version: v1.0.0  # Added version label
 spec:
-  replicas: 3  # Multiple scanners for parallel scanning
+  replicas: 3  # Multiple scanners for parallel scanning capacity
+  
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
+  
   selector:
     matchLabels:
       app: cyberguard
       component: scanner
+  
   template:
     metadata:
       labels:
         app: cyberguard
         component: scanner
         version: v1.0.0
+    
     spec:
       serviceAccountName: cyberguard-scanner-sa
+      
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      
       containers:
       - name: cyberguard-scanner
         image: cyberguard/scanner:v1.0.0
         imagePullPolicy: IfNotPresent
+        
         ports:
         - name: http
           containerPort: 9000
           protocol: TCP
+        
         - name: websocket
           containerPort: 9001
           protocol: TCP
+        
+        # Scanner configuration
         env:
         - name: SCAN_MAX_DEPTH
           valueFrom:
             configMapKeyRef:
               name: cyberguard-config
               key: SCAN_MAX_DEPTH
+        
         - name: SCAN_TIMEOUT_SECONDS
           valueFrom:
             configMapKeyRef:
               name: cyberguard-config
               key: SCAN_TIMEOUT_SECONDS
+        
         - name: API_URL
-          value: "http://cyberguard-api:8000"
+          value: "http://cyberguard-api.cyberguard.svc.cluster.local:8000"  # Fixed: Full DNS
+        
+        # Scanner requires network capabilities
         securityContext:
           capabilities:
             add:
-            - NET_RAW  # Needed for network scanning
-            - NET_ADMIN
+            - NET_RAW   # Required for raw socket operations
+            - NET_ADMIN # Required for network administration
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        
+        # Scanner requires more resources due to intensive scanning
         resources:
           requests:
             memory: "1Gi"
@@ -361,31 +469,50 @@ spec:
           limits:
             memory: "4Gi"
             cpu: "4"
+        
+        # Health checks for scanner
         livenessProbe:
           httpGet:
             path: /health
             port: 9000
-          initialDelaySeconds: 60
+          initialDelaySeconds: 60  # Scanner takes longer to start
           periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
         readinessProbe:
           tcpSocket:
-            port: 9000
+            port: 9000  # TCP check for scanner readiness
           initialDelaySeconds: 10
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # Volume mounts for scanner data
         volumeMounts:
         - name: scanner-data
           mountPath: /data/scans
+        
         - name: scanner-config
           mountPath: /app/config
+          readOnly: true
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+        
       volumes:
       - name: scanner-data
         persistentVolumeClaim:
           claimName: cyberguard-scans-pvc
+      
       - name: scanner-config
         configMap:
           name: cyberguard-config
----
-# Threat Intelligence Ingestor
+
+
+
+# Threat Intelligence Ingestor Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -395,42 +522,79 @@ metadata:
     app: cyberguard
     component: ingestor
     tier: backend
+    version: v1.0.0
 spec:
   replicas: 1  # Single instance for data consistency
+  
   selector:
     matchLabels:
       app: cyberguard
       component: ingestor
+  
   template:
     metadata:
       labels:
         app: cyberguard
         component: ingestor
         version: v1.0.0
+    
     spec:
       serviceAccountName: cyberguard-ingestor-sa
+      
       containers:
       - name: cyberguard-ingestor
         image: cyberguard/ingestor:v1.0.0
         imagePullPolicy: IfNotPresent
+        
+        # Threat feed configuration
         env:
         - name: CVE_FEED_URL
           valueFrom:
             configMapKeyRef:
               name: cyberguard-config
               key: CVE_FEED_URL
-        - name: DATABASE_URL
-          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@cyberguard-postgres:5432/$(POSTGRES_DB)"
+        
+        # Add missing threat feed URLs
+        - name: EXPLOITDB_FEED_URL
+          valueFrom:
+            configMapKeyRef:
+              name: cyberguard-config
+              key: EXPLOITDB_FEED_URL
+        
+        - name: MALWARE_FEED_URL
+          valueFrom:
+            configMapKeyRef:
+              name: cyberguard-config
+              key: MALWARE_FEED_URL
+        
+        - name: PHISHING_FEED_URL
+          valueFrom:
+            configMapKeyRef:
+              name: cyberguard-config
+              key: PHISHING_FEED_URL
+        
+        # Database connection
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_USER
+        
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_PASSWORD
+        
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: cyberguard-secrets
+              key: POSTGRES_DB
+        
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@cyberguard-postgres:5432/$(POSTGRES_DB)"
+        
         resources:
           requests:
             memory: "512Mi"
@@ -438,17 +602,50 @@ spec:
           limits:
             memory: "2Gi"
             cpu: "2"
+        
+        # Health checks
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - curl -f http://localhost:8080/health || exit 1
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - curl -f http://localhost:8080/ready || exit 1
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        
         volumeMounts:
         - name: threat-data
           mountPath: /data/threats
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+      
       volumes:
       - name: threat-data
         persistentVolumeClaim:
           claimName: cyberguard-threat-data-pvc
----
-# PostgreSQL Database
+
+
+
+
+
+# PostgreSQL Database StatefulSet
 apiVersion: apps/v1
-kind: StatefulSet  # StatefulSet for stateful applications like databases
+kind: StatefulSet
 metadata:
   name: cyberguard-postgres
   namespace: cyberguard
@@ -456,94 +653,139 @@ metadata:
     app: cyberguard
     component: database
     tier: data
+    version: "14"
 spec:
-  serviceName: cyberguard-postgres
-  replicas: 1  # Single instance, could be clustered in production
+  serviceName: cyberguard-postgres  # Headless service name
+  
+  replicas: 1  # Single instance - for production consider using Patroni or Crunchy Data
+  
   selector:
     matchLabels:
       app: cyberguard
       component: postgres
+  
   template:
     metadata:
       labels:
         app: cyberguard
         component: postgres
         version: "14"
+    
     spec:
       serviceAccountName: cyberguard-db-sa
+      
+      # PostgreSQL runs as user 999 in the official image
       securityContext:
-        fsGroup: 999  # PostgreSQL group ID
+        fsGroup: 999
+        runAsUser: 999
+        runAsGroup: 999
+      
       containers:
       - name: postgres
-        image: postgres:14-alpine
+        image: postgres:14-alpine  # Alpine for smaller footprint
         imagePullPolicy: IfNotPresent
+        
         ports:
         - name: postgres
           containerPort: 5432
           protocol: TCP
+        
+        # Database configuration from secrets
         env:
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_USER
+        
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_PASSWORD
+        
         - name: POSTGRES_DB
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: POSTGRES_DB
+        
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
+        
+        # PostgreSQL-specific environment variables
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+        
+        - name: POSTGRES_HOST_AUTH_METHOD
+          value: "scram-sha-256"  # Modern password encryption
+        
         resources:
           requests:
-            memory: "1Gi"
+            memory: "1Gi"   # PostgreSQL benefits from more memory
             cpu: "500m"
           limits:
             memory: "4Gi"
             cpu: "2"
+        
+        # PostgreSQL-specific health checks
         livenessProbe:
           exec:
             command:
-            - sh
-            - -c
-            - exec pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
-          initialDelaySeconds: 60
+            - pg_isready
+            - -U
+            - "$(POSTGRES_USER)"
+            - -d
+            - "$(POSTGRES_DB)"
+          initialDelaySeconds: 60  # PostgreSQL takes time to start
           periodSeconds: 10
           timeoutSeconds: 5
+          failureThreshold: 3
+        
         readinessProbe:
           exec:
             command:
-            - sh
-            - -c
-            - exec pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            - pg_isready
+            - -U
+            - "$(POSTGRES_USER)"
+            - -d
+            - "$(POSTGRES_DB)"
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
+          failureThreshold: 3
+        
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/data
+        
+        # PostgreSQL runs as non-root by default (user 999)
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop:
             - ALL
-  volumeClaimTemplates:  # Dynamic PVC for StatefulSet
+          readOnlyRootFilesystem: false  # PostgreSQL needs write access
+        
+      # Node selector for database pods (optional)
+      nodeSelector:
+        node-type: database  # Run on nodes labeled for database workloads
+  
+  # Dynamic volume provisioning for StatefulSet
+  volumeClaimTemplates:
   - metadata:
       name: postgres-data
     spec:
       accessModes:
-      - ReadWriteOnce
+      - ReadWriteOnce  # Single node read-write
       resources:
         requests:
           storage: 20Gi
-      storageClassName: fast-ssd  # Use appropriate storage class
----
-# Redis Cache
+      storageClassName: fast-ssd  # Use appropriate storage class for production
+
+
+
+# Redis Cache Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -553,41 +795,64 @@ metadata:
     app: cyberguard
     component: redis
     tier: cache
+    version: "7"
 spec:
-  replicas: 3  # Redis cluster for high availability
+  replicas: 3  # Multiple replicas for high availability
+  
   selector:
     matchLabels:
       app: cyberguard
       component: redis
+  
   template:
     metadata:
       labels:
         app: cyberguard
         component: redis
         version: "7"
+    
     spec:
       serviceAccountName: cyberguard-redis-sa
+      
       containers:
       - name: redis
-        image: redis:7-alpine
+        image: redis:7.2-alpine  # Fixed: Specific version instead of latest
         imagePullPolicy: IfNotPresent
+        
         ports:
         - name: redis
           containerPort: 6379
           protocol: TCP
+        
+        # Redis server command with password
         command:
         - redis-server
-        - "/redis.conf"
+        - "/usr/local/etc/redis/redis.conf"  # Fixed: Correct config path
         - "--requirepass"
         - "$(REDIS_PASSWORD)"
         - "--appendonly"
         - "yes"
+        - "--save"
+        - "900 1"  # Save if 1 key changed in 900 seconds
+        - "--save"
+        - "300 10" # Save if 10 keys changed in 300 seconds
+        - "--save"
+        - "60 10000" # Save if 10000 keys changed in 60 seconds
+        
         env:
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: REDIS_PASSWORD
+        
+        # Redis configuration for production
+        - name: REDIS_MAXMEMORY
+          value: "1gb"  # Maximum memory usage
+        
+        - name: REDIS_MAXMEMORY_POLICY
+          value: "allkeys-lru"  # Eviction policy
+        
         resources:
           requests:
             memory: "256Mi"
@@ -595,34 +860,59 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1"
+        
+        # Redis health checks
         livenessProbe:
           exec:
             command:
             - redis-cli
+            - -a
+            - "$(REDIS_PASSWORD)"
             - ping
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
         readinessProbe:
           exec:
             command:
             - redis-cli
+            - -a
+            - "$(REDIS_PASSWORD)"
             - ping
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
         volumeMounts:
         - name: redis-data
           mountPath: /data
+        
         - name: redis-config
-          mountPath: /redis.conf
-          subPath: redis.conf
+          mountPath: /usr/local/etc/redis
+          readOnly: true
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+      
       volumes:
       - name: redis-data
-        emptyDir: {}  # For demo, use PVC in production
+        persistentVolumeClaim:  # Fixed: Changed from emptyDir to PVC for persistence
+          claimName: cyberguard-redis-pvc
+      
       - name: redis-config
         configMap:
           name: cyberguard-redis-config
----
-# Vector Database (ChromaDB)
+
+
+# Vector Database (ChromaDB) Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -632,107 +922,105 @@ metadata:
     app: cyberguard
     component: vectordb
     tier: data
+    version: "0.4.0"  # Added version label
 spec:
-  replicas: 1
+  replicas: 1  # Single instance - consider clustering for production
+  
   selector:
     matchLabels:
       app: cyberguard
       component: chromadb
+  
   template:
     metadata:
       labels:
         app: cyberguard
         component: chromadb
+        version: "0.4.0"
+    
     spec:
       serviceAccountName: cyberguard-vectordb-sa
+      
       containers:
       - name: chromadb
-        image: chromadb/chroma:latest
+        image: chromadb/chroma:0.4.0  # Fixed: Specific version instead of latest
         imagePullPolicy: IfNotPresent
+        
         ports:
         - name: http
           containerPort: 8000
           protocol: TCP
+        
+        # ChromaDB authentication
         env:
+        - name: CHROMA_SERVER_AUTH_CREDENTIALS_PROVIDER
+          value: "chromadb.auth.token_authn.TokenAuthenticationServerProvider"
+        
         - name: CHROMA_SERVER_AUTH_CREDENTIALS
           value: "admin:$(CHROMA_PASSWORD)"
+        
         - name: CHROMA_PASSWORD
           valueFrom:
             secretKeyRef:
               name: cyberguard-secrets
               key: CHROMA_PASSWORD
+        
+        # ChromaDB persistence settings
+        - name: IS_PERSISTENT
+          value: "TRUE"
+        
+        - name: PERSIST_DIRECTORY
+          value: "/chroma/chroma"
+        
+        # ChromaDB performance settings
+        - name: CHROMA_SERVER_NOFILE
+          value: "65536"  # Increase file descriptor limit
+        
         resources:
           requests:
-            memory: "2Gi"
+            memory: "2Gi"  # Vector DBs are memory intensive
             cpu: "1"
           limits:
             memory: "8Gi"
             cpu: "4"
+        
+        # ChromaDB health check
+        livenessProbe:
+          httpGet:
+            path: /api/v1/heartbeat
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /api/v1
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        
         volumeMounts:
         - name: chroma-data
           mountPath: /chroma/chroma
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          readOnlyRootFilesystem: false  # Needs write access for vector storage
+      
       volumes:
       - name: chroma-data
         persistentVolumeClaim:
           claimName: cyberguard-chroma-pvc
----
-# Message Queue (RabbitMQ)
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cyberguard-rabbitmq
-  namespace: cyberguard
-  labels:
-    app: cyberguard
-    component: message-queue
-    tier: infrastructure
-spec:
-  replicas: 3  # RabbitMQ cluster
-  selector:
-    matchLabels:
-      app: cyberguard
-      component: rabbitmq
-  template:
-    metadata:
-      labels:
-        app: cyberguard
-        component: rabbitmq
-    spec:
-      serviceAccountName: cyberguard-mq-sa
-      containers:
-      - name: rabbitmq
-        image: rabbitmq:3-management-alpine
-        imagePullPolicy: IfNotPresent
-        ports:
-        - name: amqp
-          containerPort: 5672
-          protocol: TCP
-        - name: management
-          containerPort: 15672
-          protocol: TCP
-        env:
-        - name: RABBITMQ_DEFAULT_USER
-          value: "admin"
-        - name: RABBITMQ_DEFAULT_PASS
-          valueFrom:
-            secretKeyRef:
-              name: cyberguard-secrets
-              key: RABBITMQ_PASSWORD
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "1"
-        volumeMounts:
-        - name: rabbitmq-data
-          mountPath: /var/lib/rabbitmq
-      volumes:
-      - name: rabbitmq-data
-        emptyDir: {}  # Use PVC for production
----
-# Nginx Reverse Proxy
+
+
+
+# Nginx Reverse Proxy Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -742,37 +1030,60 @@ metadata:
     app: cyberguard
     component: reverse-proxy
     tier: edge
+    version: "1.25"
 spec:
-  replicas: 2
+  replicas: 2  # Two replicas for high availability
+  
   selector:
     matchLabels:
       app: cyberguard
       component: nginx
+  
   template:
     metadata:
       labels:
         app: cyberguard
         component: nginx
+        version: "1.25"
+    
     spec:
       serviceAccountName: cyberguard-nginx-sa
+      
       containers:
       - name: nginx
         image: nginx:1.25-alpine
         imagePullPolicy: IfNotPresent
+        
         ports:
         - name: http
           containerPort: 80
           protocol: TCP
+        
         - name: https
           containerPort: 443
           protocol: TCP
+        
+        # Mount configuration and SSL certificates
         volumeMounts:
         - name: nginx-config
           mountPath: /etc/nginx/nginx.conf
           subPath: nginx.conf
+          readOnly: true
+        
+        - name: nginx-default-conf
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+          readOnly: true
+        
         - name: ssl-certs
           mountPath: /etc/nginx/ssl
           readOnly: true
+        
+        # Nginx runs as user 101
+        securityContext:
+          runAsUser: 101
+          runAsGroup: 101
+        
         resources:
           requests:
             memory: "128Mi"
@@ -780,6 +1091,8 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "500m"
+        
+        # Nginx health checks
         livenessProbe:
           httpGet:
             path: /health
@@ -787,6 +1100,9 @@ spec:
             scheme: HTTP
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
         readinessProbe:
           httpGet:
             path: /health
@@ -794,6 +1110,9 @@ spec:
             scheme: HTTP
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      
       volumes:
       - name: nginx-config
         configMap:
@@ -801,120 +1120,12 @@ spec:
           items:
           - key: nginx.conf
             path: nginx.conf
+      
+      - name: nginx-default-conf
+        configMap:
+          name: cyberguard-nginx-config
+      
       - name: ssl-certs
         secret:
           secretName: cyberguard-tls
----
-# Monitoring - Prometheus
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cyberguard-prometheus
-  namespace: cyberguard
-  labels:
-    app: cyberguard
-    component: monitoring
-    tier: observability
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: cyberguard
-      component: prometheus
-  template:
-    metadata:
-      labels:
-        app: cyberguard
-        component: prometheus
-    spec:
-      serviceAccountName: cyberguard-monitoring-sa
-      containers:
-      - name: prometheus
-        image: prom/prometheus:latest
-        imagePullPolicy: IfNotPresent
-        ports:
-        - name: http
-          containerPort: 9090
-          protocol: TCP
-        args:
-        - '--config.file=/etc/prometheus/prometheus.yml'
-        - '--storage.tsdb.path=/prometheus'
-        - '--web.console.libraries=/etc/prometheus/console_libraries'
-        - '--web.console.templates=/etc/prometheus/consoles'
-        - '--storage.tsdb.retention.time=30d'
-        volumeMounts:
-        - name: prometheus-config
-          mountPath: /etc/prometheus
-        - name: prometheus-data
-          mountPath: /prometheus
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "2"
-      volumes:
-      - name: prometheus-config
-        configMap:
-          name: cyberguard-prometheus-config
-      - name: prometheus-data
-        persistentVolumeClaim:
-          claimName: cyberguard-prometheus-pvc
----
-# Monitoring - Grafana
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cyberguard-grafana
-  namespace: cyberguard
-  labels:
-    app: cyberguard
-    component: grafana
-    tier: observability
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: cyberguard
-      component: grafana
-  template:
-    metadata:
-      labels:
-        app: cyberguard
-        component: grafana
-    spec:
-      serviceAccountName: cyberguard-grafana-sa
-      containers:
-      - name: grafana
-        image: grafana/grafana:latest
-        imagePullPolicy: IfNotPresent
-        ports:
-        - name: http
-          containerPort: 3000
-          protocol: TCP
-        env:
-        - name: GF_SECURITY_ADMIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: cyberguard-secrets
-              key: GRAFANA_ADMIN_PASSWORD
-        volumeMounts:
-        - name: grafana-data
-          mountPath: /var/lib/grafana
-        - name: grafana-config
-          mountPath: /etc/grafana/provisioning/datasources
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "1"
-      volumes:
-      - name: grafana-data
-        persistentVolumeClaim:
-          claimName: cyberguard-grafana-pvc
-      - name: grafana-config
-        configMap:
-          name: cyberguard-grafana-config
+          optional: false  # Required for HTTPS                          

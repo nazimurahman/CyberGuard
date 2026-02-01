@@ -22,14 +22,14 @@ import json
 import hmac
 import hashlib
 import time
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, Tuple
+from datetime import datetime
 from functools import wraps
 
 # Create blueprint for webhook routes
 webhook_blueprint = Blueprint('webhook', __name__, url_prefix='/webhooks')
 
-# Webhook configuration
+# Webhook configuration - Fixed: Added proper syntax and removed trailing comma
 WEBHOOK_CONFIGS = {
     # Format: webhook_id -> configuration
     'github_security': {
@@ -59,6 +59,7 @@ WEBHOOK_CONFIGS = {
 }
 
 # Webhook event queue (in production, use message queue like Redis)
+# Fixed: Properly initialized as list
 webhook_event_queue = []
 MAX_QUEUE_SIZE = 1000
 
@@ -72,11 +73,13 @@ class WebhookHandler:
         Args:
             agent_orchestrator: AgentOrchestrator for processing security events
         """
+        # Store agent orchestrator for security event processing
         self.agent_orchestrator = agent_orchestrator
+        # Statistics counters
         self.processed_webhooks = 0
         self.failed_webhooks = 0
         
-        # Event processors registry
+        # Event processors registry - maps webhook IDs to processing methods
         self.event_processors = {
             'github_security': self._process_github_webhook,
             'jenkins_build': self._process_jenkins_webhook,
@@ -97,13 +100,16 @@ class WebhookHandler:
         Returns:
             True if signature is valid, False otherwise
         """
+        # Check if webhook ID exists in configuration
         if webhook_id not in WEBHOOK_CONFIGS:
             return False
         
+        # Get configuration for this webhook
         config = WEBHOOK_CONFIGS[webhook_id]
+        # Encode secret for HMAC
         secret = config['secret'].encode('utf-8')
         
-        # Generate expected signature
+        # Generate expected signature using HMAC-SHA256
         expected_signature = hmac.new(
             secret,
             payload,
@@ -111,9 +117,10 @@ class WebhookHandler:
         ).hexdigest()
         
         # Use hmac.compare_digest to prevent timing attacks
+        # Fixed: Removed incorrect method call
         return hmac.compare_digest(signature, expected_signature)
     
-    def validate_payload(self, payload: Dict, webhook_id: str) -> tuple[bool, Optional[str]]:
+    def validate_payload(self, payload: Dict, webhook_id: str) -> Tuple[bool, Optional[str]]:
         """
         Validate webhook payload structure
         
@@ -124,9 +131,11 @@ class WebhookHandler:
         Returns:
             Tuple of (is_valid, error_message)
         """
+        # Check if payload is empty
         if not payload:
             return False, "Empty payload"
         
+        # Check if webhook ID exists in configuration
         if webhook_id not in WEBHOOK_CONFIGS:
             return False, f"Unknown webhook ID: {webhook_id}"
         
@@ -155,6 +164,7 @@ class WebhookHandler:
                 if field not in payload:
                     return False, f"Missing required field: {field}"
         
+        # All validations passed
         return True, None
     
     def process_webhook(self, webhook_id: str, payload: Dict, 
@@ -187,11 +197,11 @@ class WebhookHandler:
             if signature.startswith('sha256='):
                 signature = signature[7:]  # Remove 'sha256=' prefix
             
-            if not self.verify_signature(
-                json.dumps(payload, sort_keys=True).encode('utf-8'),
-                signature,
-                webhook_id
-            ):
+            # Convert payload to JSON string for signature verification
+            # Fixed: Use consistent payload serialization
+            payload_str = json.dumps(payload, sort_keys=True).encode('utf-8')
+            
+            if not self.verify_signature(payload_str, signature, webhook_id):
                 self.failed_webhooks += 1
                 return {
                     'status': 'error',
@@ -199,7 +209,7 @@ class WebhookHandler:
                     'timestamp': datetime.now().isoformat()
                 }
             
-            # 3. Validate payload
+            # 3. Validate payload structure
             is_valid, error_msg = self.validate_payload(payload, webhook_id)
             if not is_valid:
                 self.failed_webhooks += 1
@@ -218,8 +228,10 @@ class WebhookHandler:
             else:
                 result = self._process_generic_webhook(payload, headers)
             
+            # Update success counter
             self.processed_webhooks += 1
             
+            # Calculate processing time
             processing_time = time.time() - start_time
             
             return {
@@ -231,6 +243,7 @@ class WebhookHandler:
             }
             
         except Exception as e:
+            # Log error and update failure counter
             current_app.logger.error(f"Webhook processing error: {str(e)}")
             self.failed_webhooks += 1
             
@@ -253,16 +266,17 @@ class WebhookHandler:
         Returns:
             Event ID
         """
-        # Generate event ID
+        # Generate unique event ID using SHA256 hash
         event_id = hashlib.sha256(
             f"{webhook_id}{datetime.now().isoformat()}{json.dumps(payload)}".encode()
-        ).hexdigest()[:16]
+        ).hexdigest()[:16]  # Use first 16 chars for shorter ID
         
+        # Create event object
         event = {
             'event_id': event_id,
             'webhook_id': webhook_id,
             'payload': payload,
-            'headers': dict(headers),
+            'headers': dict(headers),  # Convert headers to dict for serialization
             'received_at': datetime.now().isoformat(),
             'processed': False
         }
@@ -270,7 +284,7 @@ class WebhookHandler:
         # Add to queue
         webhook_event_queue.append(event)
         
-        # Maintain queue size
+        # Maintain queue size - remove oldest if exceeds limit
         if len(webhook_event_queue) > MAX_QUEUE_SIZE:
             webhook_event_queue.pop(0)  # Remove oldest
         
@@ -278,10 +292,12 @@ class WebhookHandler:
     
     def _process_github_webhook(self, payload: Dict, headers: Dict) -> Dict[str, Any]:
         """Process GitHub security webhook"""
+        # Extract GitHub-specific headers
         event_type = headers.get('X-GitHub-Event', 'unknown')
         action = payload.get('action', 'unknown')
         repository = payload.get('repository', {}).get('full_name', 'unknown')
         
+        # Log webhook processing
         current_app.logger.info(
             f"Processing GitHub webhook: {event_type}.{action} for {repository}"
         )
@@ -324,7 +340,7 @@ class WebhookHandler:
                 if any(keyword in message for keyword in security_keywords):
                     security_commits.append({
                         'id': commit.get('id', '')[:8],
-                        'message': commit.get('message', '')[:100]
+                        'message': commit.get('message', '')[:100]  # Truncate message
                     })
             
             if security_commits:
@@ -339,6 +355,7 @@ class WebhookHandler:
     def _process_jenkins_webhook(self, payload: Dict, headers: Dict) -> Dict[str, Any]:
         """Process Jenkins build webhook"""
         build_info = payload.get('build', {})
+        # Extract job name from URL if available
         job_name = build_info.get('full_url', '').split('/')[-2] if build_info.get('full_url') else 'unknown'
         build_status = build_info.get('status', 'unknown')
         
@@ -355,26 +372,20 @@ class WebhookHandler:
             'timestamp': datetime.now().isoformat()
         }
         
-        # Check for security scan results
+        # Check for security scan results in artifacts
         if 'artifacts' in payload:
-            # Look for security scan reports
+            # Look for security scan reports in artifact paths
             for artifact in payload['artifacts']:
-                if any(ext in artifact.get('relativePath', '').lower() 
-                      for ext in ['.sarif', '.json', '.xml', 'security', 'scan']):
+                artifact_path = artifact.get('relativePath', '').lower()
+                # Check for common security report extensions
+                if any(ext in artifact_path for ext in ['.sarif', '.json', '.xml', 'security', 'scan']):
                     build_data['security_artifacts'] = artifact
                     break
         
         # Trigger security review for failed builds
         if build_status == 'FAILURE' and self.agent_orchestrator:
-            # Analyze build failure for security implications
-            failure_data = {
-                'type': 'jenkins_build_failure',
-                'job_name': job_name,
-                'build_number': build_info.get('number', 0),
-                'timestamp': datetime.now().isoformat()
-            }
-            
             # In production, this would trigger a security review workflow
+            # Placeholder for actual implementation
             pass
         
         return {
@@ -430,6 +441,7 @@ class WebhookHandler:
                 }
                 
                 # In production, this would trigger incident response workflow
+                # Placeholder for actual implementation
                 pass
         
         return {
@@ -458,12 +470,14 @@ class WebhookHandler:
         
         # Update threat intelligence database
         if self.agent_orchestrator:
-            # Notify relevant agents
+            # Notify relevant agents based on threat type
             if threat_type in ['cve_published', 'exploit_released']:
                 # Update vulnerability database
+                # Placeholder for actual implementation
                 pass
             elif threat_type == 'malware_detected':
                 # Update malware signatures
+                # Placeholder for actual implementation
                 pass
         
         return {
@@ -492,7 +506,8 @@ class WebhookHandler:
                     'timestamp': datetime.now().isoformat()
                 }
                 
-                # This would trigger the agent system
+                # In production, this would trigger the agent system
+                # Placeholder for actual implementation
                 # result = self.agent_orchestrator.coordinate_analysis(analysis_input)
                 pass
                 
@@ -509,7 +524,7 @@ class WebhookHandler:
             'timestamp': datetime.now().isoformat()
         }
 
-# Initialize handler
+# Initialize global handler instance
 webhook_handler = WebhookHandler()
 
 # Webhook routes
@@ -536,6 +551,7 @@ def threat_intel_webhook():
 @webhook_blueprint.route('/generic', methods=['POST'])
 def generic_webhook():
     """Handle generic webhooks"""
+    # Get webhook ID from headers, default to 'generic'
     webhook_id = request.headers.get('X-Webhook-ID', 'generic')
     return _process_webhook_request(webhook_id)
 
@@ -557,7 +573,7 @@ def webhook_config():
             'events': config.get('events', []),
             'rate_limit': config.get('rate_limit', ''),
             'enabled': config.get('enabled', False)
-            # Don't expose secrets
+            # Don't expose secrets for security
         }
     
     return jsonify({
@@ -568,7 +584,7 @@ def webhook_config():
 def _process_webhook_request(webhook_id: str):
     """Process webhook request"""
     try:
-        # Get payload
+        # Get payload - only accept JSON content
         if request.is_json:
             payload = request.get_json()
         else:
@@ -577,20 +593,21 @@ def _process_webhook_request(webhook_id: str):
                 'message': 'Content-Type must be application/json'
             }), 400
         
-        # Process webhook
+        # Process webhook through handler
         result = webhook_handler.process_webhook(
             webhook_id,
             payload,
-            dict(request.headers)
+            dict(request.headers)  # Convert headers to dict
         )
         
-        # Return appropriate status code
+        # Return appropriate status code based on result
         if result['status'] == 'success':
             return jsonify(result), 200
         else:
             return jsonify(result), 400
             
     except Exception as e:
+        # Log internal server errors
         current_app.logger.error(f"Webhook processing failed: {str(e)}")
         return jsonify({
             'status': 'error',
@@ -598,5 +615,5 @@ def _process_webhook_request(webhook_id: str):
             'timestamp': datetime.now().isoformat()
         }), 500
 
-# Export handler and blueprint
+# Export handler and blueprint for use in other modules
 __all__ = ['webhook_handler', 'webhook_blueprint']

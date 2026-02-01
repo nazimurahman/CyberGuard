@@ -6,10 +6,7 @@ Features: AST parsing, vulnerability detection, obfuscation analysis, dependency
 """
 
 import re
-import ast
-import json
 import hashlib
-import base64
 from typing import Dict, List, Any, Optional, Tuple, Set
 from dataclasses import dataclass
 import warnings
@@ -50,7 +47,7 @@ class JavaScriptAnalyzer:
         """
         self.config = config
         
-        # Dangerous JavaScript functions/patterns
+        # Dangerous JavaScript functions/patterns with severity levels
         self.dangerous_functions = {
             'eval': 'CRITICAL',
             'Function': 'CRITICAL',
@@ -64,7 +61,7 @@ class JavaScriptAnalyzer:
             'createContextualFragment': 'MEDIUM',
         }
         
-        # XSS sink functions (places where untrusted data can become code)
+        # XSS sink functions where untrusted data can become executable code
         self.xss_sinks = [
             'innerHTML', 'outerHTML', 'insertAdjacentHTML',
             'document.write', 'document.writeln',
@@ -75,7 +72,7 @@ class JavaScriptAnalyzer:
             'element.href', 'element.action',
         ]
         
-        # Data exfiltration patterns
+        # Data exfiltration patterns with classification
         self.exfiltration_patterns = [
             ('XMLHttpRequest', 'NETWORK_EXFILTRATION'),
             ('fetch', 'NETWORK_EXFILTRATION'),
@@ -90,31 +87,31 @@ class JavaScriptAnalyzer:
             ('document.execCommand("copy")', 'CLIPBOARD_ACCESS'),
         ]
         
-        # Obfuscation detection patterns
+        # Obfuscation detection patterns with regex and type identifier
         self.obfuscation_patterns = [
-            (r'eval\(.*atob\(', 'BASE64_EVAL'),           # eval(atob(...))
-            (r'String\.fromCharCode\(', 'CHARCODE_OBFUSCATION'),
-            (r'\\x[0-9a-fA-F]{2}', 'HEX_ESCAPE'),
-            (r'\\u[0-9a-fA-F]{4}', 'UNICODE_ESCAPE'),
-            (r'\[][+\-*/%&|^]', 'ARRAY_OBFUSCATION'),     # []+!+[]
-            (r'\(!\[\]\+\[\]\)', 'BOOLEAN_OBFUSCATION'),  # (![]+[])
-            (r'window\[', 'WINDOW_INDEXING'),             # window['alert']
-            (r'document\[', 'DOCUMENT_INDEXING'),         # document['getElementById']
+            (r'eval\(.*atob\(', 'BASE64_EVAL'),           # Pattern for eval(atob(...))
+            (r'String\.fromCharCode\(', 'CHARCODE_OBFUSCATION'),  # Character code obfuscation
+            (r'\\x[0-9a-fA-F]{2}', 'HEX_ESCAPE'),        # Hexadecimal escape sequences
+            (r'\\u[0-9a-fA-F]{4}', 'UNICODE_ESCAPE'),    # Unicode escape sequences
+            (r'\[][+\-*/%&|^]', 'ARRAY_OBFUSCATION'),     # Array-based obfuscation like []+!+[]
+            (r'\(!\[\]\+\[\]\)', 'BOOLEAN_OBFUSCATION'),  # Boolean conversion obfuscation
+            (r'window\[', 'WINDOW_INDEXING'),             # Window property indexing
+            (r'document\[', 'DOCUMENT_INDEXING'),         # Document property indexing
         ]
         
-        # Regular expressions for pattern matching
+        # Regular expressions for pattern matching in JavaScript code
         self.regex_patterns = {
-            'url_pattern': re.compile(r'https?://[^\s\'"]+', re.IGNORECASE),
-            'ip_address': re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'),
-            'email_pattern': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
-            'base64_pattern': re.compile(r'[A-Za-z0-9+/]{20,}={0,2}'),
-            'hex_string': re.compile(r'\\x[0-9a-fA-F]{2}', re.IGNORECASE),
-            'unicode_escape': re.compile(r'\\u[0-9a-fA-F]{4}', re.IGNORECASE),
-            'json_pattern': re.compile(r'\{.*:.*\}', re.DOTALL),
-            'minified_detection': re.compile(r'^[^{}]*\{[^{}]*\}[^{}]*$', re.DOTALL),
+            'url_pattern': re.compile(r'https?://[^\s\'"]+', re.IGNORECASE),  # HTTP/HTTPS URLs
+            'ip_address': re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'),  # IP addresses
+            'email_pattern': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),  # Email addresses
+            'base64_pattern': re.compile(r'[A-Za-z0-9+/]{20,}={0,2}'),  # Base64 encoded strings
+            'hex_string': re.compile(r'\\x[0-9a-fA-F]{2}', re.IGNORECASE),  # Hex escape sequences
+            'unicode_escape': re.compile(r'\\u[0-9a-fA-F]{4}', re.IGNORECASE),  # Unicode escapes
+            'json_pattern': re.compile(r'\{.*:.*\}', re.DOTALL),  # JSON-like objects
+            'minified_detection': re.compile(r'^[^{}]*\{[^{}]*\}[^{}]*$', re.DOTALL),  # Minified code pattern
         }
         
-        # Whitelisted domains (safe external resources)
+        # Whitelisted domains for safe external resources
         self.whitelisted_domains = {
             'ajax.googleapis.com',
             'cdnjs.cloudflare.com',
@@ -125,7 +122,7 @@ class JavaScriptAnalyzer:
             'fonts.gstatic.com',
         }
         
-        # Statistics
+        # Statistics tracking for analyzer performance
         self.stats = {
             'files_analyzed': 0,
             'vulnerabilities_found': 0,
@@ -144,65 +141,66 @@ class JavaScriptAnalyzer:
         Returns:
             JavaScriptAnalysis object with analysis results
         """
-        # Basic file metrics
-        file_hash = hashlib.md5(js_code.encode()).hexdigest()
-        file_size = len(js_code)
-        line_count = js_code.count('\n') + 1
-        char_count = len(js_code)
+        # Calculate basic file metrics for analysis report
+        file_hash = hashlib.md5(js_code.encode()).hexdigest()  # MD5 hash for file identification
+        file_size = len(js_code)  # File size in bytes
+        line_count = js_code.count('\n') + 1  # Count lines (add 1 for last line without newline)
+        char_count = len(js_code)  # Total character count
         
-        # Initialize results containers
-        vulnerabilities = []
-        suspicious_patterns = []
-        external_resources = []
-        dom_manipulations = []
-        event_listeners = []
-        encoded_strings = []
-        api_calls = []
-        cookies_accessed = []
-        localStorage_usage = []
-        eval_calls = []
+        # Initialize empty containers for analysis results
+        vulnerabilities = []  # Store security vulnerabilities
+        suspicious_patterns = []  # Store suspicious code patterns
+        external_resources = []  # Store external resource URLs
+        dom_manipulations = []  # Store DOM manipulation operations
+        event_listeners = []  # Store event listener attachments
+        encoded_strings = []  # Store encoded/obfuscated strings
+        api_calls = []  # Store API call patterns
+        cookies_accessed = []  # Store cookie access patterns
+        localStorage_usage = []  # Store localStorage operations
+        eval_calls = []  # Store eval-like function calls
         
-        # Clean the code for analysis
+        # Clean the JavaScript code by removing comments and normalizing whitespace
         cleaned_code = self._clean_javascript(js_code)
         
-        # 1. Detect dangerous functions
+        # Perform various security checks on the cleaned code
+        # 1. Detect dangerous JavaScript functions
         vulnerabilities.extend(self._detect_dangerous_functions(cleaned_code))
         
-        # 2. Detect XSS vulnerabilities
+        # 2. Detect Cross-Site Scripting (XSS) vulnerabilities
         vulnerabilities.extend(self._detect_xss_vulnerabilities(cleaned_code))
         
-        # 3. Detect data exfiltration
+        # 3. Detect data exfiltration patterns
         vulnerabilities.extend(self._detect_data_exfiltration(cleaned_code))
         
-        # 4. Detect obfuscated code
+        # 4. Detect obfuscated code patterns
         obfuscation_results = self._detect_obfuscation(cleaned_code)
         suspicious_patterns.extend(obfuscation_results)
         
-        # 5. Extract external resources
+        # 5. Extract external resources referenced in code
         external_resources = self._extract_external_resources(cleaned_code)
         
-        # 6. Analyze DOM manipulations
+        # 6. Analyze DOM manipulation operations
         dom_manipulations = self._analyze_dom_manipulations(cleaned_code)
         
-        # 7. Extract event listeners
+        # 7. Extract event listener attachments
         event_listeners = self._extract_event_listeners(cleaned_code)
         
-        # 8. Detect encoded strings
+        # 8. Detect encoded strings (base64, hex, etc.)
         encoded_strings = self._detect_encoded_strings(cleaned_code)
         
-        # 9. Extract API calls
+        # 9. Extract API calls (fetch, XMLHttpRequest, etc.)
         api_calls = self._extract_api_calls(cleaned_code)
         
-        # 10. Detect cookie access
+        # 10. Detect cookie access patterns
         cookies_accessed = self._detect_cookie_access(cleaned_code)
         
-        # 11. Detect localStorage usage
+        # 11. Detect localStorage and sessionStorage usage
         localStorage_usage = self._detect_localstorage_usage(cleaned_code)
         
-        # 12. Detect eval calls
+        # 12. Detect eval() and similar dynamic code execution
         eval_calls = self._detect_eval_calls(cleaned_code)
         
-        # 13. Check for minified code
+        # 13. Check if code appears to be minified
         if self._is_minified(cleaned_code):
             suspicious_patterns.append({
                 'type': 'MINIFIED_CODE',
@@ -212,19 +210,22 @@ class JavaScriptAnalyzer:
                 'recommendation': 'Consider providing source maps for debugging'
             })
         
-        # Calculate scores
+        # Calculate overall security score based on vulnerabilities found
         security_score = self._calculate_security_score(vulnerabilities)
+        
+        # Calculate obfuscation score based on obfuscation patterns found
         obfuscation_score = self._calculate_obfuscation_score(obfuscation_results)
         
-        # Update statistics
-        self.stats['files_analyzed'] += 1
+        # Update analyzer statistics
+        self.stats['files_analyzed'] += 1  # Increment files analyzed counter
         if vulnerabilities:
-            self.stats['vulnerabilities_found'] += len(vulnerabilities)
-        if obfuscation_score > 0.7:
+            self.stats['vulnerabilities_found'] += len(vulnerabilities)  # Count vulnerabilities
+        if obfuscation_score > 0.7:  # Threshold for considering file obfuscated
             self.stats['obfuscated_files'] += 1
-        if security_score < 0.3:
+        if security_score < 0.3:  # Threshold for considering file malicious
             self.stats['malicious_files'] += 1
         
+        # Return comprehensive analysis results
         return JavaScriptAnalysis(
             file_hash=file_hash,
             file_size=file_size,
@@ -246,53 +247,66 @@ class JavaScriptAnalyzer:
     
     def _clean_javascript(self, js_code: str) -> str:
         """
-        Clean JavaScript code for analysis
+        Clean JavaScript code by removing comments and normalizing whitespace
         
         Args:
             js_code: Raw JavaScript code
             
         Returns:
-            Cleaned JavaScript code
+            Cleaned JavaScript code without comments and normalized whitespace
         """
-        # Remove comments (single-line and multi-line)
-        # Single-line comments
+        # Remove single-line comments (//) while preserving URLs and string literals
         lines = js_code.split('\n')
         cleaned_lines = []
+        
         for line in lines:
-            # Remove single-line comments, but be careful with URLs
+            # Check for single-line comments, but avoid removing URLs containing //
             if '//' in line:
-                # Check if // is in a string
-                in_string = False
-                string_char = None
+                in_string = False  # Track if we're inside a string literal
+                string_char = None  # Track the string delimiter (' or ")
+                
+                # Iterate through each character in the line
                 for i, char in enumerate(line):
+                    # Check for string delimiters, ignoring escaped quotes
                     if char in ('"', "'") and (i == 0 or line[i-1] != '\\'):
                         if not in_string:
+                            # Entering a string literal
                             in_string = True
                             string_char = char
                         elif string_char == char:
+                            # Exiting a string literal
                             in_string = False
                             string_char = None
                     
-                    if not in_string and line[i:i+2] == '//':
-                        line = line[:i]
+                    # If we find // outside a string, truncate the line
+                    if not in_string and i < len(line)-1 and line[i:i+2] == '//':
+                        line = line[:i]  # Keep only the part before comment
                         break
             cleaned_lines.append(line)
         
+        # Join lines back together
         cleaned = '\n'.join(cleaned_lines)
         
-        # Remove multi-line comments /* ... */
-        while '/*' in cleaned and '*/' in cleaned:
-            start = cleaned.find('/*')
-            end = cleaned.find('*/', start)
-            if end == -1:
-                break
-            cleaned = cleaned[:start] + cleaned[end+2:]
+        # Remove multi-line comments (/* ... */) using iterative approach
+        while True:
+            # Find the start of a multi-line comment
+            start_index = cleaned.find('/*')
+            if start_index == -1:
+                break  # No more multi-line comments
+            
+            # Find the end of this multi-line comment
+            end_index = cleaned.find('*/', start_index + 2)
+            if end_index == -1:
+                break  # Unclosed comment, break to avoid infinite loop
+            
+            # Remove the comment from the string
+            cleaned = cleaned[:start_index] + cleaned[end_index + 2:]
         
-        # Normalize whitespace (but preserve string content)
-        # This is a simplified approach - in production, use proper parser
+        # Normalize whitespace: replace multiple whitespace characters with single space
+        # This preserves string content but reduces analysis complexity
         cleaned = re.sub(r'\s+', ' ', cleaned)
         
-        return cleaned.strip()
+        return cleaned.strip()  # Remove leading/trailing whitespace
     
     def _detect_dangerous_functions(self, js_code: str) -> List[Dict[str, Any]]:
         """
@@ -302,33 +316,37 @@ class JavaScriptAnalyzer:
             js_code: Cleaned JavaScript code
             
         Returns:
-            List of dangerous function vulnerabilities
+            List of dangerous function vulnerabilities with details
         """
-        vulnerabilities = []
+        vulnerabilities = []  # Store detected vulnerabilities
         
+        # Iterate through each dangerous function in the predefined list
         for func_name, severity in self.dangerous_functions.items():
-            # Create pattern for function detection
+            # Define regex pattern based on function type
             if func_name == 'eval':
-                pattern = r'\beval\s*\([^)]*\)'
+                pattern = r'\beval\s*\([^)]*\)'  # Match eval(...)
             elif func_name == 'Function':
-                pattern = r'\bFunction\s*\([^)]*\)'
+                pattern = r'\bFunction\s*\([^)]*\)'  # Match Function(...)
             elif 'setTimeout' in func_name:
-                pattern = r'setTimeout\s*\(\s*["\'][^"\']+["\']'
+                pattern = r'setTimeout\s*\(\s*["\'][^"\']+["\']'  # Match setTimeout("string"...)
             elif 'setInterval' in func_name:
-                pattern = r'setInterval\s*\(\s*["\'][^"\']+["\']'
+                pattern = r'setInterval\s*\(\s*["\'][^"\']+["\']'  # Match setInterval("string"...)
             elif func_name == 'execScript':
-                pattern = r'\bexecScript\s*\([^)]*\)'
+                pattern = r'\bexecScript\s*\([^)]*\)'  # Match execScript(...)
             else:
+                # Generic pattern for other dangerous functions
                 pattern = fr'\b{re.escape(func_name)}\s*\([^)]*\)'
             
+            # Search for all occurrences of the pattern in the code
             matches = re.finditer(pattern, js_code, re.IGNORECASE | re.DOTALL)
             for match in matches:
-                context = match.group(0)
-                # Get some context around the match
-                start = max(0, match.start() - 50)
-                end = min(len(js_code), match.end() + 50)
-                context_snippet = js_code[start:end]
+                context = match.group(0)  # The actual matched text
+                # Extract surrounding context for better analysis (50 chars before/after)
+                start_pos = max(0, match.start() - 50)
+                end_pos = min(len(js_code), match.end() + 50)
+                context_snippet = js_code[start_pos:end_pos]
                 
+                # Create vulnerability entry
                 vulnerabilities.append({
                     'type': 'DANGEROUS_FUNCTION',
                     'severity': severity,
@@ -348,79 +366,78 @@ class JavaScriptAnalyzer:
             js_code: Cleaned JavaScript code
             
         Returns:
-            List of XSS vulnerabilities
+            List of XSS vulnerabilities with source-to-sink mappings
         """
-        vulnerabilities = []
+        vulnerabilities = []  # Store XSS vulnerabilities
         
-        # Pattern to find user input sources (simplified)
+        # Patterns for identifying user input sources (potential XSS vectors)
         user_input_patterns = [
-            r'location\.(search|hash)',
-            r'document\.URL',
-            r'document\.location',
-            r'window\.name',
-            r'document\.referrer',
-            r'document\.cookie',
-            r'localStorage\.getItem',
-            r'sessionStorage\.getItem',
-            r'new\s+URLSearchParams',
+            r'location\.(search|hash)',  # URL parameters/fragments
+            r'document\.URL',  # Current URL
+            r'document\.location',  # Document location
+            r'window\.name',  # Window name property
+            r'document\.referrer',  # Referrer URL
+            r'document\.cookie',  # Browser cookies
+            r'localStorage\.getItem',  # Local storage access
+            r'sessionStorage\.getItem',  # Session storage access
+            r'new\s+URLSearchParams',  # URL search parameters
         ]
         
-        # Find user input sources
+        # Find all user input sources in the code
         user_inputs = []
         for pattern in user_input_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
                 user_inputs.append({
-                    'source': match.group(0),
-                    'start': match.start(),
-                    'end': match.end()
+                    'source': match.group(0),  # The matched source pattern
+                    'start': match.start(),  # Start position in code
+                    'end': match.end()  # End position in code
                 })
         
-        # Find XSS sinks
+        # Find XSS sinks (places where user input could become executable)
         for sink in self.xss_sinks:
-            pattern = fr'\b{re.escape(sink)}\s*\([^)]*\)'
+            pattern = fr'\b{re.escape(sink)}\s*\([^)]*\)'  # Pattern for sink function call
             matches = re.finditer(pattern, js_code, re.IGNORECASE | re.DOTALL)
             
             for match in matches:
-                # Check if any user input flows into this sink
-                sink_context = match.group(0)
-                sink_start = match.start()
+                sink_context = match.group(0)  # The sink function call
+                sink_start = match.start()  # Start position of sink
                 
-                # Look for user inputs that might flow into this sink
-                # This is a simplified taint analysis
+                # Check if any user input might flow into this sink
                 for user_input in user_inputs:
-                    # Check if user input appears before the sink and might flow into it
+                    # Check if user input appears before the sink (potential data flow)
                     if user_input['end'] < sink_start:
-                        # Simple check: see if user_input variable name appears in sink arguments
                         # Extract variable name from user input source
                         var_match = re.search(r'(\w+)(?:\.|\[)', user_input['source'])
                         if var_match:
-                            var_name = var_match.group(1)
+                            var_name = var_match.group(1)  # Extract variable name
+                            # Check if this variable appears in the sink context
                             if var_name in sink_context:
+                                # Potential XSS vulnerability found
                                 vulnerabilities.append({
                                     'type': 'POTENTIAL_XSS',
                                     'severity': 'HIGH',
                                     'description': f'User input from {user_input["source"]} flows into XSS sink {sink}',
                                     'location': f'XSS sink: {sink}',
-                                    'context': sink_context[:100],
+                                    'context': sink_context[:100],  # First 100 chars for context
                                     'recommendation': 'Validate and sanitize user input before using in DOM'
                                 })
         
-        # Also check for direct assignment to dangerous properties
+        # Check for direct assignments to dangerous DOM properties
         dangerous_assignments = [
-            (r'\.innerHTML\s*=', 'DIRECT_INNERHTML_ASSIGNMENT'),
-            (r'\.outerHTML\s*=', 'DIRECT_OUTERHTML_ASSIGNMENT'),
-            (r'\.src\s*=', 'DIRECT_SRC_ASSIGNMENT'),
-            (r'\.href\s*=', 'DIRECT_HREF_ASSIGNMENT'),
+            (r'\.innerHTML\s*=', 'DIRECT_INNERHTML_ASSIGNMENT'),  # innerHTML assignment
+            (r'\.outerHTML\s*=', 'DIRECT_OUTERHTML_ASSIGNMENT'),  # outerHTML assignment
+            (r'\.src\s*=', 'DIRECT_SRC_ASSIGNMENT'),  # src attribute assignment
+            (r'\.href\s*=', 'DIRECT_HREF_ASSIGNMENT'),  # href attribute assignment
         ]
         
         for pattern, vuln_type in dangerous_assignments:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
-                # Get context
-                start = max(0, match.start() - 50)
-                end = min(len(js_code), match.end() + 50)
-                context = js_code[start:end]
+                # Extract context around the assignment
+                start_pos = max(0, match.start() - 50)
+                end_pos = min(len(js_code), match.end() + 50)
+                context = js_code[start_pos:end_pos]
                 
                 vulnerabilities.append({
                     'type': vuln_type,
@@ -435,7 +452,7 @@ class JavaScriptAnalyzer:
     
     def _detect_data_exfiltration(self, js_code: str) -> List[Dict[str, Any]]:
         """
-        Detect data exfiltration patterns
+        Detect data exfiltration patterns in JavaScript code
         
         Args:
             js_code: Cleaned JavaScript code
@@ -443,81 +460,78 @@ class JavaScriptAnalyzer:
         Returns:
             List of data exfiltration vulnerabilities
         """
-        vulnerabilities = []
+        vulnerabilities = []  # Store exfiltration vulnerabilities
         
-        # Check for sensitive data collection
+        # Patterns for sensitive data collection
         sensitive_data_patterns = [
-            (r'document\.cookie', 'COOKIE_COLLECTION'),
-            (r'localStorage\.getItem', 'LOCALSTORAGE_COLLECTION'),
-            (r'sessionStorage\.getItem', 'SESSIONSTORAGE_COLLECTION'),
-            (r'\.value', 'FORM_DATA_COLLECTION'),
-            (r'\.textContent', 'TEXT_CONTENT_COLLECTION'),
-            (r'\.innerText', 'INNER_TEXT_COLLECTION'),
+            (r'document\.cookie', 'COOKIE_COLLECTION'),  # Cookie access
+            (r'localStorage\.getItem', 'LOCALSTORAGE_COLLECTION'),  # Local storage
+            (r'sessionStorage\.getItem', 'SESSIONSTORAGE_COLLECTION'),  # Session storage
+            (r'\.value', 'FORM_DATA_COLLECTION'),  # Form field values
+            (r'\.textContent', 'TEXT_CONTENT_COLLECTION'),  # Text content
+            (r'\.innerText', 'INNER_TEXT_COLLECTION'),  # Inner text
         ]
         
-        # Check for network requests with suspicious patterns
+        # Patterns for network communication
         network_patterns = [
-            (r'XMLHttpRequest', 'XMLHTTPREQUEST'),
-            (r'fetch\s*\(', 'FETCH_API'),
-            (r'new\s+WebSocket', 'WEBSOCKET'),
-            (r'navigator\.sendBeacon', 'BEACON_API'),
+            (r'XMLHttpRequest', 'XMLHTTPREQUEST'),  # XHR requests
+            (r'fetch\s*\(', 'FETCH_API'),  # Fetch API
+            (r'new\s+WebSocket', 'WEBSOCKET'),  # WebSocket connections
+            (r'navigator\.sendBeacon', 'BEACON_API'),  # Beacon API
         ]
         
-        # Combine sensitive data patterns with network requests
-        # This is a simplified taint analysis
-        
-        # First, find all sensitive data accesses
+        # Find all sensitive data accesses in the code
         sensitive_accesses = []
         for pattern, data_type in sensitive_data_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
                 sensitive_accesses.append({
                     'type': data_type,
-                    'match': match.group(0),
-                    'start': match.start(),
-                    'end': match.end()
+                    'match': match.group(0),  # Matched pattern
+                    'start': match.start(),  # Start position
+                    'end': match.end()  # End position
                 })
         
-        # Then, find all network requests
+        # Find all network requests in the code
         network_requests = []
         for pattern, request_type in network_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
                 network_requests.append({
                     'type': request_type,
-                    'match': match.group(0),
-                    'start': match.start(),
-                    'end': match.end()
+                    'match': match.group(0),  # Matched pattern
+                    'start': match.start(),  # Start position
+                    'end': match.end()  # End position
                 })
         
-        # Look for correlations (simplified)
+        # Perform simplified taint analysis to find data exfiltration
         for network_req in network_requests:
             for sensitive_data in sensitive_accesses:
-                # Check if sensitive data access happens before network request
-                # and they're reasonably close (simplified data flow)
+                # Check if sensitive data is accessed before network request
                 if sensitive_data['end'] < network_req['start']:
-                    # Look for variable names that might connect them
-                    # Extract context around each
+                    # Extract context around both patterns
                     sensitive_context = js_code[max(0, sensitive_data['start']-30):sensitive_data['end']+30]
                     network_context = js_code[max(0, network_req['start']-30):network_req['end']+30]
                     
-                    # Check for common variable names (simplified)
-                    var_pattern = r'\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b'
+                    # Extract variable names from both contexts
+                    var_pattern = r'\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b'  # JavaScript variable pattern
                     sensitive_vars = set(re.findall(var_pattern, sensitive_context))
                     network_vars = set(re.findall(var_pattern, network_context))
                     
+                    # Find common variables between sensitive access and network request
                     common_vars = sensitive_vars.intersection(network_vars)
                     if common_vars:
+                        # Potential data exfiltration detected
                         vulnerabilities.append({
                             'type': 'POTENTIAL_DATA_EXFILTRATION',
                             'severity': 'HIGH',
                             'description': f'{sensitive_data["type"]} data may be sent via {network_req["type"]}',
                             'location': f'Network request: {network_req["match"]}',
-                            'common_variables': list(common_vars),
+                            'common_variables': list(common_vars),  # Shared variables
                             'recommendation': 'Review data collection and transmission'
                         })
         
-        # Also check for direct image-based exfiltration
+        # Check for direct image-based exfiltration (common technique)
         image_exfil_pattern = r'new\s+Image\(\)\.src\s*=\s*[^;]+document\.cookie'
         if re.search(image_exfil_pattern, js_code, re.IGNORECASE):
             vulnerabilities.append({
@@ -532,7 +546,7 @@ class JavaScriptAnalyzer:
     
     def _detect_obfuscation(self, js_code: str) -> List[Dict[str, Any]]:
         """
-        Detect obfuscated JavaScript code
+        Detect obfuscated JavaScript code patterns
         
         Args:
             js_code: Cleaned JavaScript code
@@ -540,16 +554,16 @@ class JavaScriptAnalyzer:
         Returns:
             List of obfuscation patterns found
         """
-        suspicious_patterns = []
+        suspicious_patterns = []  # Store obfuscation patterns
         
-        # Check for each obfuscation pattern
+        # Check for predefined obfuscation patterns
         for pattern, pattern_type in self.obfuscation_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE | re.DOTALL)
             for match in matches:
-                # Get context
-                start = max(0, match.start() - 30)
-                end = min(len(js_code), match.end() + 30)
-                context = js_code[start:end]
+                # Extract context around the match
+                start_pos = max(0, match.start() - 30)
+                end_pos = min(len(js_code), match.end() + 30)
+                context = js_code[start_pos:end_pos]
                 
                 suspicious_patterns.append({
                     'type': pattern_type,
@@ -560,10 +574,10 @@ class JavaScriptAnalyzer:
                     'recommendation': 'Review code for malicious intent'
                 })
         
-        # Check for excessive string concatenation (common in obfuscation)
-        concat_pattern = r'["\'][^"\']*["\']\s*\+\s*["\'][^"\']*["\']'
+        # Check for excessive string concatenation (common obfuscation technique)
+        concat_pattern = r'["\'][^"\']*["\']\s*\+\s*["\'][^"\']*["\']'  # String concatenation
         concat_matches = list(re.finditer(concat_pattern, js_code))
-        if len(concat_matches) > 5:  # More than 5 string concatenations
+        if len(concat_matches) > 5:  # Threshold: more than 5 concatenations
             suspicious_patterns.append({
                 'type': 'EXCESSIVE_STRING_CONCATENATION',
                 'severity': 'LOW',
@@ -573,13 +587,12 @@ class JavaScriptAnalyzer:
                 'recommendation': 'Consider if this is legitimate or obfuscated code'
             })
         
-        # Check for encoded strings (base64, hex, etc.)
-        # Base64 detection
+        # Check for base64 encoded strings
         base64_matches = self.regex_patterns['base64_pattern'].findall(js_code)
-        if len(base64_matches) > 3:  # More than 3 base64 strings
-            # Check if they're being decoded
+        if len(base64_matches) > 3:  # Threshold: more than 3 base64 strings
+            # Check if base64 strings are being decoded
             decoded = False
-            for match in base64_matches[:3]:  # Check first 3
+            for match in base64_matches[:3]:  # Check first 3 matches
                 if f'atob("{match}")' in js_code or f"atob('{match}')" in js_code:
                     decoded = True
                     break
@@ -598,7 +611,7 @@ class JavaScriptAnalyzer:
     
     def _extract_external_resources(self, js_code: str) -> List[str]:
         """
-        Extract external resources loaded by JavaScript
+        Extract external resources loaded by JavaScript code
         
         Args:
             js_code: Cleaned JavaScript code
@@ -606,43 +619,42 @@ class JavaScriptAnalyzer:
         Returns:
             List of external resource URLs
         """
-        resources = []
+        resources = []  # Store external resource URLs
         
-        # Find URLs in strings
+        # Find URLs in the JavaScript code
         url_matches = self.regex_patterns['url_pattern'].findall(js_code)
         for url in url_matches:
-            # Filter out common false positives
-            if '://' in url and len(url) > 10:
-                # Check if it's likely a resource URL
+            # Filter out likely resource URLs
+            if '://' in url and len(url) > 10:  # Basic URL validation
+                # Check for common resource file extensions
                 if any(ext in url.lower() for ext in ['.js', '.css', '.png', '.jpg', '.gif', '.ico']):
                     resources.append(url)
-                # Also include API endpoints
+                # Check for API endpoints
                 elif '/api/' in url or '/ajax/' in url:
                     resources.append(url)
         
-        # Find dynamic script loading
+        # Find dynamic script loading patterns
         script_patterns = [
-            r'document\.createElement\s*\(\s*["\']script["\']\s*\)',
-            r'new\s+Script\(\)',
-            r'\.src\s*=\s*["\'][^"\']+\.js',
+            r'document\.createElement\s*\(\s*["\']script["\']\s*\)',  # createElement('script')
+            r'new\s+Script\(\)',  # new Script()
+            r'\.src\s*=\s*["\'][^"\']+\.js',  # .src = "...js"
         ]
         
         for pattern in script_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
-                # Extract URL from assignment
+                # Extract context to find the URL
                 context = js_code[max(0, match.start()-100):match.end()+100]
-                # Look for URL assignment
                 url_match = self.regex_patterns['url_pattern'].search(context)
                 if url_match:
-                    resources.append(url_match.group(0))
+                    resources.append(url_match.group(0))  # Add found URL
         
-        # Deduplicate and return
+        # Return unique resources only
         return list(set(resources))
     
     def _analyze_dom_manipulations(self, js_code: str) -> List[Dict[str, Any]]:
         """
-        Analyze DOM manipulation patterns
+        Analyze DOM manipulation patterns in JavaScript
         
         Args:
             js_code: Cleaned JavaScript code
@@ -650,49 +662,49 @@ class JavaScriptAnalyzer:
         Returns:
             List of DOM manipulation operations
         """
-        dom_operations = []
+        dom_operations = []  # Store DOM operations
         
-        # DOM query methods
+        # DOM query methods for finding elements
         query_methods = [
-            ('getElementById', 'ID_QUERY'),
-            ('getElementsByClassName', 'CLASS_QUERY'),
-            ('getElementsByTagName', 'TAG_QUERY'),
-            ('querySelector', 'CSS_QUERY'),
-            ('querySelectorAll', 'CSS_QUERY_ALL'),
+            ('getElementById', 'ID_QUERY'),  # Get element by ID
+            ('getElementsByClassName', 'CLASS_QUERY'),  # Get elements by class
+            ('getElementsByTagName', 'TAG_QUERY'),  # Get elements by tag name
+            ('querySelector', 'CSS_QUERY'),  # CSS selector (single)
+            ('querySelectorAll', 'CSS_QUERY_ALL'),  # CSS selector (all)
         ]
         
         for method, operation_type in query_methods:
-            pattern = fr'document\.{re.escape(method)}\s*\([^)]*\)'
+            pattern = fr'document\.{re.escape(method)}\s*\([^)]*\)'  # Pattern for method call
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
                 dom_operations.append({
                     'type': operation_type,
-                    'method': method,
-                    'context': match.group(0),
-                    'location': f'DOM query: {method}'
+                    'method': method,  # Method name
+                    'context': match.group(0),  # Full method call
+                    'location': f'DOM query: {method}'  # Location description
                 })
         
-        # DOM modification methods
+        # DOM modification methods for changing elements
         modification_methods = [
-            ('appendChild', 'APPEND_ELEMENT'),
-            ('insertBefore', 'INSERT_ELEMENT'),
-            ('removeChild', 'REMOVE_ELEMENT'),
-            ('replaceChild', 'REPLACE_ELEMENT'),
-            ('setAttribute', 'SET_ATTRIBUTE'),
-            ('removeAttribute', 'REMOVE_ATTRIBUTE'),
-            ('addEventListener', 'ADD_EVENT_LISTENER'),
-            ('removeEventListener', 'REMOVE_EVENT_LISTENER'),
+            ('appendChild', 'APPEND_ELEMENT'),  # Append child element
+            ('insertBefore', 'INSERT_ELEMENT'),  # Insert element before
+            ('removeChild', 'REMOVE_ELEMENT'),  # Remove child element
+            ('replaceChild', 'REPLACE_ELEMENT'),  # Replace child element
+            ('setAttribute', 'SET_ATTRIBUTE'),  # Set element attribute
+            ('removeAttribute', 'REMOVE_ATTRIBUTE'),  # Remove element attribute
+            ('addEventListener', 'ADD_EVENT_LISTENER'),  # Add event listener
+            ('removeEventListener', 'REMOVE_EVENT_LISTENER'),  # Remove event listener
         ]
         
         for method, operation_type in modification_methods:
-            pattern = fr'\.{re.escape(method)}\s*\([^)]*\)'
+            pattern = fr'\.{re.escape(method)}\s*\([^)]*\)'  # Pattern for method call
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
                 dom_operations.append({
                     'type': operation_type,
-                    'method': method,
-                    'context': match.group(0),
-                    'location': f'DOM modification: {method}'
+                    'method': method,  # Method name
+                    'context': match.group(0),  # Full method call
+                    'location': f'DOM modification: {method}'  # Location description
                 })
         
         return dom_operations
@@ -705,46 +717,46 @@ class JavaScriptAnalyzer:
             js_code: Cleaned JavaScript code
             
         Returns:
-            List of event listeners
+            List of event listeners with details
         """
-        event_listeners = []
+        event_listeners = []  # Store event listeners
         
-        # Pattern for addEventListener
+        # Pattern for addEventListener method calls
         pattern = r'\.addEventListener\s*\(\s*["\']([^"\']+)["\'][^)]*\)'
         matches = re.finditer(pattern, js_code, re.IGNORECASE)
         
         for match in matches:
-            event_type = match.group(1)
-            # Get some context
-            start = max(0, match.start() - 50)
-            end = min(len(js_code), match.end() + 50)
-            context = js_code[start:end]
+            event_type = match.group(1)  # Extract event type (click, load, etc.)
+            # Extract context around the match
+            start_pos = max(0, match.start() - 50)
+            end_pos = min(len(js_code), match.end() + 50)
+            context = js_code[start_pos:end_pos]
             
             event_listeners.append({
-                'event_type': event_type,
-                'context': context,
-                'method': 'addEventListener'
+                'event_type': event_type,  # Type of event
+                'context': context,  # Surrounding code
+                'method': 'addEventListener'  # Method used
             })
         
         # Also check for inline event handlers (onclick, onload, etc.)
-        inline_pattern = r'on(\w+)\s*=\s*[^;\n]+'
+        inline_pattern = r'on(\w+)\s*=\s*[^;\n]+'  # Pattern for onEvent=...
         matches = re.finditer(inline_pattern, js_code, re.IGNORECASE)
         
         for match in matches:
-            event_type = match.group(1)
-            context = match.group(0)
+            event_type = match.group(1)  # Extract event type from "on" prefix
+            context = match.group(0)  # Full inline handler assignment
             
             event_listeners.append({
-                'event_type': event_type,
-                'context': context,
-                'method': 'inline_handler'
+                'event_type': event_type,  # Type of event
+                'context': context,  # Full assignment
+                'method': 'inline_handler'  # Method used (inline)
             })
         
         return event_listeners
     
     def _detect_encoded_strings(self, js_code: str) -> List[Dict[str, Any]]:
         """
-        Detect encoded strings in JavaScript
+        Detect encoded strings in JavaScript code
         
         Args:
             js_code: Cleaned JavaScript code
@@ -752,47 +764,47 @@ class JavaScriptAnalyzer:
         Returns:
             List of encoded strings found
         """
-        encoded_strings = []
+        encoded_strings = []  # Store encoded string patterns
         
-        # Check for hex escapes
+        # Check for hexadecimal escape sequences (\xXX)
         hex_matches = self.regex_patterns['hex_string'].findall(js_code)
         if hex_matches:
             encoded_strings.append({
                 'type': 'HEX_ESCAPE',
-                'count': len(hex_matches),
+                'count': len(hex_matches),  # Number of occurrences
                 'examples': hex_matches[:3],  # First 3 examples
                 'description': 'Hexadecimal escape sequences found'
             })
         
-        # Check for unicode escapes
+        # Check for Unicode escape sequences (\uXXXX)
         unicode_matches = self.regex_patterns['unicode_escape'].findall(js_code)
         if unicode_matches:
             encoded_strings.append({
                 'type': 'UNICODE_ESCAPE',
-                'count': len(unicode_matches),
-                'examples': unicode_matches[:3],
+                'count': len(unicode_matches),  # Number of occurrences
+                'examples': unicode_matches[:3],  # First 3 examples
                 'description': 'Unicode escape sequences found'
             })
         
-        # Check for String.fromCharCode usage
+        # Check for String.fromCharCode usage (character code construction)
         charcode_pattern = r'String\.fromCharCode\s*\([^)]+\)'
         charcode_matches = re.findall(charcode_pattern, js_code, re.IGNORECASE)
         if charcode_matches:
             encoded_strings.append({
                 'type': 'CHARCODE_CONSTRUCTION',
-                'count': len(charcode_matches),
-                'examples': charcode_matches[:3],
+                'count': len(charcode_matches),  # Number of occurrences
+                'examples': charcode_matches[:3],  # First 3 examples
                 'description': 'String construction from character codes'
             })
         
-        # Check for atob (base64 decoding)
+        # Check for atob() function calls (base64 decoding)
         atob_pattern = r'atob\s*\(\s*["\'][^"\']+["\']\s*\)'
         atob_matches = re.findall(atob_pattern, js_code, re.IGNORECASE)
         if atob_matches:
             encoded_strings.append({
                 'type': 'BASE64_DECODING',
-                'count': len(atob_matches),
-                'examples': atob_matches[:3],
+                'count': len(atob_matches),  # Number of occurrences
+                'examples': atob_matches[:3],  # First 3 examples
                 'description': 'Base64 decoding operations'
             })
         
@@ -800,51 +812,51 @@ class JavaScriptAnalyzer:
     
     def _extract_api_calls(self, js_code: str) -> List[Dict[str, Any]]:
         """
-        Extract API calls from JavaScript
+        Extract API calls from JavaScript code
         
         Args:
             js_code: Cleaned JavaScript code
             
         Returns:
-            List of API calls
+            List of API call patterns
         """
-        api_calls = []
+        api_calls = []  # Store API call patterns
         
-        # Common API patterns
+        # Common API calling patterns
         api_patterns = [
-            (r'fetch\s*\(\s*["\'][^"\']+["\']', 'FETCH_API'),
-            (r'\.ajax\s*\(', 'JQUERY_AJAX'),
-            (r'\.getJSON\s*\(', 'JQUERY_GETJSON'),
-            (r'\.post\s*\(', 'JQUERY_POST'),
-            (r'XMLHttpRequest', 'XMLHTTPREQUEST'),
-            (r'\.load\s*\(', 'JQUERY_LOAD'),
-            (r'axios\.', 'AXIOS'),
+            (r'fetch\s*\(\s*["\'][^"\']+["\']', 'FETCH_API'),  # Fetch API calls
+            (r'\.ajax\s*\(', 'JQUERY_AJAX'),  # jQuery AJAX
+            (r'\.getJSON\s*\(', 'JQUERY_GETJSON'),  # jQuery getJSON
+            (r'\.post\s*\(', 'JQUERY_POST'),  # jQuery post
+            (r'XMLHttpRequest', 'XMLHTTPREQUEST'),  # XMLHttpRequest
+            (r'\.load\s*\(', 'JQUERY_LOAD'),  # jQuery load
+            (r'axios\.', 'AXIOS'),  # Axios library
         ]
         
         for pattern, api_type in api_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
-                # Get context
-                start = max(0, match.start() - 50)
-                end = min(len(js_code), match.end() + 50)
-                context = js_code[start:end]
+                # Extract context around the API call
+                start_pos = max(0, match.start() - 50)
+                end_pos = min(len(js_code), match.end() + 50)
+                context = js_code[start_pos:end_pos]
                 
-                # Try to extract URL
+                # Try to extract URL from the context
                 url_match = self.regex_patterns['url_pattern'].search(context)
-                url = url_match.group(0) if url_match else 'Unknown'
+                url = url_match.group(0) if url_match else 'Unknown'  # URL or Unknown
                 
                 api_calls.append({
-                    'type': api_type,
-                    'context': context,
-                    'url': url,
-                    'location': f'API call: {api_type}'
+                    'type': api_type,  # Type of API call
+                    'context': context,  # Surrounding code
+                    'url': url,  # Extracted URL
+                    'location': f'API call: {api_type}'  # Location description
                 })
         
         return api_calls
     
     def _detect_cookie_access(self, js_code: str) -> List[str]:
         """
-        Detect cookie access in JavaScript
+        Detect cookie access in JavaScript code
         
         Args:
             js_code: Cleaned JavaScript code
@@ -852,25 +864,26 @@ class JavaScriptAnalyzer:
         Returns:
             List of cookie access patterns
         """
-        cookie_accesses = []
+        cookie_accesses = []  # Store cookie access patterns
         
-        # Direct cookie access
+        # Direct cookie access via document.cookie
         if 'document.cookie' in js_code:
             cookie_accesses.append('document.cookie')
         
-        # Cookie manipulation libraries/patterns
+        # Patterns for cookie manipulation libraries
         cookie_patterns = [
-            r'js-cookie',
-            r'Cookies\.',
-            r'cookie\.',
-            r'\.cookie\s*=',
-            r'\.cookie\s*[+\-*/]',
+            r'js-cookie',  # js-cookie library
+            r'Cookies\.',  # Cookies object
+            r'cookie\.',  # cookie object
+            r'\.cookie\s*=',  # Cookie assignment
+            r'\.cookie\s*[+\-*/]',  # Cookie manipulation
         ]
         
         for pattern in cookie_patterns:
             if re.search(pattern, js_code, re.IGNORECASE):
-                cookie_accesses.append(pattern)
+                cookie_accesses.append(pattern)  # Add pattern
         
+        # Return unique patterns only
         return list(set(cookie_accesses))
     
     def _detect_localstorage_usage(self, js_code: str) -> List[Dict[str, Any]]:
@@ -883,68 +896,70 @@ class JavaScriptAnalyzer:
         Returns:
             List of storage operations
         """
-        storage_ops = []
+        storage_ops = []  # Store storage operations
         
+        # Storage operation patterns
         storage_patterns = [
-            (r'localStorage\.getItem', 'LOCALSTORAGE_GET'),
-            (r'localStorage\.setItem', 'LOCALSTORAGE_SET'),
-            (r'localStorage\.removeItem', 'LOCALSTORAGE_REMOVE'),
-            (r'localStorage\.clear', 'LOCALSTORAGE_CLEAR'),
-            (r'sessionStorage\.getItem', 'SESSIONSTORAGE_GET'),
-            (r'sessionStorage\.setItem', 'SESSIONSTORAGE_SET'),
-            (r'sessionStorage\.removeItem', 'SESSIONSTORAGE_REMOVE'),
-            (r'sessionStorage\.clear', 'SESSIONSTORAGE_CLEAR'),
+            (r'localStorage\.getItem', 'LOCALSTORAGE_GET'),  # Get from localStorage
+            (r'localStorage\.setItem', 'LOCALSTORAGE_SET'),  # Set to localStorage
+            (r'localStorage\.removeItem', 'LOCALSTORAGE_REMOVE'),  # Remove from localStorage
+            (r'localStorage\.clear', 'LOCALSTORAGE_CLEAR'),  # Clear localStorage
+            (r'sessionStorage\.getItem', 'SESSIONSTORAGE_GET'),  # Get from sessionStorage
+            (r'sessionStorage\.setItem', 'SESSIONSTORAGE_SET'),  # Set to sessionStorage
+            (r'sessionStorage\.removeItem', 'SESSIONSTORAGE_REMOVE'),  # Remove from sessionStorage
+            (r'sessionStorage\.clear', 'SESSIONSTORAGE_CLEAR'),  # Clear sessionStorage
         ]
         
         for pattern, op_type in storage_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
-                # Get context
-                start = max(0, match.start() - 50)
-                end = min(len(js_code), match.end() + 50)
-                context = js_code[start:end]
+                # Extract context around storage operation
+                start_pos = max(0, match.start() - 50)
+                end_pos = min(len(js_code), match.end() + 50)
+                context = js_code[start_pos:end_pos]
                 
                 storage_ops.append({
-                    'type': op_type,
-                    'context': context,
-                    'location': f'Storage operation: {op_type}'
+                    'type': op_type,  # Operation type
+                    'context': context,  # Surrounding code
+                    'location': f'Storage operation: {op_type}'  # Location description
                 })
         
         return storage_ops
     
     def _detect_eval_calls(self, js_code: str) -> List[Dict[str, Any]]:
         """
-        Detect eval and similar function calls
+        Detect eval and similar dynamic code execution calls
         
         Args:
             js_code: Cleaned JavaScript code
             
         Returns:
-            List of eval calls
+            List of eval-like function calls
         """
-        eval_calls = []
+        eval_calls = []  # Store eval calls
         
+        # Patterns for dynamic code execution
         eval_patterns = [
-            (r'\beval\s*\([^)]*\)', 'EVAL_DIRECT'),
-            (r'\bFunction\s*\([^)]*\)', 'FUNCTION_CONSTRUCTOR'),
-            (r'setTimeout\s*\(\s*["\'][^"\']+["\']', 'SETTIMEOUT_STRING'),
-            (r'setInterval\s*\(\s*["\'][^"\']+["\']', 'SETINTERVAL_STRING'),
-            (r'execScript\s*\([^)]*\)', 'EXECSCRIPT'),
+            (r'\beval\s*\([^)]*\)', 'EVAL_DIRECT'),  # Direct eval()
+            (r'\bFunction\s*\([^)]*\)', 'FUNCTION_CONSTRUCTOR'),  # Function constructor
+            (r'setTimeout\s*\(\s*["\'][^"\']+["\']', 'SETTIMEOUT_STRING'),  # setTimeout with string
+            (r'setInterval\s*\(\s*["\'][^"\']+["\']', 'SETINTERVAL_STRING'),  # setInterval with string
+            (r'execScript\s*\([^)]*\)', 'EXECSCRIPT'),  # execScript()
         ]
         
         for pattern, eval_type in eval_patterns:
             matches = re.finditer(pattern, js_code, re.IGNORECASE)
             for match in matches:
-                # Get context
-                start = max(0, match.start() - 50)
-                end = min(len(js_code), match.end() + 50)
-                context = js_code[start:end]
+                # Extract context around eval call
+                start_pos = max(0, match.start() - 50)
+                end_pos = min(len(js_code), match.end() + 50)
+                context = js_code[start_pos:end_pos]
                 
                 eval_calls.append({
-                    'type': eval_type,
-                    'context': context,
-                    'severity': 'HIGH',
-                    'location': f'Dynamic code execution: {eval_type}'
+                    'type': eval_type,  # Type of eval-like call
+                    'context': context,  # Surrounding code
+                    'severity': 'HIGH',  # Severity level
+                    'location': f'Dynamic code execution: {eval_type}'  # Location description
                 })
         
         return eval_calls
@@ -957,26 +972,30 @@ class JavaScriptAnalyzer:
             js_code: Cleaned JavaScript code
             
         Returns:
-            True if code appears minified
+            True if code appears minified based on heuristics
         """
-        # Minified code typically has:
-        # 1. Very long lines
-        # 2. No comments
-        # 3. Removed whitespace
-        # 4. Short variable names
-        
+        # Split code into lines for analysis
         lines = js_code.split('\n')
         
-        # Check average line length
-        avg_line_length = sum(len(line) for line in lines) / max(len(lines), 1)
+        # Calculate average line length (minified code has long lines)
+        if len(lines) > 0:
+            avg_line_length = sum(len(line) for line in lines) / len(lines)
+        else:
+            avg_line_length = 0
         
-        # Check for comments (minified code usually has them removed)
+        # Count comments (minified code typically has comments removed)
         comment_density = js_code.count('//') + js_code.count('/*')
         
-        # Check for whitespace ratio
-        whitespace_ratio = sum(1 for c in js_code if c.isspace()) / max(len(js_code), 1)
+        # Calculate whitespace ratio (minified code has minimal whitespace)
+        if len(js_code) > 0:
+            whitespace_ratio = sum(1 for c in js_code if c.isspace()) / len(js_code)
+        else:
+            whitespace_ratio = 0
         
-        # Heuristic: minified if average line length > 100 and low comment density
+        # Heuristic: Code is likely minified if:
+        # 1. Average line length > 100 characters
+        # 2. Few comments (< 3)
+        # 3. Low whitespace ratio (< 10%)
         return avg_line_length > 100 and comment_density < 3 and whitespace_ratio < 0.1
     
     def _calculate_security_score(self, vulnerabilities: List[Dict[str, Any]]) -> float:
@@ -989,30 +1008,33 @@ class JavaScriptAnalyzer:
         Returns:
             Security score between 0.0 (worst) and 1.0 (best)
         """
+        # If no vulnerabilities, return perfect score
         if not vulnerabilities:
             return 1.0
         
-        # Severity weights
+        # Define weights for different severity levels
         severity_weights = {
-            'CRITICAL': 0.9,
-            'HIGH': 0.7,
-            'MEDIUM': 0.4,
-            'LOW': 0.1,
+            'CRITICAL': 0.9,  # Critical vulnerabilities
+            'HIGH': 0.7,      # High severity
+            'MEDIUM': 0.4,    # Medium severity
+            'LOW': 0.1,       # Low severity
         }
         
-        # Calculate penalty
+        # Calculate total penalty based on vulnerability severity
         penalty = 0.0
         for vuln in vulnerabilities:
-            severity = vuln.get('severity', 'LOW')
-            weight = severity_weights.get(severity, 0.1)
-            penalty += weight
+            severity = vuln.get('severity', 'LOW')  # Default to LOW if not specified
+            weight = severity_weights.get(severity, 0.1)  # Get weight or default
+            penalty += weight  # Add to total penalty
         
-        # Normalize penalty (diminishing returns for multiple vulnerabilities)
+        # Normalize penalty with diminishing returns (multiple vulnerabilities)
+        # Formula prevents single vulnerability from reducing score to 0
         normalized_penalty = min(penalty / (1 + len(vulnerabilities) * 0.3), 1.0)
         
         # Security score is inverse of penalty
         security_score = 1.0 - normalized_penalty
         
+        # Ensure score is within bounds [0.0, 1.0]
         return max(0.0, min(1.0, security_score))
     
     def _calculate_obfuscation_score(self, obfuscation_patterns: List[Dict[str, Any]]) -> float:
@@ -1025,32 +1047,34 @@ class JavaScriptAnalyzer:
         Returns:
             Obfuscation score between 0.0 (no obfuscation) and 1.0 (heavily obfuscated)
         """
+        # If no obfuscation patterns, return 0.0
         if not obfuscation_patterns:
             return 0.0
         
-        # Pattern weights
+        # Define weights for different obfuscation pattern types
         pattern_weights = {
-            'BASE64_EVAL': 0.9,
-            'CHARCODE_OBFUSCATION': 0.8,
-            'HEX_ESCAPE': 0.6,
-            'UNICODE_ESCAPE': 0.6,
-            'ARRAY_OBFUSCATION': 0.7,
-            'BOOLEAN_OBFUSCATION': 0.7,
-            'WINDOW_INDEXING': 0.5,
-            'DOCUMENT_INDEXING': 0.5,
-            'BASE64_DECODING': 0.8,
-            'EXCESSIVE_STRING_CONCATENATION': 0.4,
-            'MINIFIED_CODE': 0.3,
+            'BASE64_EVAL': 0.9,                     # eval(atob(...)) pattern
+            'CHARCODE_OBFUSCATION': 0.8,            # String.fromCharCode
+            'HEX_ESCAPE': 0.6,                      # \xXX escapes
+            'UNICODE_ESCAPE': 0.6,                  # \uXXXX escapes
+            'ARRAY_OBFUSCATION': 0.7,               # []+!+[] patterns
+            'BOOLEAN_OBFUSCATION': 0.7,             # (![]+[]) patterns
+            'WINDOW_INDEXING': 0.5,                 # window['alert']
+            'DOCUMENT_INDEXING': 0.5,               # document['getElementById']
+            'BASE64_DECODING': 0.8,                 # atob() calls
+            'EXCESSIVE_STRING_CONCATENATION': 0.4,  # Many string concatenations
+            'MINIFIED_CODE': 0.3,                   # Minified code detection
         }
         
-        # Calculate score
+        # Calculate total obfuscation score
         score = 0.0
         for pattern in obfuscation_patterns:
-            pattern_type = pattern.get('type', '')
-            weight = pattern_weights.get(pattern_type, 0.3)
-            score += weight
+            pattern_type = pattern.get('type', '')  # Get pattern type
+            weight = pattern_weights.get(pattern_type, 0.3)  # Get weight or default
+            score += weight  # Add to total score
         
-        # Normalize with diminishing returns
+        # Normalize score with diminishing returns
+        # Prevents excessive scoring from many low-weight patterns
         normalized_score = min(score / (1 + len(obfuscation_patterns) * 0.2), 1.0)
         
         return normalized_score
@@ -1060,6 +1084,7 @@ class JavaScriptAnalyzer:
         Get analyzer statistics
         
         Returns:
-            Dictionary of statistics
+            Dictionary of statistics including files analyzed and findings
         """
+        # Return a copy to prevent external modification
         return self.stats.copy()

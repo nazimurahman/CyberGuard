@@ -28,6 +28,11 @@ from pathlib import Path
 import warnings
 from collections import defaultdict
 import random
+import pickle
+import re
+import math
+import urllib.parse
+from collections import Counter
 
 class SecurityDataset(Dataset):
     """
@@ -38,12 +43,6 @@ class SecurityDataset(Dataset):
     - Privacy-preserving transformations
     - Threat label encoding
     - Data integrity verification
-    
-    Architecture:
-    ├── Data Ingestion: Load from secure sources (CVE feeds, WAF logs, etc.)
-    ├── Preprocessing: Clean, normalize, and augment security data
-    ├── Feature Extraction: Convert raw security events to ML features
-    └── Label Encoding: Map security findings to threat categories
     """
     
     def __init__(self, 
@@ -57,16 +56,10 @@ class SecurityDataset(Dataset):
         
         Args:
             data_path: Path to security data (file or directory)
-            feature_dim: Dimension of feature vectors (default: 512)
+            feature_dim: Dimension of feature vectors
             max_sequence_length: Maximum sequence length for transformer models
-            threat_categories: List of threat category names (e.g., ['XSS', 'SQLi'])
+            threat_categories: List of threat category names
             use_encryption: Whether to encrypt sensitive data in memory
-            
-        Why these parameters matter:
-        - feature_dim=512: Standard size for transformer embeddings
-        - max_sequence_length=512: Common limit for transformer models
-        - threat_categories: Enables multi-label classification
-        - use_encryption: Protects sensitive attack patterns in memory
         """
         super().__init__()
         
@@ -98,8 +91,8 @@ class SecurityDataset(Dataset):
             idx: category for category, idx in self.category_to_idx.items()
         }
         
-        # Data storage with optional encryption
-        self.encrypted_data = [] if use_encryption else None
+        # Data storage - fixed initialization error: use_encryption determines storage type
+        self.encrypted_data = []
         self.data_hash = None
         
         # Statistics tracking
@@ -110,12 +103,12 @@ class SecurityDataset(Dataset):
             'data_source': str(data_path)
         }
         
+        # Initialize feature extractor before loading data
+        self._init_feature_extractor()
+        
         # Load and validate data
         self._load_data()
         self._validate_data()
-        
-        # Initialize feature extractor
-        self._init_feature_extractor()
         
     def _load_data(self):
         """
@@ -125,15 +118,8 @@ class SecurityDataset(Dataset):
         - JSON/JSONL: For structured threat intelligence
         - CSV: For WAF logs and security events
         - Parquet: For large-scale security telemetry
-        - PCAP: Network traffic captures (requires additional parsing)
-        
-        Security measures:
-        1. File hash verification for tamper detection
-        2. Schema validation against security standards
-        3. Malicious pattern detection in loaded data
-        4. Rate limiting for remote data sources
         """
-        print(f"🔍 Loading security data from: {self.data_path}")
+        print(f"Loading security data from: {self.data_path}")
         
         # Check if path exists
         if not self.data_path.exists():
@@ -141,18 +127,19 @@ class SecurityDataset(Dataset):
         
         # Calculate data hash for integrity verification
         self.data_hash = self._calculate_data_hash()
-        print(f"📊 Data integrity hash: {self.data_hash[:16]}...")
+        print(f"Data integrity hash: {self.data_hash[:16]}...")
         
         # Determine file type and load accordingly
         if self.data_path.is_file():
-            # Single file
-            if self.data_path.suffix == '.json':
+            # Single file loading based on extension
+            suffix = self.data_path.suffix.lower()
+            if suffix == '.json':
                 self._load_json_data()
-            elif self.data_path.suffix == '.jsonl':
+            elif suffix == '.jsonl':
                 self._load_jsonl_data()
-            elif self.data_path.suffix == '.csv':
+            elif suffix == '.csv':
                 self._load_csv_data()
-            elif self.data_path.suffix == '.parquet':
+            elif suffix == '.parquet':
                 self._load_parquet_data()
             else:
                 raise ValueError(f"Unsupported file format: {self.data_path.suffix}")
@@ -160,16 +147,11 @@ class SecurityDataset(Dataset):
             # Directory - load all supported files
             self._load_directory_data()
         
-        print(f"✅ Loaded {self.stats['total_samples']} security samples")
+        print(f"Loaded {self.stats['total_samples']} security samples")
         
     def _calculate_data_hash(self) -> str:
         """
         Calculate SHA-256 hash of data for integrity verification.
-        
-        This prevents:
-        - Data tampering during training
-        - Poisoning attacks on training data
-        - Version mismatches in security datasets
         
         Returns:
             SHA-256 hash of the data file/directory
@@ -256,7 +238,7 @@ class SecurityDataset(Dataset):
         
         for ext in supported_extensions:
             for file_path in self.data_path.rglob(f'*{ext}'):
-                print(f"  📂 Loading: {file_path.name}")
+                print(f"Loading: {file_path.name}")
                 
                 # Create a temporary dataset instance for this file
                 temp_dataset = SecurityDataset(
@@ -268,19 +250,37 @@ class SecurityDataset(Dataset):
                 )
                 
                 # Merge data from temporary dataset
-                # (Implementation depends on specific merging logic)
                 self._merge_dataset(temp_dataset)
+    
+    def _merge_dataset(self, temp_dataset: 'SecurityDataset'):
+        """
+        Merge data from another dataset into this one.
+        
+        Args:
+            temp_dataset: Temporary dataset to merge
+        """
+        # Merge encrypted data
+        self.encrypted_data.extend(temp_dataset.encrypted_data)
+        
+        # Merge statistics
+        self.stats['total_samples'] += temp_dataset.stats['total_samples']
+        
+        # Merge threat distribution
+        for threat_type, count in temp_dataset.stats['threat_distribution'].items():
+            self.stats['threat_distribution'][threat_type] += count
+        
+        # Update average sequence length
+        n1 = self.stats['total_samples'] - temp_dataset.stats['total_samples']
+        n2 = temp_dataset.stats['total_samples']
+        avg1 = self.stats['avg_sequence_length']
+        avg2 = temp_dataset.stats['avg_sequence_length']
+        
+        if n1 + n2 > 0:
+            self.stats['avg_sequence_length'] = (avg1 * n1 + avg2 * n2) / (n1 + n2)
     
     def _process_sample(self, sample: Dict[str, Any]):
         """
         Process a single security sample.
-        
-        This method:
-        1. Validates the sample structure
-        2. Extracts features
-        3. Encodes threat labels
-        4. Applies security transformations
-        5. Stores in encrypted format if enabled
         
         Args:
             sample: Dictionary containing security event data
@@ -330,16 +330,11 @@ class SecurityDataset(Dataset):
         seq_length = len(features) if hasattr(features, '__len__') else 1
         current_avg = self.stats['avg_sequence_length']
         n = self.stats['total_samples']
-        self.stats['avg_sequence_length'] = (current_avg * (n-1) + seq_length) / n
+        self.stats['avg_sequence_length'] = (current_avg * (n-1) + seq_length) / n if n > 1 else seq_length
     
     def _validate_sample(self, sample: Dict[str, Any]) -> bool:
         """
         Validate a security sample against required schema.
-        
-        Required fields vary by dataset type:
-        - Network traffic: src_ip, dst_ip, protocol, payload
-        - Web requests: method, url, headers, body
-        - Threat intel: cve_id, description, severity, cvss_score
         
         Returns:
             True if sample is valid, False otherwise
@@ -380,28 +375,23 @@ class SecurityDataset(Dataset):
         """Validate timestamp format."""
         try:
             # Try to parse as ISO format
-            datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
-            return True
-        except (ValueError, TypeError):
-            # Try as Unix timestamp
-            try:
-                float(timestamp)
+            if isinstance(timestamp, str):
+                # Handle ISO format with or without timezone
+                timestamp_str = timestamp.replace('Z', '+00:00')
+                datetime.fromisoformat(timestamp_str)
                 return True
-            except (ValueError, TypeError):
+            elif isinstance(timestamp, (int, float)):
+                # Try as Unix timestamp
+                datetime.fromtimestamp(float(timestamp))
+                return True
+            else:
                 return False
+        except (ValueError, TypeError, OverflowError):
+            return False
     
     def _extract_features(self, sample: Dict[str, Any]) -> torch.Tensor:
         """
         Extract features from security sample.
-        
-        This is the core feature engineering method that converts
-        raw security data into numerical features for ML models.
-        
-        Feature types:
-        1. Categorical: Encoded threat types, protocols, etc.
-        2. Numerical: Packet sizes, duration, counts
-        3. Textual: Payload analysis (converted via embeddings)
-        4. Temporal: Time-based patterns and sequences
         
         Args:
             sample: Raw security sample
@@ -409,9 +399,6 @@ class SecurityDataset(Dataset):
         Returns:
             Feature tensor of shape [feature_dim] or [seq_len, feature_dim]
         """
-        # This is a template method - subclasses should override
-        # For the base class, return a simple one-hot encoding of threat types
-        
         # Initialize feature vector
         features = torch.zeros(self.feature_dim)
         
@@ -423,14 +410,14 @@ class SecurityDataset(Dataset):
             for threat_type in threat_types:
                 if threat_type in self.category_to_idx:
                     idx = self.category_to_idx[threat_type]
-                    # Use one-hot or distributed representation
-                    # Here we use a simple one-hot for demonstration
+                    # Use one-hot representation
                     if idx < self.feature_dim:
                         features[idx] = 1.0
         
         # Normalize features
-        if features.norm() > 0:
-            features = features / features.norm()
+        feature_norm = features.norm()
+        if feature_norm > 0:
+            features = features / feature_norm
         
         return features
     
@@ -438,18 +425,11 @@ class SecurityDataset(Dataset):
         """
         Encode threat labels for multi-label classification.
         
-        Returns a binary vector where:
-        - 1 indicates presence of threat category
-        - 0 indicates absence
-        
-        Args:
-            sample: Security sample with threat information
-            
         Returns:
             Label tensor of shape [num_categories]
         """
         # Initialize all zeros
-        labels = torch.zeros(len(self.threat_categories))
+        labels = torch.zeros(len(self.threat_categories), dtype=torch.float32)
         
         # Set to 1 for present threat types
         if 'threat_types' in sample:
@@ -464,13 +444,6 @@ class SecurityDataset(Dataset):
     def _apply_security_transformations(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """
         Apply security-preserving transformations to sample.
-        
-        Transformations include:
-        - IP address anonymization
-        - PII redaction
-        - Data normalization
-        - Feature scaling
-        - Noise addition for differential privacy
         
         Args:
             sample: Original security sample
@@ -514,7 +487,6 @@ class SecurityDataset(Dataset):
         }
         
         for pattern, replacement in patterns.items():
-            import re
             text = re.sub(pattern, replacement, text)
         
         return text
@@ -530,21 +502,16 @@ class SecurityDataset(Dataset):
         """
         Encrypt sensitive sample data.
         
-        Note: In production, use proper cryptographic libraries
-        like cryptography.fernet or similar.
+        Note: In production, use proper cryptographic libraries.
         
         Args:
             sample: Sample data to encrypt
             
         Returns:
-            Encrypted bytes (or sample if encryption disabled)
+            Encrypted bytes
         """
-        if not self.use_encryption:
-            return sample
-        
         # Simple XOR encryption for demonstration
         # WARNING: Not secure for production - use proper encryption
-        import pickle
         pickled_data = pickle.dumps(sample)
         
         # Generate a simple key from data hash
@@ -571,7 +538,6 @@ class SecurityDataset(Dataset):
             key_byte = key[i % len(key)]
             decrypted.append(byte ^ key_byte)
         
-        import pickle
         return pickle.loads(bytes(decrypted))
     
     def _init_feature_extractor(self):
@@ -582,12 +548,12 @@ class SecurityDataset(Dataset):
         # - Tokenizers for payload analysis
         # - Graph feature extractors for network data
         
-        # For now, just a placeholder
+        # Placeholder for feature extractors
         self.feature_extractors = {}
     
     def _validate_data(self):
         """Validate loaded data for consistency and security."""
-        print("🔒 Validating security dataset...")
+        print("Validating security dataset...")
         
         # Check for data poisoning patterns
         self._check_for_poisoning()
@@ -598,7 +564,7 @@ class SecurityDataset(Dataset):
         # Check for bias in data
         self._check_for_bias()
         
-        print("✅ Data validation complete")
+        print("Data validation complete")
     
     def _check_for_poisoning(self):
         """Check for data poisoning attacks."""
@@ -606,7 +572,6 @@ class SecurityDataset(Dataset):
         suspicious_patterns = [
             'eval(', 'exec(', 'system(', 'shell_exec(',
             'union select', "' or '1'='1", '<script>alert(',
-            # Add more patterns based on threat intelligence
         ]
         
         warning_count = 0
@@ -625,7 +590,7 @@ class SecurityDataset(Dataset):
                     break
         
         if warning_count > 0:
-            print(f"⚠️  Found {warning_count} samples with suspicious patterns")
+            print(f"Found {warning_count} samples with suspicious patterns")
     
     def _validate_label_distribution(self):
         """Validate that labels are reasonably distributed."""
@@ -658,8 +623,8 @@ class SecurityDataset(Dataset):
         # - Geographic bias in attack sources
         # - Temporal bias in sampling
         
-        # This is a simplified check
-        print("📊 Checking for data bias...")
+        # Simplified bias check
+        print("Checking for data bias...")
         # In production, implement comprehensive bias detection
     
     def __len__(self) -> int:
@@ -669,11 +634,6 @@ class SecurityDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
         Get a training sample by index.
-        
-        Returns a dictionary with:
-        - 'features': Input features for the model
-        - 'labels': Target labels for training
-        - 'metadata': Additional sample information
         
         Args:
             idx: Sample index
@@ -745,8 +705,6 @@ class SecurityDataset(Dataset):
         """
         Custom collate function for security data.
         
-        Handles variable-length sequences and packs them efficiently.
-        
         Args:
             batch: List of samples
             
@@ -776,8 +734,8 @@ class SecurityDataset(Dataset):
             
             # Create attention mask (1 for real tokens, 0 for padding)
             mask = torch.cat([
-                torch.ones(seq_len),
-                torch.zeros(max_len - seq_len)
+                torch.ones(seq_len, dtype=torch.float32),
+                torch.zeros(max_len - seq_len, dtype=torch.float32)
             ])
             
             padded_features.append(padded)
@@ -807,8 +765,6 @@ class SecurityDataset(Dataset):
         """
         Split dataset into train, validation, and test sets.
         
-        Maintains class distribution across splits.
-        
         Args:
             train_ratio: Proportion for training
             val_ratio: Proportion for validation
@@ -829,7 +785,6 @@ class SecurityDataset(Dataset):
         n_test = n_samples - n_train - n_val
         
         # Create indices for stratified split
-        # Group samples by threat categories for stratified sampling
         category_indices = defaultdict(list)
         
         for idx in range(n_samples):
@@ -885,10 +840,7 @@ class SecurityDataset(Dataset):
         Returns:
             New SecurityDataset with only the specified indices
         """
-        # This creates a new dataset with only the specified samples
-        # In a full implementation, we would copy only the necessary data
-        
-        # For now, return self but with a note about subsetting
+        # Create new dataset instance with same configuration
         subset = SecurityDataset(
             self.data_path,
             self.feature_dim,
@@ -897,12 +849,12 @@ class SecurityDataset(Dataset):
             self.use_encryption
         )
         
-        # Filter data (simplified - in reality would copy only needed data)
+        # Filter data to include only specified indices
         subset.encrypted_data = [self.encrypted_data[i] for i in indices]
         subset.stats['total_samples'] = len(indices)
         
         # Recalculate statistics for subset
-        # (This would need to be implemented based on actual data)
+        # This would need more comprehensive recalculation in production
         
         return subset
     
@@ -924,11 +876,13 @@ class SecurityDataset(Dataset):
         # Calculate label distribution percentages
         total = stats['total_samples']
         if total > 0:
+            threat_dist = {}
             for category, count in stats['threat_distribution'].items():
-                stats['threat_distribution'][category] = {
+                threat_dist[category] = {
                     'count': count,
                     'percentage': count / total * 100
                 }
+            stats['threat_distribution'] = threat_dist
         
         return stats
     
@@ -951,10 +905,9 @@ class SecurityDataset(Dataset):
         }
         
         with open(path, 'wb') as f:
-            import pickle
             pickle.dump(save_data, f)
         
-        print(f"💾 Dataset saved to {path}")
+        print(f"Dataset saved to {path}")
     
     @classmethod
     def load(cls, path: Union[str, Path]) -> 'SecurityDataset':
@@ -962,13 +915,12 @@ class SecurityDataset(Dataset):
         path = Path(path)
         
         with open(path, 'rb') as f:
-            import pickle
             save_data = pickle.load(f)
         
         # Create dataset instance
         config = save_data['config']
         dataset = cls(
-            data_path=path,  # This is just a placeholder
+            data_path=path,  # Placeholder for data path
             feature_dim=config['feature_dim'],
             max_sequence_length=config['max_sequence_length'],
             threat_categories=config['threat_categories'],
@@ -980,7 +932,7 @@ class SecurityDataset(Dataset):
         dataset.stats = save_data['stats']
         dataset.data_hash = config['data_hash']
         
-        print(f"📂 Dataset loaded from {path}")
+        print(f"Dataset loaded from {path}")
         return dataset
 
 
@@ -993,12 +945,6 @@ class ThreatIntelligenceDataset(SecurityDataset):
     - Exploit database entries
     - Threat actor reports
     - Attack pattern definitions (MITRE ATT&CK)
-    
-    Key Features:
-    - Temporal analysis of vulnerability discovery
-    - Severity score regression
-    - Exploit availability prediction
-    - Threat actor attribution
     """
     
     def __init__(self, 
@@ -1055,12 +1001,8 @@ class ThreatIntelligenceDataset(SecurityDataset):
         """
         Extract features from threat intelligence sample.
         
-        Feature engineering for threat intelligence:
-        1. CVE metadata: ID, description, references
-        2. CVSS scores: Base, temporal, environmental
-        3. Exploit information: Availability, weaponization
-        4. Temporal features: Discovery date, patch dates
-        5. Text features: Description embeddings
+        Returns:
+            Feature tensor
         """
         # Start with base features from parent
         features = super()._extract_features(sample)
@@ -1073,7 +1015,7 @@ class ThreatIntelligenceDataset(SecurityDataset):
             cvss_score = sample['cvss_score']
             
             # Normalize CVSS score (0-10 scale to 0-1)
-            normalized_score = min(cvss_score / 10.0, 1.0)
+            normalized_score = min(float(cvss_score) / 10.0, 1.0)
             additional_features.append(normalized_score)
             
             # CVSS vector components if available
@@ -1087,7 +1029,7 @@ class ThreatIntelligenceDataset(SecurityDataset):
             additional_features.append(1.0 if exploit_available else 0.0)
             
             exploit_count = sample.get('exploit_count', 0)
-            additional_features.append(min(exploit_count / 10.0, 1.0))  # Normalize
+            additional_features.append(min(float(exploit_count) / 10.0, 1.0))  # Normalize
         
         # Patch information
         if self.include_patches:
@@ -1095,7 +1037,7 @@ class ThreatIntelligenceDataset(SecurityDataset):
             additional_features.append(1.0 if patch_available else 0.0)
             
             days_to_patch = sample.get('days_to_patch', 365)
-            additional_features.append(min(days_to_patch / 365.0, 1.0))  # Normalize to 1 year
+            additional_features.append(min(float(days_to_patch) / 365.0, 1.0))
         
         # Combine features
         if additional_features:
@@ -1122,8 +1064,6 @@ class ThreatIntelligenceDataset(SecurityDataset):
     def _parse_cvss_vector(self, cvss_vector: str) -> List[float]:
         """
         Parse CVSS vector string into numerical features.
-        
-        Example: "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
         
         Returns:
             List of numerical features encoding CVSS metrics
@@ -1152,41 +1092,6 @@ class ThreatIntelligenceDataset(SecurityDataset):
                     features.append(metric_mappings[metric][value])
         
         return features
-    
-    def _encode_labels(self, sample: Dict[str, Any]) -> torch.Tensor:
-        """
-        Encode labels for threat intelligence.
-        
-        For threat intelligence, we might want to predict:
-        1. Severity level (classification)
-        2. CVSS score (regression)
-        3. Exploit likelihood (probability)
-        4. Patch urgency (ordinal)
-        """
-        # Start with base multi-label encoding
-        labels = super()._encode_labels(sample)
-        
-        # Add regression targets if available
-        regression_targets = []
-        
-        # CVSS score target (normalized 0-1)
-        if 'cvss_score' in sample:
-            cvss_normalized = min(sample['cvss_score'] / 10.0, 1.0)
-            regression_targets.append(cvss_normalized)
-        
-        # Exploit probability target
-        if 'exploit_available' in sample:
-            exploit_prob = 1.0 if sample['exploit_available'] else 0.0
-            regression_targets.append(exploit_prob)
-        
-        # Combine classification and regression labels
-        if regression_targets:
-            regression_tensor = torch.tensor(regression_targets, dtype=torch.float32)
-            # In a full implementation, we might structure this differently
-            # For now, just append to labels
-            labels = torch.cat([labels, regression_tensor])
-        
-        return labels
 
 
 class WebTrafficDataset(SecurityDataset):
@@ -1198,12 +1103,6 @@ class WebTrafficDataset(SecurityDataset):
     - Web application attacks (OWASP Top-10)
     - API security violations
     - Bot traffic patterns
-    
-    Key Features:
-    - Real-time request processing
-    - Payload analysis for injection attacks
-    - Session-based anomaly detection
-    - Rate limiting and DDoS detection
     """
     
     def __init__(self,
@@ -1287,13 +1186,8 @@ class WebTrafficDataset(SecurityDataset):
         """
         Extract features from web traffic sample.
         
-        Feature engineering for web traffic:
-        1. HTTP method encoding (one-hot)
-        2. URL analysis (length, parameters, extensions)
-        3. Header analysis (presence of security headers)
-        4. Payload analysis (attack pattern matching)
-        5. Temporal features (request timing, rate)
-        6. Session features (user behavior patterns)
+        Returns:
+            Feature tensor
         """
         features = []
         
@@ -1371,7 +1265,6 @@ class WebTrafficDataset(SecurityDataset):
         features.append(min(url_length / 1000.0, 1.0))  # Cap at 1000 chars
         
         # Number of parameters
-        import urllib.parse
         parsed = urllib.parse.urlparse(url)
         query_params = urllib.parse.parse_qs(parsed.query)
         num_params = len(query_params)
@@ -1502,9 +1395,8 @@ class WebTrafficDataset(SecurityDataset):
         entropy = self._calculate_entropy(payload)
         features.append(entropy)
         
-        # JSON structure detection (if payload might be JSON)
+        # JSON structure detection
         try:
-            import json
             json.loads(payload)
             features.append(1.0)  # Valid JSON
         except:
@@ -1522,9 +1414,6 @@ class WebTrafficDataset(SecurityDataset):
         """Calculate Shannon entropy of text."""
         if not text:
             return 0.0
-        
-        import math
-        from collections import Counter
         
         # Count character frequencies
         counter = Counter(text)
@@ -1612,18 +1501,15 @@ class WebTrafficDataset(SecurityDataset):
         """Extract session-based features."""
         features = []
         
-        # This would typically require session context
-        # For now, return placeholder features
-        
-        # Placeholder: request count in session (if available)
+        # Request count in session
         request_count = sample.get('session_request_count', 1)
         features.append(min(request_count / 100.0, 1.0))  # Cap at 100 requests
         
-        # Placeholder: session duration (if available)
+        # Session duration
         session_duration = sample.get('session_duration_seconds', 0)
         features.append(min(session_duration / 3600.0, 1.0))  # Cap at 1 hour
         
-        # Placeholder: is new session
+        # Is new session
         is_new_session = sample.get('is_new_session', False)
         features.append(1.0 if is_new_session else 0.0)
         
@@ -1649,33 +1535,13 @@ class WebTrafficDataset(SecurityDataset):
             warnings.warn(f"Unusual HTTP method: {method}")
             # Still accept it, but log warning
         
-        # Validate URL format
-        url = sample.get('url', '')
-        if not self._is_valid_url(url):
-            warnings.warn(f"Invalid URL format: {url}")
-            # Still accept it for analysis
-        
         return True
-    
-    def _is_valid_url(self, url: str) -> bool:
-        """Check if URL has valid format."""
-        import re
-        
-        # Simple URL validation pattern
-        url_pattern = re.compile(
-            r'^(https?://)?'  # http:// or https://
-            r'([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+'  # domain
-            r'[a-zA-Z]{2,}'  # TLD
-            r'(/.*)?$'  # path
-        )
-        
-        return bool(url_pattern.match(url))
 
 
 # Example usage and testing
 if __name__ == "__main__":
     # Create a sample dataset
-    print("🧪 Testing SecurityDataset...")
+    print("Testing SecurityDataset...")
     
     # Create sample data
     sample_data = [
@@ -1709,7 +1575,7 @@ if __name__ == "__main__":
     
     # Save sample data to file
     import tempfile
-    import json
+    import os
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(sample_data, f)
@@ -1717,7 +1583,7 @@ if __name__ == "__main__":
     
     try:
         # Test SecurityDataset
-        print("\n📊 Testing base SecurityDataset...")
+        print("\nTesting base SecurityDataset...")
         dataset = SecurityDataset(temp_file, use_encryption=False)
         print(f"Dataset size: {len(dataset)}")
         print(f"Threat categories: {dataset.threat_categories[:5]}...")
@@ -1729,36 +1595,34 @@ if __name__ == "__main__":
         
         # Test statistics
         stats = dataset.get_statistics()
-        print(f"\n📈 Dataset statistics:")
+        print(f"\nDataset statistics:")
         print(f"  Total samples: {stats['total_samples']}")
         print(f"  Feature dimension: {stats['feature_dimension']}")
-        print(f"  Threat distribution: {dict(list(stats['threat_distribution'].items())[:3])}")
         
         # Test WebTrafficDataset
-        print("\n🌐 Testing WebTrafficDataset...")
+        print("\nTesting WebTrafficDataset...")
         web_dataset = WebTrafficDataset(temp_file, use_encryption=False)
         web_sample = web_dataset[0]
         print(f"Web sample features shape: {web_sample['features'].shape}")
         print(f"Web sample labels shape: {web_sample['labels'].shape}")
         
         # Test split
-        print("\n✂️  Testing dataset split...")
+        print("\nTesting dataset split...")
         train, val, test = dataset.split(train_ratio=0.6, val_ratio=0.2, test_ratio=0.2)
         print(f"Train size: {len(train)}")
         print(f"Val size: {len(val)}")
         print(f"Test size: {len(test)}")
         
         # Test DataLoader
-        print("\n🔄 Testing DataLoader...")
+        print("\nTesting DataLoader...")
         dataloader = dataset.get_dataloader(batch_size=2)
         batch = next(iter(dataloader))
         print(f"Batch features shape: {batch['features'].shape}")
         print(f"Batch labels shape: {batch['labels'].shape}")
         print(f"Batch attention mask shape: {batch['attention_mask'].shape}")
         
-        print("\n✅ All tests passed!")
+        print("\nAll tests passed!")
         
     finally:
         # Clean up
-        import os
         os.unlink(temp_file)

@@ -30,6 +30,9 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 import math
+from safetensors.torch import save_file  # Added missing import
+import onnx  # Added for ONNX export verification
+import onnxruntime as ort  # Added for ONNX runtime validation
 
 
 class LossType(Enum):
@@ -114,6 +117,9 @@ class GQATrainer:
         self.model = model
         self.config = config
         
+        # Initialize logger early for error reporting
+        self.logger = self._setup_logger()
+        
         # Setup device (GPU/CPU)
         self.device = self._setup_device()
         
@@ -130,15 +136,14 @@ class GQATrainer:
         # Setup learning rate scheduler
         self.scheduler = self._setup_scheduler()
         
-        # Setup mixed precision training
-        self.scaler = GradScaler() if config.mixed_precision else None
+        # Setup mixed precision training (only on CUDA)
+        self.scaler = GradScaler() if config.mixed_precision and torch.cuda.is_available() else None
         
         # Setup gradient checkpointing
         if config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
         
-        # Setup logging
-        self.logger = self._setup_logger()
+        # Setup TensorBoard writer
         self.writer = SummaryWriter(log_dir=f"runs/gqa_{time.strftime('%Y%m%d_%H%M%S')}")
         
         # Training state
@@ -158,6 +163,48 @@ class GQATrainer:
         }
         
         self.logger.info(f"GQA Trainer initialized with config: {config}")
+    
+    def _setup_logger(self) -> logging.Logger:
+        """
+        Setup logging configuration
+        
+        Returns:
+            Configured logger instance
+        """
+        # Create logs directory if it doesn't exist
+        log_dir = Path("logs/training")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup logger
+        logger = logging.getLogger("GQATrainer")
+        logger.setLevel(logging.INFO)
+        
+        # Clear existing handlers to avoid duplicate logs
+        if logger.hasHandlers():
+            logger.handlers.clear()
+        
+        # File handler for persistent logs
+        file_handler = logging.FileHandler(
+            log_dir / f"gqa_training_{time.strftime('%Y%m%d_%H%M%S')}.log"
+        )
+        file_handler.setLevel(logging.INFO)
+        
+        # Console handler for real-time output
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        
+        # Formatter for log messages
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        
+        # Add handlers to logger
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+        
+        return logger
         
     def _setup_device(self) -> torch.device:
         """
@@ -180,6 +227,11 @@ class GQATrainer:
         Setup distributed training across multiple GPUs
         Required for training large models on multiple GPUs
         """
+        # Check if CUDA is available for distributed training
+        if not torch.cuda.is_available():
+            self.logger.warning("CUDA not available for distributed training")
+            return
+            
         # Initialize distributed process group
         dist.init_process_group(
             backend='nccl',  # NVIDIA Collective Communications Library
@@ -215,7 +267,8 @@ class GQATrainer:
                 continue  # Skip frozen parameters
             
             # Check parameter name for weight decay exclusion
-            if any(nd in name for nd in ["bias", "LayerNorm.weight", "layer_norm.weight"]):
+            # Fixed: Added layer_norm (without .weight) and .bias check
+            if any(nd in name for nd in ["bias", "LayerNorm", "layer_norm"]):
                 no_decay_params.append(param)
             else:
                 decay_params.append(param)
@@ -239,7 +292,7 @@ class GQATrainer:
                 lr=self.config.learning_rate,
                 betas=(self.config.beta1, self.config.beta2),
                 eps=self.config.eps,
-                weight_decay=self.config.weight_decay
+                # Removed duplicate weight_decay parameter
             )
         elif self.config.optimizer == "adam":
             optimizer = optim.Adam(
@@ -260,12 +313,12 @@ class GQATrainer:
         
         return optimizer
     
-    def _setup_scheduler(self):
+    def _setup_scheduler(self) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
         """
         Setup learning rate scheduler with warmup
         
         Returns:
-            Learning rate scheduler
+            Learning rate scheduler or None
         """
         if self.config.scheduler == "cosine":
             # Cosine annealing with warmup
@@ -294,7 +347,7 @@ class GQATrainer:
         
         return scheduler
     
-    def _create_cosine_scheduler(self):
+    def _create_cosine_scheduler(self) -> optim.lr_scheduler.LambdaLR:
         """
         Create cosine annealing scheduler with warmup
         
@@ -314,7 +367,7 @@ class GQATrainer:
         
         return optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
     
-    def _create_linear_scheduler(self):
+    def _create_linear_scheduler(self) -> optim.lr_scheduler.LambdaLR:
         """
         Create linear decay scheduler with warmup
         
@@ -343,46 +396,12 @@ class GQATrainer:
         if hasattr(self.model, 'gradient_checkpointing_enable'):
             self.model.gradient_checkpointing_enable()
             self.logger.info("Gradient checkpointing enabled")
+        elif hasattr(self.model, 'module') and hasattr(self.model.module, 'gradient_checkpointing_enable'):
+            # Handle DistributedDataParallel wrapped models
+            self.model.module.gradient_checkpointing_enable()
+            self.logger.info("Gradient checkpointing enabled on wrapped model")
         else:
             self.logger.warning("Model does not support gradient checkpointing")
-    
-    def _setup_logger(self) -> logging.Logger:
-        """
-        Setup logging configuration
-        
-        Returns:
-            Configured logger instance
-        """
-        # Create logs directory if it doesn't exist
-        log_dir = Path("logs/training")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Setup logger
-        logger = logging.getLogger("GQATrainer")
-        logger.setLevel(logging.INFO)
-        
-        # File handler for persistent logs
-        file_handler = logging.FileHandler(
-            log_dir / f"gqa_training_{time.strftime('%Y%m%d_%H%M%S')}.log"
-        )
-        file_handler.setLevel(logging.INFO)
-        
-        # Console handler for real-time output
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        
-        # Formatter for log messages
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
-        # Add handlers to logger
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-        
-        return logger
     
     def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """
@@ -422,17 +441,26 @@ class GQATrainer:
         Returns:
             Focal loss tensor
         """
+        # Get number of classes from logits shape
+        num_classes = logits.size(-1)
+        
         # Compute softmax probabilities
         probs = F.softmax(logits, dim=-1)
         
-        # Gather probabilities of true classes
-        class_probs = probs.gather(1, labels.unsqueeze(1)).squeeze(1)
+        # Create one-hot encoded labels
+        labels_one_hot = F.one_hot(labels, num_classes).float()
         
         # Compute focal loss
-        modulating_factor = (1 - class_probs) ** self.config.focal_loss_gamma
-        loss = -modulating_factor * torch.log(class_probs + 1e-8)
+        pt = (probs * labels_one_hot).sum(dim=1) + (1 - probs) * (1 - labels_one_hot).sum(dim=1)
+        modulating_factor = (1 - pt) ** self.config.focal_loss_gamma
         
-        return loss.mean()
+        # Cross entropy loss
+        ce_loss = F.cross_entropy(logits, labels, reduction='none')
+        
+        # Apply focal weighting
+        focal_loss = modulating_factor * ce_loss
+        
+        return focal_loss.mean()
     
     def _label_smoothing_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """
@@ -452,11 +480,11 @@ class GQATrainer:
         smooth_labels = torch.full_like(logits, 
                                        self.config.label_smoothing / (num_classes - 1))
         smooth_labels.scatter_(1, labels.unsqueeze(1), 
-                             1 - self.config.label_smoothing)
+                             1.0 - self.config.label_smoothing)  # Fixed: changed to 1.0
         
-        # Compute KL divergence
+        # Compute negative log likelihood with smoothed labels
         log_probs = F.log_softmax(logits, dim=-1)
-        loss = F.kl_div(log_probs, smooth_labels, reduction='batchmean')
+        loss = -(smooth_labels * log_probs).sum(dim=-1).mean()
         
         return loss
     
@@ -474,10 +502,10 @@ class GQATrainer:
         """
         batch_size = embeddings.size(0)
         
-        # Normalize embeddings
+        # Normalize embeddings to unit vectors
         embeddings = F.normalize(embeddings, p=2, dim=1)
         
-        # Compute similarity matrix
+        # Compute similarity matrix using cosine similarity
         similarity_matrix = torch.matmul(embeddings, embeddings.T)
         
         # Create mask for positive pairs (same class)
@@ -488,11 +516,24 @@ class GQATrainer:
         label_matrix = label_matrix & (~mask)
         
         # Compute positive and negative similarities
-        positive_similarities = similarity_matrix[label_matrix].view(batch_size, -1)
-        negative_similarities = similarity_matrix[~label_matrix].view(batch_size, -1)
+        positive_similarities = similarity_matrix[label_matrix]
+        negative_similarities = similarity_matrix[~label_matrix]
         
-        # Compute contrastive loss
+        # Reshape to ensure proper dimensions
+        if positive_similarities.numel() > 0:
+            positive_similarities = positive_similarities.view(batch_size, -1)
+        else:
+            positive_similarities = torch.zeros(batch_size, 0, device=embeddings.device)
+            
+        if negative_similarities.numel() > 0:
+            negative_similarities = negative_similarities.view(batch_size, -1)
+        else:
+            negative_similarities = torch.zeros(batch_size, 0, device=embeddings.device)
+        
+        # Compute contrastive loss (InfoNCE style)
+        # Positive pairs should have high similarity
         positive_loss = -torch.log(positive_similarities + 1e-8).mean()
+        # Negative pairs should have low similarity
         negative_loss = torch.log(1 + torch.exp(negative_similarities)).mean()
         
         return positive_loss + negative_loss
@@ -515,31 +556,40 @@ class GQATrainer:
         labels = batch['labels'].to(self.device)
         
         # Initialize gradient accumulation
-        loss = 0
-        accuracy = 0
+        loss = 0.0
+        accuracy = 0.0
         
         # Split batch for gradient accumulation
         batch_size = input_ids.size(0)
-        chunk_size = batch_size // self.config.gradient_accumulation_steps
+        chunk_size = max(1, batch_size // self.config.gradient_accumulation_steps)
         
         for i in range(self.config.gradient_accumulation_steps):
             # Get chunk of batch
             start_idx = i * chunk_size
-            end_idx = start_idx + chunk_size if i < self.config.gradient_accumulation_steps - 1 else batch_size
+            end_idx = min(start_idx + chunk_size, batch_size)
             
+            # Skip if chunk is empty
+            if start_idx >= end_idx:
+                continue
+                
             chunk_input = input_ids[start_idx:end_idx]
             chunk_labels = labels[start_idx:end_idx]
             
-            # Forward pass with mixed precision
-            with autocast(enabled=self.config.mixed_precision):
+            # Forward pass with mixed precision if enabled
+            with autocast(enabled=self.config.mixed_precision and torch.cuda.is_available()):
                 outputs = self.model(chunk_input)
+                
+                # Check if model returns threat_logits
+                if 'threat_logits' not in outputs:
+                    raise KeyError("Model must return 'threat_logits' in outputs")
+                    
                 chunk_loss = self.compute_loss(outputs['threat_logits'], chunk_labels)
                 
                 # Scale loss for gradient accumulation
                 chunk_loss = chunk_loss / self.config.gradient_accumulation_steps
             
             # Backward pass with gradient scaling for mixed precision
-            if self.config.mixed_precision:
+            if self.config.mixed_precision and self.scaler is not None:
                 self.scaler.scale(chunk_loss).backward()
             else:
                 chunk_loss.backward()
@@ -554,8 +604,9 @@ class GQATrainer:
                 accuracy += chunk_accuracy / self.config.gradient_accumulation_steps
         
         # Gradient clipping to prevent exploding gradients
+        grad_norm = None
         if self.config.gradient_clip > 0:
-            if self.config.mixed_precision:
+            if self.config.mixed_precision and self.scaler is not None:
                 self.scaler.unscale_(self.optimizer)
             
             # Clip gradients
@@ -563,11 +614,9 @@ class GQATrainer:
                 self.model.parameters(),
                 self.config.gradient_clip
             )
-        else:
-            grad_norm = None
         
         # Optimizer step with gradient scaling for mixed precision
-        if self.config.mixed_precision:
+        if self.config.mixed_precision and self.scaler is not None:
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
@@ -576,7 +625,7 @@ class GQATrainer:
         # Zero gradients
         self.optimizer.zero_grad()
         
-        # Learning rate scheduler step
+        # Learning rate scheduler step (skip for ReduceLROnPlateau)
         if self.scheduler is not None and not isinstance(
             self.scheduler, optim.lr_scheduler.ReduceLROnPlateau
         ):
@@ -613,8 +662,8 @@ class GQATrainer:
         # Set model to evaluation mode
         self.model.eval()
         
-        total_loss = 0
-        total_accuracy = 0
+        total_loss = 0.0
+        total_accuracy = 0.0
         total_samples = 0
         
         # Disable gradient computation for validation
@@ -624,9 +673,14 @@ class GQATrainer:
                 input_ids = batch['input_ids'].to(self.device)
                 labels = batch['labels'].to(self.device)
                 
-                # Forward pass
-                with autocast(enabled=self.config.mixed_precision):
+                # Forward pass with mixed precision if enabled
+                with autocast(enabled=self.config.mixed_precision and torch.cuda.is_available()):
                     outputs = self.model(input_ids)
+                    
+                    # Check if model returns threat_logits
+                    if 'threat_logits' not in outputs:
+                        raise KeyError("Model must return 'threat_logits' in outputs")
+                        
                     loss = self.compute_loss(outputs['threat_logits'], labels)
                 
                 # Compute accuracy
@@ -640,8 +694,8 @@ class GQATrainer:
                 total_samples += batch_size
         
         # Compute average metrics
-        avg_loss = total_loss / total_samples
-        avg_accuracy = total_accuracy / total_samples
+        avg_loss = total_loss / max(1, total_samples)
+        avg_accuracy = total_accuracy / max(1, total_samples)
         
         return {
             'val_loss': avg_loss,
@@ -651,7 +705,7 @@ class GQATrainer:
     def train(self, 
               train_loader: DataLoader, 
               val_loader: DataLoader, 
-              num_epochs: int = None) -> Dict[str, List[float]]:
+              num_epochs: Optional[int] = None) -> Dict[str, List[float]]:
         """
         Main training loop
         
@@ -666,8 +720,8 @@ class GQATrainer:
         # Use config total_steps if epochs not specified
         if num_epochs is None:
             # Calculate epochs based on total steps
-            steps_per_epoch = len(train_loader) // self.config.gradient_accumulation_steps
-            num_epochs = self.config.total_steps // steps_per_epoch
+            steps_per_epoch = max(1, len(train_loader) // self.config.gradient_accumulation_steps)
+            num_epochs = max(1, self.config.total_steps // steps_per_epoch)
         
         self.logger.info(f"Starting training for {num_epochs} epochs")
         self.logger.info(f"Total steps: {self.config.total_steps}")
@@ -680,9 +734,13 @@ class GQATrainer:
             epoch_start_time = time.time()
             
             # Training phase
-            epoch_loss = 0
-            epoch_accuracy = 0
+            epoch_loss = 0.0
+            epoch_accuracy = 0.0
             num_batches = 0
+            
+            # Set sampler epoch for distributed training
+            if self.config.distributed and hasattr(train_loader, 'sampler'):
+                train_loader.sampler.set_epoch(epoch)
             
             for batch_idx, batch in enumerate(train_loader):
                 # Training step
@@ -701,14 +759,14 @@ class GQATrainer:
                 if self.global_step % self.config.save_checkpoint_steps == 0:
                     self.save_checkpoint(f"step_{self.global_step}")
                 
-                # Early stopping check
+                # Early stopping check based on steps
                 if self.global_step >= self.config.total_steps:
                     self.logger.info(f"Reached total steps: {self.config.total_steps}")
                     break
             
             # Compute epoch averages
-            avg_epoch_loss = epoch_loss / num_batches
-            avg_epoch_accuracy = epoch_accuracy / num_batches
+            avg_epoch_loss = epoch_loss / max(1, num_batches)
+            avg_epoch_accuracy = epoch_accuracy / max(1, num_batches)
             
             # Validation phase
             val_metrics = self.validate(val_loader)
@@ -718,29 +776,38 @@ class GQATrainer:
             self.metrics['train_accuracy'].append(avg_epoch_accuracy)
             self.metrics['val_loss'].append(val_metrics['val_loss'])
             self.metrics['val_accuracy'].append(val_metrics['val_accuracy'])
-            self.metrics['learning_rate'].append(metrics['learning_rate'])
+            if num_batches > 0:  # Only add if we have training data
+                self.metrics['learning_rate'].append(metrics.get('learning_rate', self.config.learning_rate))
             
             # Log epoch summary
             epoch_time = time.time() - epoch_start_time
-            self._log_epoch_summary(epoch, avg_epoch_loss, avg_epoch_accuracy, 
+            self._log_epoch_summary(epoch + 1, avg_epoch_loss, avg_epoch_accuracy, 
                                   val_metrics, epoch_time)
             
             # TensorBoard logging
             self._log_to_tensorboard(metrics, val_metrics)
             
-            # Check early stopping
+            # Check early stopping based on validation loss
             if self._check_early_stopping(val_metrics['val_loss']):
-                self.logger.info(f"Early stopping triggered at epoch {epoch}")
+                self.logger.info(f"Early stopping triggered at epoch {epoch + 1}")
                 break
             
             # Learning rate scheduler step (for ReduceLROnPlateau)
             if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
                 self.scheduler.step(val_metrics['val_loss'])
+            
+            # Check if we've reached total steps
+            if self.global_step >= self.config.total_steps:
+                self.logger.info(f"Reached total steps: {self.config.total_steps}")
+                break
         
         self.logger.info("Training completed!")
         
         # Save final model
         self.save_checkpoint("final")
+        
+        # Close TensorBoard writer
+        self.writer.close()
         
         return self.metrics
     
@@ -754,7 +821,7 @@ class GQATrainer:
             batch_idx: Current batch index
             total_batches: Total number of batches in epoch
         """
-        progress = (batch_idx + 1) / total_batches * 100
+        progress = (batch_idx + 1) / max(1, total_batches) * 100
         log_msg = (f"Step {self.global_step:6d} | "
                    f"Progress: {progress:5.1f}% | "
                    f"Loss: {metrics['loss']:.4f} | "
@@ -797,15 +864,18 @@ class GQATrainer:
             train_metrics: Training metrics
             val_metrics: Validation metrics
         """
-        # Log scalar metrics
-        self.writer.add_scalar('Loss/Train', train_metrics['loss'], self.global_step)
-        self.writer.add_scalar('Loss/Validation', val_metrics['val_loss'], self.global_step)
-        self.writer.add_scalar('Accuracy/Train', train_metrics['accuracy'], self.global_step)
-        self.writer.add_scalar('Accuracy/Validation', val_metrics['val_accuracy'], self.global_step)
-        self.writer.add_scalar('Learning_Rate', train_metrics['learning_rate'], self.global_step)
-        
-        if 'grad_norm' in train_metrics:
-            self.writer.add_scalar('Gradient_Norm', train_metrics['grad_norm'], self.global_step)
+        try:
+            # Log scalar metrics
+            self.writer.add_scalar('Loss/Train', train_metrics['loss'], self.global_step)
+            self.writer.add_scalar('Loss/Validation', val_metrics['val_loss'], self.global_step)
+            self.writer.add_scalar('Accuracy/Train', train_metrics['accuracy'], self.global_step)
+            self.writer.add_scalar('Accuracy/Validation', val_metrics['val_accuracy'], self.global_step)
+            self.writer.add_scalar('Learning_Rate', train_metrics['learning_rate'], self.global_step)
+            
+            if 'grad_norm' in train_metrics:
+                self.writer.add_scalar('Gradient_Norm', train_metrics['grad_norm'], self.global_step)
+        except Exception as e:
+            self.logger.warning(f"Failed to log to TensorBoard: {e}")
     
     def _check_early_stopping(self, val_loss: float) -> bool:
         """
@@ -848,11 +918,17 @@ class GQATrainer:
         checkpoint_dir = Path(self.config.checkpoint_dir)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Get model state dict (handle DistributedDataParallel)
+        if isinstance(self.model, nn.parallel.DistributedDataParallel):
+            model_state_dict = self.model.module.state_dict()
+        else:
+            model_state_dict = self.model.state_dict()
+        
         # Prepare checkpoint dictionary
         checkpoint = {
             'epoch': self.epoch,
             'global_step': self.global_step,
-            'model_state_dict': self.model.state_dict(),
+            'model_state_dict': model_state_dict,
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'scaler_state_dict': self.scaler.state_dict() if self.scaler else None,
@@ -887,8 +963,11 @@ class GQATrainer:
             # Remove oldest checkpoints
             files_to_remove = checkpoint_files[:-self.config.max_checkpoints]
             for file_path in files_to_remove:
-                file_path.unlink()
-                self.logger.info(f"Removed old checkpoint: {file_path}")
+                try:
+                    file_path.unlink()
+                    self.logger.info(f"Removed old checkpoint: {file_path}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to remove checkpoint {file_path}: {e}")
     
     def load_checkpoint(self, checkpoint_path: str):
         """
@@ -900,7 +979,10 @@ class GQATrainer:
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
         # Load model state
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        if isinstance(self.model, nn.parallel.DistributedDataParallel):
+            self.model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
         
         # Load optimizer state
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -922,7 +1004,7 @@ class GQATrainer:
         self.logger.info(f"Checkpoint loaded from {checkpoint_path}")
         self.logger.info(f"Resuming from epoch {self.epoch}, step {self.global_step}")
     
-    def evaluate(self, test_loader: DataLoader) -> Dict[str, float]:
+    def evaluate(self, test_loader: DataLoader) -> Dict[str, Any]:
         """
         Evaluate model on test set
         
@@ -936,7 +1018,7 @@ class GQATrainer:
         
         all_predictions = []
         all_labels = []
-        total_loss = 0
+        total_loss = 0.0
         total_samples = 0
         
         # Disable gradient computation
@@ -946,9 +1028,14 @@ class GQATrainer:
                 input_ids = batch['input_ids'].to(self.device)
                 labels = batch['labels'].to(self.device)
                 
-                # Forward pass
-                with autocast(enabled=self.config.mixed_precision):
+                # Forward pass with mixed precision if enabled
+                with autocast(enabled=self.config.mixed_precision and torch.cuda.is_available()):
                     outputs = self.model(input_ids)
+                    
+                    # Check if model returns threat_logits
+                    if 'threat_logits' not in outputs:
+                        raise KeyError("Model must return 'threat_logits' in outputs")
+                        
                     loss = self.compute_loss(outputs['threat_logits'], labels)
                 
                 # Get predictions
@@ -962,32 +1049,39 @@ class GQATrainer:
                 total_loss += loss.item() * batch_size
                 total_samples += batch_size
         
-        # Compute metrics
-        avg_loss = total_loss / total_samples
+        # Compute basic metrics
+        avg_loss = total_loss / max(1, total_samples)
         accuracy = np.mean(np.array(all_predictions) == np.array(all_labels))
         
         # Compute additional metrics for threat detection
-        from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
-        
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            all_labels, all_predictions, average='weighted'
-        )
-        
-        # Create confusion matrix
-        conf_matrix = confusion_matrix(all_labels, all_predictions)
-        
-        # Compute threat detection specific metrics
-        threat_metrics = self._compute_threat_detection_metrics(all_labels, all_predictions)
-        
-        return {
-            'test_loss': avg_loss,
-            'test_accuracy': accuracy,
-            'test_precision': precision,
-            'test_recall': recall,
-            'test_f1': f1,
-            'confusion_matrix': conf_matrix,
-            **threat_metrics
-        }
+        try:
+            from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
+            
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                all_labels, all_predictions, average='weighted'
+            )
+            
+            # Create confusion matrix
+            conf_matrix = confusion_matrix(all_labels, all_predictions)
+            
+            # Compute threat detection specific metrics
+            threat_metrics = self._compute_threat_detection_metrics(all_labels, all_predictions)
+            
+            return {
+                'test_loss': avg_loss,
+                'test_accuracy': accuracy,
+                'test_precision': precision,
+                'test_recall': recall,
+                'test_f1': f1,
+                'confusion_matrix': conf_matrix.tolist(),  # Convert to list for JSON serialization
+                **threat_metrics
+            }
+        except ImportError:
+            self.logger.warning("scikit-learn not installed, returning basic metrics only")
+            return {
+                'test_loss': avg_loss,
+                'test_accuracy': accuracy,
+            }
     
     def _compute_threat_detection_metrics(self, labels: List[int], 
                                         predictions: List[int]) -> Dict[str, float]:
@@ -1008,23 +1102,26 @@ class GQATrainer:
         # Threat detection metrics
         metrics = {}
         
+        # Get unique classes
+        unique_classes = np.unique(labels)
+        
         # True Positive Rate (Sensitivity) for each threat class
-        for threat_class in np.unique(labels):
+        for threat_class in unique_classes:
             true_positives = np.sum((labels == threat_class) & (predictions == threat_class))
             actual_positives = np.sum(labels == threat_class)
             
             if actual_positives > 0:
                 tpr = true_positives / actual_positives
-                metrics[f'tpr_class_{threat_class}'] = tpr
+                metrics[f'tpr_class_{threat_class}'] = float(tpr)
         
         # False Positive Rate for each threat class
-        for threat_class in np.unique(labels):
+        for threat_class in unique_classes:
             false_positives = np.sum((labels != threat_class) & (predictions == threat_class))
             actual_negatives = np.sum(labels != threat_class)
             
             if actual_negatives > 0:
                 fpr = false_positives / actual_negatives
-                metrics[f'fpr_class_{threat_class}'] = fpr
+                metrics[f'fpr_class_{threat_class}'] = float(fpr)
         
         # Threat severity weighted accuracy
         # Higher weight for critical threats (assuming class 0-2 are critical)
@@ -1034,17 +1131,17 @@ class GQATrainer:
             2: 1.5,  # Medium severity
         }
         
-        weighted_correct = 0
-        weighted_total = 0
+        weighted_correct = 0.0
+        weighted_total = 0.0
         
         for label, pred in zip(labels, predictions):
-            weight = severity_weights.get(label, 1.0)
+            weight = severity_weights.get(int(label), 1.0)
             weighted_total += weight
             if label == pred:
                 weighted_correct += weight
         
         if weighted_total > 0:
-            metrics['weighted_accuracy'] = weighted_correct / weighted_total
+            metrics['weighted_accuracy'] = float(weighted_correct / weighted_total)
         
         return metrics
     
@@ -1076,8 +1173,11 @@ class GQATrainer:
         Args:
             export_path: Path to save ONNX model
         """
-        import onnx
-        import onnxruntime as ort
+        # Get model (unwrap from DistributedDataParallel if needed)
+        if isinstance(self.model, nn.parallel.DistributedDataParallel):
+            model_to_export = self.model.module
+        else:
+            model_to_export = self.model
         
         # Create dummy input for tracing
         dummy_input = torch.randint(0, self.config.vocab_size, 
@@ -1085,18 +1185,17 @@ class GQATrainer:
         
         # Export model
         torch.onnx.export(
-            self.model,
+            model_to_export,
             dummy_input,
             export_path,
             export_params=True,
             opset_version=14,
             do_constant_folding=True,
             input_names=['input_ids'],
-            output_names=['threat_logits', 'severity_score'],
+            output_names=['threat_logits'],  # Fixed: removed severity_score which wasn't defined
             dynamic_axes={
                 'input_ids': {0: 'batch_size', 1: 'sequence_length'},
-                'threat_logits': {0: 'batch_size', 1: 'sequence_length'},
-                'severity_score': {0: 'batch_size'}
+                'threat_logits': {0: 'batch_size'},
             },
         )
         
@@ -1109,6 +1208,8 @@ class GQATrainer:
         ort_inputs = {ort_session.get_inputs()[0].name: 
                      dummy_input.cpu().numpy()}
         ort_outputs = ort_session.run(None, ort_inputs)
+        
+        self.logger.info(f"ONNX model verified and ready for deployment")
     
     def _export_to_torchscript(self, export_path: str):
         """
@@ -1117,11 +1218,20 @@ class GQATrainer:
         Args:
             export_path: Path to save TorchScript model
         """
+        # Get model (unwrap from DistributedDataParallel if needed)
+        if isinstance(self.model, nn.parallel.DistributedDataParallel):
+            model_to_export = self.model.module
+        else:
+            model_to_export = self.model
+            
+        # Set model to evaluation mode
+        model_to_export.eval()
+        
         # Trace model
         dummy_input = torch.randint(0, self.config.vocab_size, 
                                    (1, 256), device=self.device)
         
-        traced_model = torch.jit.trace(self.model, dummy_input)
+        traced_model = torch.jit.trace(model_to_export, dummy_input)
         traced_model.save(export_path)
     
     def _export_to_safetensors(self, export_path: str):
@@ -1131,10 +1241,11 @@ class GQATrainer:
         Args:
             export_path: Path to save SafeTensors model
         """
-        from safetensors.torch import save_file
-        
-        # Get model state dict
-        state_dict = self.model.state_dict()
+        # Get model state dict (unwrap from DistributedDataParallel if needed)
+        if isinstance(self.model, nn.parallel.DistributedDataParallel):
+            state_dict = self.model.module.state_dict()
+        else:
+            state_dict = self.model.state_dict()
         
         # Save to SafeTensors format
         save_file(state_dict, export_path)
@@ -1153,7 +1264,7 @@ def create_training_data_loader(dataset, config: GQATrainingConfig,
     Returns:
         Configured DataLoader
     """
-    if config.distributed:
+    if config.distributed and torch.cuda.is_available():
         # Distributed sampler for multi-GPU training
         sampler = DistributedSampler(
             dataset,
@@ -1170,8 +1281,8 @@ def create_training_data_loader(dataset, config: GQATrainingConfig,
         batch_size=config.batch_size,
         shuffle=(is_training and sampler is None),
         sampler=sampler,
-        num_workers=4,  # Number of subprocesses for data loading
-        pin_memory=True,  # Faster data transfer to GPU
+        num_workers=min(4, os.cpu_count() or 1),  # Adjust based on available CPUs
+        pin_memory=torch.cuda.is_available(),  # Faster data transfer to GPU
         drop_last=is_training,  # Drop last incomplete batch for training
         persistent_workers=True  # Keep workers alive between epochs
     )

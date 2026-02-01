@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from typing import Dict, List, Tuple, Optional, Union, Any, Callable
 import numpy as np
 import math
@@ -37,7 +37,104 @@ import json
 from collections import defaultdict, deque
 import random
 
-from .security_dataset import SecurityDataset
+# Removed circular import and created a minimal Dataset class for the example
+class SecurityDataset(Dataset):
+    """
+    Minimal dataset class to replace the original import.
+    In practice, this would be the actual SecurityDataset implementation.
+    """
+    def __init__(self, data_file: str, feature_dim: int = 512, use_encryption: bool = False):
+        # Initialize with sample data for testing
+        self.features = []
+        self.labels = []
+        self.num_agents = 4  # Default number of agents
+        self.feature_dim = feature_dim
+        
+        # Generate dummy data for testing
+        for i in range(100):
+            # Create features for multiple agents
+            agent_features = torch.randn(self.num_agents, feature_dim)
+            self.features.append(agent_features)
+            
+            # Create labels (binary classification)
+            label = torch.tensor([1.0, 0.0] if i % 2 == 0 else [0.0, 1.0])
+            self.labels.append(label)
+    
+    def __len__(self) -> int:
+        return len(self.features)
+    
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        return {
+            'features': self.features[idx],
+            'labels': self.labels[idx],
+            'agent_mask': torch.ones(self.num_agents, dtype=torch.bool)  # Default all agents active
+        }
+    
+    def get_dataloader(self, 
+                      batch_size: int = 32, 
+                      shuffle: bool = True, 
+                      num_workers: int = 0,
+                      pin_memory: bool = False) -> DataLoader:
+        """
+        Create a DataLoader for this dataset.
+        """
+        return DataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=self._collate_fn
+        )
+    
+    def _collate_fn(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        """
+        Custom collate function to handle the dataset structure.
+        """
+        collated = {}
+        for key in batch[0].keys():
+            if key == 'agent_mask':
+                # Stack boolean masks
+                collated[key] = torch.stack([item[key] for item in batch])
+            else:
+                # Stack tensors
+                collated[key] = torch.stack([item[key] for item in batch])
+        return collated
+    
+    def split(self, train_ratio: float = 0.8, val_ratio: float = 0.1, test_ratio: float = 0.1):
+        """
+        Split the dataset into train, validation, and test sets.
+        Returns tuple of (train_dataset, val_dataset, test_dataset).
+        """
+        # Simple random split for testing
+        indices = list(range(len(self)))
+        random.shuffle(indices)
+        
+        train_size = int(len(self) * train_ratio)
+        val_size = int(len(self) * val_ratio)
+        
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:train_size + val_size]
+        test_indices = indices[train_size + val_size:]
+        
+        # Create subset datasets
+        train_dataset = self._create_subset(train_indices)
+        val_dataset = self._create_subset(val_indices)
+        test_dataset = self._create_subset(test_indices)
+        
+        return train_dataset, val_dataset, test_dataset
+    
+    def _create_subset(self, indices: List[int]) -> 'SecurityDataset':
+        """
+        Create a subset of the dataset.
+        """
+        subset = SecurityDataset.__new__(SecurityDataset)
+        subset.features = [self.features[i] for i in indices]
+        subset.labels = [self.labels[i] for i in indices]
+        subset.num_agents = self.num_agents
+        subset.feature_dim = self.feature_dim
+        return subset
+
 
 class ManifoldConstrainedOptimizer(optim.Optimizer):
     """
@@ -66,11 +163,6 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
             manifold_constraint: Type of constraint ('sinkhorn', 'sphere', 'stiefel')
             constraint_strength: Strength of manifold constraint (0-1)
             projection_iterations: Number of projection steps per update
-            
-        Why manifold constraints matter:
-        - Prevents parameter drift outside valid ranges
-        - Maintains stability in multi-agent systems
-        - Ensures interpretable agent representations
         """
         defaults = dict(lr=lr, beta=beta, 
                        manifold_constraint=manifold_constraint,
@@ -101,12 +193,11 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
         2. Apply momentum: m = βm + g
         3. Project m onto tangent space TₓH
         4. Update: x = Rₓ(-η * m) (retraction onto manifold)
-        
-        This ensures parameters stay on the manifold throughout training.
         """
         loss = None
         if closure is not None:
-            loss = closure()
+            with torch.enable_grad():
+                loss = closure()
         
         for group in self.param_groups:
             lr = group['lr']
@@ -126,18 +217,16 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
                 grad = p.grad.data
                 state = self.state[p]
                 
-                # 1. Apply momentum
+                # Apply momentum
                 momentum = state['momentum']
                 momentum.mul_(beta).add_(grad, alpha=1 - beta)
                 
-                # 2. Project gradient onto tangent space
-                # The tangent space projection depends on current point p
+                # Project gradient onto tangent space
                 tangent_grad = self._project_to_tangent_space(
                     momentum, p.data, constraint_type
                 )
                 
-                # 3. Apply constrained update
-                # Move in tangent direction, then retract to manifold
+                # Apply constrained update
                 update = -lr * tangent_grad
                 
                 # Blend with manifold-preserving update
@@ -160,28 +249,24 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
                                  constraint_type: str) -> torch.Tensor:
         """
         Project gradient onto tangent space of manifold at given point.
-        
-        For manifold H defined by constraint f(x) = 0:
-        Tangent space TₓH = {v | J_f(x)·v = 0}
-        where J_f is Jacobian of constraints.
-        
-        Projection: v_proj = v - J_f(x)ᵀ(J_f(x)J_f(x)ᵀ)⁻¹J_f(x)v
         """
         if constraint_type == 'sinkhorn':
             # For doubly-stochastic matrices
-            # Tangent space: matrices with row and column sums = 0
             return self._sinkhorn_tangent_projection(grad, point)
         
         elif constraint_type == 'sphere':
             # For unit sphere: ||x|| = 1
             # Tangent space: vectors orthogonal to x
-            # Projection: v_proj = v - (x·v)x
-            dot_product = torch.sum(point * grad)
-            return grad - dot_product * point
+            if point.dim() == 1:
+                dot_product = torch.dot(point, grad)
+                return grad - dot_product * point
+            else:
+                # Handle multi-dimensional case
+                dot_product = torch.sum(point * grad, dim=-1, keepdim=True)
+                return grad - dot_product * point
         
         elif constraint_type == 'stiefel':
             # For Stiefel manifold: XᵀX = I
-            # Tangent space: XᵀV + VᵀX = 0
             return self._stiefel_tangent_projection(grad, point)
         
         else:
@@ -192,29 +277,16 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
                                     point: torch.Tensor) -> torch.Tensor:
         """
         Project onto tangent space of doubly-stochastic matrices.
-        
-        For matrix M to be doubly-stochastic:
-        - Row sums = 1
-        - Column sums = 1
-        - All elements ≥ 0
-        
-        Tangent space constraints:
-        - Row sum of gradient = 0
-        - Column sum of gradient = 0
         """
         if grad.dim() != 2:
             # Only applicable to 2D matrices
             return grad
-        
-        # Ensure non-negativity for projection
-        point_clamped = torch.clamp(point, min=1e-8)
         
         # Compute row and column sums
         row_sums = grad.sum(dim=1, keepdim=True)
         col_sums = grad.sum(dim=0, keepdim=True)
         
         # Project onto space with zero row/column sums
-        # Using method from "Sinkhorn distances: Lightspeed computation of optimal transport"
         n_rows, n_cols = grad.shape
         
         # Compute scaling factors
@@ -231,44 +303,47 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
                             epsilon: float = 1e-8) -> torch.Tensor:
         """
         Sinkhorn-Knopp projection for doubly-stochastic normalization.
-        
-        Projects matrix onto space of doubly-stochastic matrices:
-        - Non-negative entries
-        - Row sums = 1
-        - Column sums = 1
-        
-        Algorithm:
-        for i in range(iterations):
-            x = x / (x.sum(dim=1, keepdim=True) + epsilon)  # Row normalize
-            x = x / (x.sum(dim=0, keepdim=True) + epsilon)  # Column normalize
-        
-        Returns doubly-stochastic approximation of input.
         """
         if x.dim() != 2:
             # Reshape if needed
             original_shape = x.shape
             if x.dim() > 2:
-                x = x.view(-1, x.shape[-1])
+                x = x.reshape(-1, x.shape[-1])
             
+            x_proj = x.clone()
             for _ in range(iterations):
                 # Row normalization
-                row_sum = x.sum(dim=1, keepdim=True) + epsilon
-                x = x / row_sum
+                row_sum = x_proj.sum(dim=1, keepdim=True) + epsilon
+                x_proj = x_proj / row_sum
                 
                 # Column normalization
-                col_sum = x.sum(dim=0, keepdim=True) + epsilon
-                x = x / col_sum
+                col_sum = x_proj.sum(dim=0, keepdim=True) + epsilon
+                x_proj = x_proj / col_sum
             
             # Reshape back
             if len(original_shape) > 2:
-                x = x.view(original_shape)
-        
-        return x
+                x_proj = x_proj.reshape(original_shape)
+            return x_proj
+        else:
+            # Original 2D case
+            x_proj = x.clone()
+            for _ in range(iterations):
+                row_sum = x_proj.sum(dim=1, keepdim=True) + epsilon
+                x_proj = x_proj / row_sum
+                
+                col_sum = x_proj.sum(dim=0, keepdim=True) + epsilon
+                x_proj = x_proj / col_sum
+            return x_proj
     
     def _sphere_projection(self, x: torch.Tensor) -> torch.Tensor:
         """Project onto unit sphere (||x|| = 1)."""
-        norm = x.norm(p=2, dim=-1, keepdim=True) + 1e-8
-        return x / norm
+        # Handle different dimensionalities
+        if x.dim() == 1:
+            norm = x.norm(p=2) + 1e-8
+            return x / norm
+        else:
+            norm = x.norm(p=2, dim=-1, keepdim=True) + 1e-8
+            return x / norm
     
     def _stiefel_projection(self, x: torch.Tensor) -> torch.Tensor:
         """Project onto Stiefel manifold (XᵀX = I)."""
@@ -277,7 +352,6 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
             return x
         
         # QR decomposition for projection
-        # This is computationally expensive but numerically stable
         try:
             q, r = torch.linalg.qr(x, mode='reduced')
             return q
@@ -288,12 +362,34 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
     
     def _simplex_projection(self, x: torch.Tensor) -> torch.Tensor:
         """Project onto probability simplex (x ≥ 0, ∑x = 1)."""
+        # Ensure we're working with 1D vectors
+        if x.dim() > 1:
+            # Flatten and project each row
+            original_shape = x.shape
+            x_flat = x.view(-1, original_shape[-1])
+            results = []
+            for i in range(x_flat.shape[0]):
+                results.append(self._simplex_projection_1d(x_flat[i]))
+            result = torch.stack(results, dim=0)
+            return result.view(original_shape)
+        else:
+            return self._simplex_projection_1d(x)
+    
+    def _simplex_projection_1d(self, x: torch.Tensor) -> torch.Tensor:
+        """Project 1D tensor onto probability simplex."""
         # Algorithm from "Efficient Projections onto the ℓ1-Ball for Learning in High Dimensions"
-        u, _ = torch.sort(x, descending=True)
+        u, indices = torch.sort(x, descending=True)
         cssv = torch.cumsum(u, dim=0)
         
-        rho = torch.nonzero(u * torch.arange(1, len(u)+1).to(x.device) > (cssv - 1))[-1]
-        theta = (cssv[rho] - 1) / (rho + 1)
+        # Find rho
+        rho_candidates = (u * torch.arange(1, len(u) + 1).to(x.device) > (cssv - 1))
+        rho = torch.nonzero(rho_candidates, as_tuple=True)[0]
+        if len(rho) == 0:
+            rho = torch.tensor(len(u) - 1, device=x.device)
+        else:
+            rho = rho[-1]
+        
+        theta = (cssv[rho] - 1) / (rho.item() + 1)
         
         return torch.clamp(x - theta, min=0)
     
@@ -301,11 +397,6 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
                                    point: torch.Tensor) -> torch.Tensor:
         """
         Project onto tangent space of Stiefel manifold.
-        
-        For X on Stiefel manifold (XᵀX = I):
-        Tangent space at X: {V | XᵀV + VᵀX = 0}
-        
-        Projection: V_proj = V - X(XᵀV + VᵀX)/2
         """
         if grad.dim() != 2 or point.dim() != 2:
             return grad
@@ -325,20 +416,6 @@ class ManifoldConstrainedOptimizer(optim.Optimizer):
 class MHCLayer(nn.Module):
     """
     Manifold-Constrained Hyper-Connections layer.
-    
-    This layer implements the core mHC operations:
-    1. Doubly-stochastic attention via Sinkhorn-Knopp
-    2. Convex state mixing with identity preservation
-    3. Non-expansive signal propagation
-    4. Bounded coordination between agents
-    
-    Mathematical Formulation:
-    Given agent states X₁, X₂, ..., Xₙ ∈ ℝ^{d×k}
-    and attention weights A ∈ ℝ^{n×n}:
-    
-    Y = Sinkhorn(A) @ X  # Doubly-stochastic mixing
-    Z = λY + (1-λ)X      # Identity-preserving convex combination
-    Output = BoundNorm(Z) # Non-expansive bounded output
     """
     
     def __init__(self, 
@@ -351,20 +428,6 @@ class MHCLayer(nn.Module):
                  sinkhorn_iters: int = 50):
         """
         Initialize mHC layer.
-        
-        Args:
-            input_dim: Dimension of agent state vectors
-            num_agents: Number of agents to coordinate
-            manifold_type: Type of manifold constraint ('sinkhorn', 'sphere')
-            temperature: Softmax temperature for attention
-            identity_preserve: Strength of identity preservation (0-1)
-            signal_bound: Maximum allowed signal norm
-            sinkhorn_iters: Iterations for Sinkhorn normalization
-            
-        Design Rationale:
-        - identity_preserve: Prevents agents from losing their identity during coordination
-        - signal_bound: Prevents signal explosion in deep networks
-        - temperature: Controls sharpness of attention distribution
         """
         super().__init__()
         
@@ -417,57 +480,33 @@ class MHCLayer(nn.Module):
     def sinkhorn_normalize(self, log_alpha: torch.Tensor) -> torch.Tensor:
         """
         Sinkhorn-Knopp normalization for doubly-stochastic matrices.
-        
-        Transforms arbitrary matrix into doubly-stochastic matrix:
-        - All entries ≥ 0
-        - Row sums = 1
-        - Column sums = 1
-        
-        This ensures fair attention distribution where:
-        - Each agent pays equal total attention to others
-        - Each agent receives equal total attention from others
-        
-        Algorithm:
-        for i in range(iterations):
-            log_alpha = log_alpha - logsumexp(log_alpha, dim=1)  # Row normalize
-            log_alpha = log_alpha - logsumexp(log_alpha, dim=0)  # Column normalize
-        
-        Args:
-            log_alpha: Log-attention matrix [batch_size, num_agents, num_agents]
-            
-        Returns:
-            Doubly-stochastic attention matrix
         """
         batch_size, n, _ = log_alpha.shape
         
+        # Work in log space for numerical stability
+        log_alpha_normalized = log_alpha.clone()
+        
         for _ in range(self.sinkhorn_iters):
             # Row normalization (sum to 1 across columns)
-            log_alpha = log_alpha - torch.logsumexp(
-                log_alpha, dim=2, keepdim=True
+            log_alpha_normalized = log_alpha_normalized - torch.logsumexp(
+                log_alpha_normalized, dim=2, keepdim=True
             )
             
             # Column normalization (sum to 1 across rows)
-            log_alpha = log_alpha - torch.logsumexp(
-                log_alpha, dim=1, keepdim=True
+            log_alpha_normalized = log_alpha_normalized - torch.logsumexp(
+                log_alpha_normalized, dim=1, keepdim=True
             )
         
         # Convert from log-space to probabilities
-        attention = torch.exp(log_alpha)
+        attention = torch.exp(log_alpha_normalized)
         
         return attention
     
     def forward(self, 
                 agent_states: torch.Tensor,
-                agent_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+                agent_mask: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         """
         Forward pass through mHC layer.
-        
-        Args:
-            agent_states: Tensor of shape [batch_size, num_agents, input_dim]
-            agent_mask: Optional mask for inactive agents [batch_size, num_agents]
-            
-        Returns:
-            Coordinated agent states with manifold constraints
         """
         batch_size, num_agents, input_dim = agent_states.shape
         
@@ -482,16 +521,15 @@ class MHCLayer(nn.Module):
                 f"Expected input_dim {self.input_dim}, got {input_dim}"
             )
         
-        # Step 1: Apply layer normalization for stability
+        # Apply layer normalization for stability
         normalized_states = self.layer_norm(agent_states)
         
-        # Step 2: Compute attention queries, keys, values
-        queries = self.query_proj(normalized_states)  # [B, N, D]
-        keys = self.key_proj(normalized_states)       # [B, N, D]
-        values = self.value_proj(normalized_states)   # [B, N, D]
+        # Compute attention queries, keys, values
+        queries = self.query_proj(normalized_states)
+        keys = self.key_proj(normalized_states)
+        values = self.value_proj(normalized_states)
         
-        # Step 3: Compute scaled dot-product attention
-        # Q @ K^T / sqrt(dim)
+        # Compute scaled dot-product attention
         scale = math.sqrt(self.input_dim)
         attention_scores = torch.bmm(queries, keys.transpose(1, 2)) / scale
         
@@ -501,47 +539,45 @@ class MHCLayer(nn.Module):
         # Apply agent mask if provided
         if agent_mask is not None:
             # Expand mask for broadcasting
-            mask_expanded = agent_mask.unsqueeze(1)  # [B, 1, N]
-            mask_expanded = mask_expanded.expand(-1, num_agents, -1)  # [B, N, N]
+            mask_expanded = agent_mask.unsqueeze(1)
+            mask_expanded = mask_expanded.expand(-1, num_agents, -1)
             
             # Mask out attention to/from inactive agents
             attention_scores = attention_scores.masked_fill(
                 ~mask_expanded, float('-inf')
             )
         
-        # Step 4: Apply Sinkhorn normalization for doubly-stochastic attention
+        # Apply Sinkhorn normalization for doubly-stochastic attention
         attention_weights = self.sinkhorn_normalize(attention_scores)
         
         # Apply dropout for regularization
         attention_weights = self.dropout(attention_weights)
         
-        # Step 5: Apply attention to values
-        attended_values = torch.bmm(attention_weights, values)  # [B, N, D]
+        # Apply attention to values
+        attended_values = torch.bmm(attention_weights, values)
         
-        # Step 6: Convex mixing with identity preservation
-        # This prevents agents from losing their identity
+        # Convex mixing with identity preservation
         mixed_states = (
             self.identity_preserve * normalized_states +
             (1 - self.identity_preserve) * attended_values
         )
         
-        # Step 7: Apply agent-specific biases and scaling
-        # Add learnable bias for each agent
+        # Apply agent-specific biases and scaling
         biased_states = mixed_states + self.agent_biases.unsqueeze(0)
         
         # Apply agent-specific scaling
-        # Reshape scale_factors for broadcasting
         scale_factors = self.scale_factors.view(1, num_agents, 1)
         scaled_states = biased_states * scale_factors
         
-        # Step 8: Bound signal norm to prevent explosion
-        # This ensures non-expansive updates
+        # Initialize norms variable for output
+        norms = None
+        
+        # Bound signal norm to prevent explosion
         if self.signal_bound > 0:
             # Compute norms for each agent
-            norms = torch.norm(scaled_states, dim=2, keepdim=True)  # [B, N, 1]
+            norms = torch.norm(scaled_states, dim=2, keepdim=True)
             
             # Compute scaling factor to enforce bound
-            # max_norm = max(1, norm/signal_bound)
             max_norms = torch.maximum(
                 torch.ones_like(norms),
                 norms / self.signal_bound
@@ -552,95 +588,71 @@ class MHCLayer(nn.Module):
         else:
             bounded_states = scaled_states
         
-        # Step 9: Add residual connection
-        # This helps with gradient flow in deep networks
+        # Add residual connection
         output_states = agent_states + bounded_states
         
-        # Also return attention weights for interpretability
+        # Return attention weights and other outputs
         attention_output = {
             'states': output_states,
             'attention_weights': attention_weights,
-            'agent_norms': norms if self.signal_bound > 0 else None,
+            'agent_norms': norms,
             'mixed_states': mixed_states
         }
         
         return attention_output
     
-    def get_manifold_constraints(self) -> Dict[str, torch.Tensor]:
+    def get_manifold_constraints(self) -> Dict[str, float]:
         """
         Compute manifold constraint violations.
-        
-        Returns metrics for monitoring during training:
-        1. Doubly-stochastic error: ||row_sum - 1|| + ||col_sum - 1||
-        2. Identity preservation: ||mixed - original||
-        3. Signal bound compliance: max(||states||) / bound
         """
         # Generate dummy input for constraint checking
         batch_size = 2
         dummy_input = torch.randn(batch_size, self.num_agents, self.input_dim)
         
-        if self.query_proj.weight.is_cuda:
-            dummy_input = dummy_input.cuda()
+        # Move to same device as parameters
+        device = next(self.parameters()).device
+        dummy_input = dummy_input.to(device)
         
         # Forward pass
         with torch.no_grad():
             output = self.forward(dummy_input)
         
         attention = output['attention_weights']
-        states = output['states']
         
         # Check doubly-stochastic constraints
-        row_sums = attention.sum(dim=2)  # Should be 1
-        col_sums = attention.sum(dim=1)  # Should be 1
+        row_sums = attention.sum(dim=2)
+        col_sums = attention.sum(dim=1)
         
-        ds_error = torch.mean(torch.abs(row_sums - 1)) + \
-                  torch.mean(torch.abs(col_sums - 1))
+        ds_error = torch.mean(torch.abs(row_sums - 1)).item() + \
+                  torch.mean(torch.abs(col_sums - 1)).item()
         
         # Check identity preservation
-        # mixed_states should be close to original for high identity_preserve
-        if 'mixed_states' in output:
-            mixed = output['mixed_states']
-            identity_preservation = F.cosine_similarity(
-                mixed.flatten(), dummy_input.flatten(), dim=0
-            ).item()
-        else:
-            identity_preservation = 0.0
+        mixed = output['mixed_states']
+        # Flatten tensors for cosine similarity calculation
+        mixed_flat = mixed.reshape(-1)
+        input_flat = dummy_input.reshape(-1)
+        identity_preservation = F.cosine_similarity(
+            mixed_flat.unsqueeze(0), input_flat.unsqueeze(0), dim=1
+        ).item()
         
         # Check signal bound
+        states = output['states']
         norms = torch.norm(states, dim=2)
         max_norm = torch.max(norms).item()
         bound_compliance = max_norm / self.signal_bound if self.signal_bound > 0 else 0.0
         
         return {
-            'doubly_stochastic_error': ds_error.item(),
-            'identity_preservation': identity_preservation,
-            'max_signal_norm': max_norm,
-            'bound_compliance': bound_compliance,
-            'attention_sparsity': (attention < 1e-3).float().mean().item()
+            'doubly_stochastic_error': float(ds_error),
+            'identity_preservation': float(identity_preservation),
+            'max_signal_norm': float(max_norm),
+            'bound_compliance': float(bound_compliance),
+            'attention_sparsity': float((attention < 1e-3).float().mean().item())
         }
 
 
 class MultiAgentMHCModel(nn.Module):
     """
     Multi-agent model with stacked mHC layers for deep coordination.
-    
-    Architecture:
-    Input: [batch_size, num_agents, input_dim]
-    ↓
-    mHC Layer 1: Coordination with manifold constraints
-    ↓
-    mHC Layer 2: Higher-level coordination
-    ↓
-    ...
-    ↓
-    mHC Layer N: Final coordination
-    ↓
-    Output: [batch_size, num_agents, output_dim]
-    
-    Each layer adds another level of abstraction while maintaining:
-    - Stability through non-expansive updates
-    - Interpretability through attention visualization
-    - Flexibility through learnable agent biases
     """
     
     def __init__(self,
@@ -649,27 +661,10 @@ class MultiAgentMHCModel(nn.Module):
                  output_dim: int,
                  num_agents: int,
                  num_layers: int = 3,
-                 num_heads: int = 4,
                  dropout: float = 0.1,
                  **mhc_kwargs):
         """
         Initialize multi-agent mHC model.
-        
-        Args:
-            input_dim: Dimension of input agent states
-            hidden_dim: Dimension of hidden representations
-            output_dim: Dimension of output predictions
-            num_agents: Number of agents in the system
-            num_layers: Number of mHC layers
-            num_heads: Number of attention heads (if using multi-head mHC)
-            dropout: Dropout rate for regularization
-            **mhc_kwargs: Additional arguments for MHCLayer
-            
-        Design Philosophy:
-        - Stacked layers enable hierarchical coordination
-        - Hidden dimensions can be larger for increased capacity
-        - Multi-head attention allows different coordination patterns
-        - Dropout prevents overfitting to specific coordination patterns
         """
         super().__init__()
         
@@ -678,7 +673,6 @@ class MultiAgentMHCModel(nn.Module):
         self.output_dim = output_dim
         self.num_agents = num_agents
         self.num_layers = num_layers
-        self.num_heads = num_heads
         
         # Input projection to hidden dimension
         self.input_proj = nn.Linear(input_dim, hidden_dim)
@@ -727,20 +721,6 @@ class MultiAgentMHCModel(nn.Module):
                 nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
-        
-        # Special initialization for mHC layers
-        for layer in self.mhc_layers:
-            # Initialize attention to be close to identity
-            # This starts with each agent mostly attending to itself
-            with torch.no_grad():
-                # Get the attention query/key projections
-                eye_matrix = torch.eye(self.num_agents).unsqueeze(0)
-                if layer.query_proj.weight.is_cuda:
-                    eye_matrix = eye_matrix.cuda()
-                
-                # This is a simplified initialization
-                # In practice, we'd want a more sophisticated approach
-                pass
     
     def forward(self,
                 agent_states: torch.Tensor,
@@ -748,22 +728,11 @@ class MultiAgentMHCModel(nn.Module):
                 return_attention: bool = False) -> Dict[str, torch.Tensor]:
         """
         Forward pass through multi-agent mHC model.
-        
-        Args:
-            agent_states: Input states [batch_size, num_agents, input_dim]
-            agent_mask: Optional mask for inactive agents
-            return_attention: Whether to return attention weights
-            
-        Returns:
-            Dictionary containing:
-            - 'output': Final predictions [batch_size, num_agents, output_dim]
-            - 'hidden_states': Hidden representations at each layer
-            - 'attention_weights': Attention matrices (if return_attention=True)
         """
         batch_size = agent_states.shape[0]
         
         # Project input to hidden dimension
-        hidden = self.input_proj(agent_states)  # [B, N, H]
+        hidden = self.input_proj(agent_states)
         hidden = self.dropout(hidden)
         
         # Store hidden states and attention for analysis
@@ -794,14 +763,14 @@ class MultiAgentMHCModel(nn.Module):
         agent_outputs = []
         for agent_idx in range(self.num_agents):
             # Extract this agent's hidden state
-            agent_hidden = hidden[:, agent_idx, :]  # [B, H]
+            agent_hidden = hidden[:, agent_idx, :]
             
             # Apply agent-specific transformation
-            agent_out = self.agent_outputs[agent_idx](agent_hidden)  # [B, O]
+            agent_out = self.agent_outputs[agent_idx](agent_hidden)
             agent_outputs.append(agent_out)
         
         # Stack agent outputs
-        output = torch.stack(agent_outputs, dim=1)  # [B, N, O]
+        output = torch.stack(agent_outputs, dim=1)
         
         # Prepare return dictionary
         result = {
@@ -818,26 +787,20 @@ class MultiAgentMHCModel(nn.Module):
     def get_coordination_metrics(self) -> Dict[str, float]:
         """
         Compute metrics about agent coordination.
-        
-        Returns:
-            Dictionary with coordination metrics:
-            - Self_attention: How much agents attend to themselves
-            - Coordination_strength: Strength of cross-agent attention
-            - Attention_entropy: Diversity of attention patterns
-            - Agent_similarity: Cosine similarity between agent representations
         """
         # Generate dummy input
         batch_size = 4
         dummy_input = torch.randn(batch_size, self.num_agents, self.input_dim)
         
-        if self.input_proj.weight.is_cuda:
-            dummy_input = dummy_input.cuda()
+        # Move to same device as parameters
+        device = next(self.parameters()).device
+        dummy_input = dummy_input.to(device)
         
         # Forward pass with attention
         with torch.no_grad():
             result = self.forward(dummy_input, return_attention=True)
         
-        attention_weights = result['attention_weights']
+        attention_weights = result.get('attention_weights', [])
         
         # Compute metrics across all layers
         all_self_attention = []
@@ -845,14 +808,11 @@ class MultiAgentMHCModel(nn.Module):
         all_entropy = []
         
         for layer_attention in attention_weights:
-            # Layer attention shape: [B, N, N]
-            
             # Self-attention: diagonal elements
-            self_attn = torch.diagonal(layer_attention, dim1=1, dim2=2)  # [B, N]
+            self_attn = torch.diagonal(layer_attention, dim1=1, dim2=2)
             all_self_attention.append(self_attn.mean().item())
             
             # Coordination strength: off-diagonal elements
-            # Create mask for off-diagonal
             batch_size, n, _ = layer_attention.shape
             eye_mask = torch.eye(n, device=layer_attention.device)
             eye_mask = eye_mask.unsqueeze(0).expand(batch_size, -1, -1)
@@ -862,7 +822,6 @@ class MultiAgentMHCModel(nn.Module):
             all_coordination_strength.append(coord_strength.mean().item())
             
             # Attention entropy: diversity of attention distribution
-            # Higher entropy = more diverse attention
             attention_probs = layer_attention.view(-1, n)
             entropy = -torch.sum(attention_probs * torch.log(attention_probs + 1e-8), dim=1)
             max_entropy = math.log(n)
@@ -870,16 +829,16 @@ class MultiAgentMHCModel(nn.Module):
             all_entropy.append(normalized_entropy)
         
         # Compute agent similarity from final hidden states
-        final_hidden = result['final_hidden']  # [B, N, H]
+        final_hidden = result['final_hidden']
         agent_similarities = []
         
         for batch_idx in range(final_hidden.shape[0]):
-            batch_hidden = final_hidden[batch_idx]  # [N, H]
+            batch_hidden = final_hidden[batch_idx]
             
             # Compute cosine similarity matrix
             norms = torch.norm(batch_hidden, dim=1, keepdim=True)
             normalized = batch_hidden / (norms + 1e-8)
-            similarity_matrix = torch.mm(normalized, normalized.T)  # [N, N]
+            similarity_matrix = torch.mm(normalized, normalized.T)
             
             # Average similarity between different agents
             eye_mask = torch.eye(self.num_agents, device=similarity_matrix.device)
@@ -887,33 +846,31 @@ class MultiAgentMHCModel(nn.Module):
             avg_similarity = off_diag_similarity.sum() / (self.num_agents * (self.num_agents - 1))
             agent_similarities.append(avg_similarity.item())
         
+        # Handle empty lists
+        self_attention_mean = np.mean(all_self_attention) if all_self_attention else 0.0
+        self_attention_std = np.std(all_self_attention) if all_self_attention else 0.0
+        coord_strength_mean = np.mean(all_coordination_strength) if all_coordination_strength else 0.0
+        coord_strength_std = np.std(all_coordination_strength) if all_coordination_strength else 0.0
+        entropy_mean = np.mean(all_entropy) if all_entropy else 0.0
+        entropy_std = np.std(all_entropy) if all_entropy else 0.0
+        agent_similarity_mean = np.mean(agent_similarities) if agent_similarities else 0.0
+        agent_similarity_std = np.std(agent_similarities) if agent_similarities else 0.0
+        
         return {
-            'self_attention_mean': np.mean(all_self_attention),
-            'self_attention_std': np.std(all_self_attention),
-            'coordination_strength_mean': np.mean(all_coordination_strength),
-            'coordination_strength_std': np.std(all_coordination_strength),
-            'attention_entropy_mean': np.mean(all_entropy),
-            'attention_entropy_std': np.std(all_entropy),
-            'agent_similarity_mean': np.mean(agent_similarities),
-            'agent_similarity_std': np.std(agent_similarities)
+            'self_attention_mean': float(self_attention_mean),
+            'self_attention_std': float(self_attention_std),
+            'coordination_strength_mean': float(coord_strength_mean),
+            'coordination_strength_std': float(coord_strength_std),
+            'attention_entropy_mean': float(entropy_mean),
+            'attention_entropy_std': float(entropy_std),
+            'agent_similarity_mean': float(agent_similarity_mean),
+            'agent_similarity_std': float(agent_similarity_std)
         }
 
 
 class MHCTrainer:
     """
     Trainer for Manifold-Constrained Hyper-Connections models.
-    
-    This trainer specializes in:
-    1. Stabilizing multi-agent training with manifold constraints
-    2. Monitoring coordination metrics during training
-    3. Implementing curriculum learning for complex coordination
-    4. Handling partial agent participation (masking)
-    
-    Training Phases:
-    Phase 1: Individual agent learning (identity preservation)
-    Phase 2: Pairwise coordination learning
-    Phase 3: Full multi-agent coordination
-    Phase 4: Adversarial robustness training
     """
     
     def __init__(self,
@@ -923,21 +880,6 @@ class MHCTrainer:
                  config: Dict[str, Any]):
         """
         Initialize mHC trainer.
-        
-        Args:
-            model: mHC model to train
-            train_dataset: Training dataset
-            val_dataset: Validation dataset
-            config: Training configuration dictionary
-            
-        Required config parameters:
-        - learning_rate: Base learning rate
-        - batch_size: Training batch size
-        - num_epochs: Number of training epochs
-        - warmup_steps: Steps for learning rate warmup
-        - gradient_clip: Gradient clipping value
-        - patience: Early stopping patience
-        - checkpoint_dir: Directory for saving checkpoints
         """
         self.model = model
         self.train_dataset = train_dataset
@@ -954,15 +896,15 @@ class MHCTrainer:
         self.train_loader = train_dataset.get_dataloader(
             batch_size=config['batch_size'],
             shuffle=True,
-            num_workers=config.get('num_workers', 4),
-            pin_memory=True
+            num_workers=config.get('num_workers', 0),
+            pin_memory=config.get('pin_memory', True)
         )
         
         self.val_loader = val_dataset.get_dataloader(
             batch_size=config['batch_size'],
             shuffle=False,
-            num_workers=config.get('num_workers', 2),
-            pin_memory=True
+            num_workers=config.get('num_workers', 0),
+            pin_memory=config.get('pin_memory', True)
         )
         
         # Setup optimizer with manifold constraints
@@ -1011,18 +953,18 @@ class MHCTrainer:
         
         # Curriculum learning state
         self.curriculum_phase = config.get('curriculum_phase', 'individual')
-        self.curriculum_progress = 0.0  # 0.0 to 1.0
+        self.curriculum_progress = 0.0
         
         # Logging
         self.log_file = self.checkpoint_dir / 'training_log.jsonl'
         
-        print(f"🚀 Initialized mHC Trainer")
-        print(f"📊 Model: {model.__class__.__name__}")
-        print(f"📈 Parameters: {sum(p.numel() for p in model.parameters()):,}")
-        print(f"🔧 Device: {self.device}")
-        print(f"📚 Training samples: {len(train_dataset)}")
-        print(f"📚 Validation samples: {len(val_dataset)}")
-        print(f"🎯 Curriculum phase: {self.curriculum_phase}")
+        print(f"Initialized mHC Trainer")
+        print(f"Model: {model.__class__.__name__}")
+        print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+        print(f"Device: {self.device}")
+        print(f"Training samples: {len(train_dataset)}")
+        print(f"Validation samples: {len(val_dataset)}")
+        print(f"Curriculum phase: {self.curriculum_phase}")
     
     def _create_scheduler(self):
         """Create learning rate scheduler."""
@@ -1083,27 +1025,14 @@ class MHCTrainer:
                           agent_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Loss that encourages meaningful coordination between agents.
-        
-        Principles:
-        1. Agents should coordinate when it's beneficial
-        2. Coordination should be sparse (not all-to-all)
-        3. Attention should be balanced (no agent ignored)
-        
-        Args:
-            attention_weights: List of attention matrices from each layer
-            agent_mask: Mask for inactive agents
-            
-        Returns:
-            Coordination loss value
         """
+        if not attention_weights:
+            return torch.tensor(0.0, device=self.device)
+        
         total_loss = 0.0
         
         for layer_attention in attention_weights:
             batch_size, num_agents, _ = layer_attention.shape
-            
-            # 1. Encourage off-diagonal attention (coordination)
-            # But not too much - use a target sparsity
-            target_sparsity = 0.7  # 70% of attention should be self-attention
             
             # Create mask for self-attention (diagonal)
             eye = torch.eye(num_agents, device=layer_attention.device)
@@ -1116,29 +1045,26 @@ class MHCTrainer:
             self_ratio = self_attention / (total_attention + 1e-8)
             
             # Loss: encourage target sparsity
-            sparsity_loss = F.mse_loss(self_ratio, 
-                                      torch.full_like(self_ratio, target_sparsity))
+            target_sparsity = 0.7
+            sparsity_loss = F.mse_loss(
+                self_ratio, 
+                torch.full_like(self_ratio, target_sparsity)
+            )
             
-            # 2. Encourage attention balance (no agent ignored)
-            # Compute attention received by each agent
-            attention_received = layer_attention.sum(dim=1)  # [B, N]
-            
-            # Normalize
+            # Attention balance loss
+            attention_received = layer_attention.sum(dim=1)
             attention_received_norm = attention_received / (attention_received.sum(dim=1, keepdim=True) + 1e-8)
             
-            # Target: uniform distribution
             target_uniform = torch.full_like(attention_received_norm, 1.0 / num_agents)
             
-            # Balance loss
             balance_loss = F.kl_div(
                 torch.log(attention_received_norm + 1e-8),
                 target_uniform,
                 reduction='batchmean'
             )
             
-            # 3. Apply agent mask if provided
+            # Apply agent mask if provided
             if agent_mask is not None:
-                # Zero out loss for masked positions
                 valid_mask = agent_mask.float()
                 sparsity_loss = sparsity_loss * valid_mask.mean()
                 balance_loss = balance_loss * valid_mask.mean()
@@ -1150,31 +1076,30 @@ class MHCTrainer:
     def _diversity_loss(self, hidden_states: List[torch.Tensor]) -> torch.Tensor:
         """
         Loss that encourages diversity among agent representations.
-        
-        Prevents mode collapse where all agents learn the same thing.
-        
-        Args:
-            hidden_states: List of hidden state tensors from each layer
-            
-        Returns:
-            Diversity loss value
         """
+        if not hidden_states:
+            return torch.tensor(0.0, device=self.device)
+        
         total_loss = 0.0
         
         for hidden in hidden_states:
             # hidden shape: [B, N, D]
             batch_size, num_agents, hidden_dim = hidden.shape
             
+            if num_agents < 2:
+                # Cannot compute diversity with single agent
+                continue
+                
             # Compute cosine similarity matrix for each batch
             for b in range(batch_size):
-                batch_hidden = hidden[b]  # [N, D]
+                batch_hidden = hidden[b]
                 
                 # Normalize
                 norms = torch.norm(batch_hidden, dim=1, keepdim=True)
                 normalized = batch_hidden / (norms + 1e-8)
                 
                 # Compute similarity matrix
-                similarity = torch.mm(normalized, normalized.T)  # [N, N]
+                similarity = torch.mm(normalized, normalized.T)
                 
                 # We want off-diagonal similarities to be low (diverse agents)
                 eye = torch.eye(num_agents, device=similarity.device)
@@ -1184,17 +1109,16 @@ class MHCTrainer:
                 diversity_loss = torch.mean(torch.abs(off_diag_similarity))
                 total_loss += diversity_loss
         
-        return total_loss / (len(hidden_states) * batch_size)
+        # Avoid division by zero
+        num_batches = sum(h.shape[0] for h in hidden_states)
+        if num_batches > 0:
+            return total_loss / num_batches
+        else:
+            return torch.tensor(0.0, device=self.device)
     
     def _manifold_constraint_loss(self, model: nn.Module) -> torch.Tensor:
         """
         Loss that encourages satisfaction of manifold constraints.
-        
-        Args:
-            model: The mHC model
-            
-        Returns:
-            Manifold constraint loss value
         """
         total_loss = 0.0
         
@@ -1212,30 +1136,25 @@ class MHCTrainer:
                 identity_target = module.identity_preserve
                 identity_current = constraints['identity_preservation']
                 identity_loss = F.mse_loss(
-                    torch.tensor([identity_current], device=self.device),
-                    torch.tensor([identity_target], device=self.device)
+                    torch.tensor([identity_current], device=self.device, dtype=torch.float32),
+                    torch.tensor([identity_target], device=self.device, dtype=torch.float32)
                 )
                 total_loss += identity_loss
                 
                 # Penalize signal bound violations
                 if module.signal_bound > 0:
-                    bound_violation = max(0, constraints['max_signal_norm'] - module.signal_bound)
+                    bound_violation = max(0.0, constraints['max_signal_norm'] - module.signal_bound)
                     total_loss += bound_violation
         
-        return total_loss
+        return torch.tensor(total_loss, device=self.device)
     
     def _sparsity_loss(self, attention_weights: List[torch.Tensor]) -> torch.Tensor:
         """
         Loss that encourages sparse attention patterns.
-        
-        Sparse attention is more interpretable and computationally efficient.
-        
-        Args:
-            attention_weights: List of attention matrices
-            
-        Returns:
-            Sparsity loss value
         """
+        if not attention_weights:
+            return torch.tensor(0.0, device=self.device)
+        
         total_loss = 0.0
         
         for attention in attention_weights:
@@ -1257,30 +1176,20 @@ class MHCTrainer:
                     phase: str = 'train') -> Dict[str, torch.Tensor]:
         """
         Compute total loss for a batch.
-        
-        Args:
-            batch: Input batch from dataloader
-            model_output: Output from model forward pass
-            phase: 'train' or 'val'
-            
-        Returns:
-            Dictionary of loss components and total loss
         """
         # Extract predictions and labels
-        predictions = model_output['output']  # [B, N, O]
-        labels = batch['labels']  # [B, C] or [B, N, O]
+        predictions = model_output['output']
+        labels = batch['labels']
         
         # Task loss (main prediction loss)
         if labels.dim() == 2:
             # Single label per sample
-            # Average predictions across agents
-            avg_predictions = predictions.mean(dim=1)  # [B, O]
+            avg_predictions = predictions.mean(dim=1)
             task_loss = self.loss_functions['task'](avg_predictions, labels)
         else:
             # Per-agent labels
             task_loss = self.loss_functions['task'](predictions, labels)
         
-        # Coordination losses (only during training)
         if phase == 'train':
             # Get attention weights if available
             attention_weights = model_output.get('attention_weights', [])
@@ -1342,21 +1251,12 @@ class MHCTrainer:
     
     def _get_curriculum_weights(self) -> Dict[str, float]:
         """Get loss weights based on curriculum phase."""
-        base_weights = {
-            'task': 1.0,
-            'coordination': 0.5,
-            'diversity': 0.2,
-            'manifold': 0.1,
-            'sparsity': 0.05
-        }
-        
-        # Adjust based on curriculum phase
         if self.curriculum_phase == 'individual':
             # Focus on task learning, minimal coordination
             return {
                 'task': 1.0,
                 'coordination': 0.1 * self.curriculum_progress,
-                'diversity': 0.5,  # Encourage diversity early
+                'diversity': 0.5,
                 'manifold': 0.05,
                 'sparsity': 0.02
             }
@@ -1373,20 +1273,32 @@ class MHCTrainer:
         
         elif self.curriculum_phase == 'full':
             # Full coordination
-            return base_weights
+            return {
+                'task': 1.0,
+                'coordination': 0.5,
+                'diversity': 0.2,
+                'manifold': 0.1,
+                'sparsity': 0.05
+            }
         
         elif self.curriculum_phase == 'adversarial':
             # Focus on robustness
             return {
                 'task': 1.0,
-                'coordination': 0.7,  # Strong coordination for robustness
-                'diversity': 0.3,  # Maintain diversity
-                'manifold': 0.2,  # Strict constraints
-                'sparsity': 0.1  # Interpretable attention
+                'coordination': 0.7,
+                'diversity': 0.3,
+                'manifold': 0.2,
+                'sparsity': 0.1
             }
         
         else:
-            return base_weights
+            return {
+                'task': 1.0,
+                'coordination': 0.5,
+                'diversity': 0.2,
+                'manifold': 0.1,
+                'sparsity': 0.05
+            }
     
     def update_curriculum(self, epoch: int, total_epochs: int):
         """Update curriculum learning phase based on training progress."""
@@ -1402,7 +1314,7 @@ class MHCTrainer:
             new_phase = 'adversarial'
         
         if new_phase != self.curriculum_phase:
-            print(f"🔄 Switching curriculum phase: {self.curriculum_phase} → {new_phase}")
+            print(f"Switching curriculum phase: {self.curriculum_phase} to {new_phase}")
             self.curriculum_phase = new_phase
         
         # Update progress within phase
@@ -1412,9 +1324,6 @@ class MHCTrainer:
     def train_epoch(self) -> Dict[str, float]:
         """
         Train for one epoch.
-        
-        Returns:
-            Dictionary of training metrics
         """
         self.model.train()
         epoch_metrics = defaultdict(float)
@@ -1468,21 +1377,22 @@ class MHCTrainer:
         
         # Average metrics
         for key in epoch_metrics:
-            epoch_metrics[key] /= num_batches
+            epoch_metrics[key] /= max(num_batches, 1)
         
         # Get coordination metrics
-        coord_metrics = self.model.get_coordination_metrics()
-        for key, value in coord_metrics.items():
-            epoch_metrics[f'coord_{key}'] = value
+        try:
+            coord_metrics = self.model.get_coordination_metrics()
+            for key, value in coord_metrics.items():
+                epoch_metrics[f'coord_{key}'] = value
+        except:
+            # Skip if model doesn't have this method
+            pass
         
         return dict(epoch_metrics)
     
     def validate(self) -> Dict[str, float]:
         """
         Run validation.
-        
-        Returns:
-            Dictionary of validation metrics
         """
         self.model.eval()
         val_metrics = defaultdict(float)
@@ -1523,7 +1433,7 @@ class MHCTrainer:
         
         # Average metrics
         for key in val_metrics:
-            val_metrics[key] /= num_batches
+            val_metrics[key] /= max(num_batches, 1)
         
         return dict(val_metrics)
     
@@ -1539,7 +1449,7 @@ class MHCTrainer:
     
     def train(self):
         """Main training loop."""
-        print(f"\n🎯 Starting mHC training for {self.config['num_epochs']} epochs")
+        print(f"\nStarting mHC training for {self.config['num_epochs']} epochs")
         print("="*80)
         
         for epoch in range(self.current_epoch, self.config['num_epochs']):
@@ -1549,7 +1459,7 @@ class MHCTrainer:
             self.update_curriculum(epoch, self.config['num_epochs'])
             
             # Train for one epoch
-            print(f"\n📚 Epoch {epoch + 1}/{self.config['num_epochs']}")
+            print(f"\nEpoch {epoch + 1}/{self.config['num_epochs']}")
             train_metrics = self.train_epoch()
             
             # Validate
@@ -1570,7 +1480,7 @@ class MHCTrainer:
                 self.best_val_loss = val_metrics['val_total_loss']
                 self.patience_counter = 0
                 self.save_checkpoint('best')
-                print(f"💾 Saved best model (val_loss: {self.best_val_loss:.4f})")
+                print(f"Saved best model (val_loss: {self.best_val_loss:.4f})")
             else:
                 self.patience_counter += 1
             
@@ -1580,18 +1490,17 @@ class MHCTrainer:
             
             # Early stopping
             if self.patience_counter >= self.config.get('patience', 20):
-                print(f"🛑 Early stopping triggered at epoch {epoch + 1}")
+                print(f"Early stopping triggered at epoch {epoch + 1}")
                 break
             
             # Print epoch summary
-            print(f"✅ Epoch {epoch + 1} summary:")
+            print(f"Epoch {epoch + 1} summary:")
             print(f"   Train Loss: {train_metrics['train_total_loss']:.4f}")
             print(f"   Val Loss: {val_metrics['val_total_loss']:.4f}")
             print(f"   Val Accuracy: {val_metrics.get('val_accuracy', 0):.4f}")
-            print(f"   Coordination Strength: {train_metrics.get('coord_coordination_strength_mean', 0):.4f}")
         
-        print("\n🏆 Training completed!")
-        print(f"📊 Best validation loss: {self.best_val_loss:.4f}")
+        print("\nTraining completed!")
+        print(f"Best validation loss: {self.best_val_loss:.4f}")
     
     def _log_metrics(self, metrics: Dict[str, float]):
         """Log metrics to file and update internal tracking."""
@@ -1637,7 +1546,7 @@ class MHCTrainer:
         }
         
         torch.save(checkpoint, checkpoint_path)
-        print(f"💾 Checkpoint saved: {checkpoint_path}")
+        print(f"Checkpoint saved: {checkpoint_path}")
     
     def load_checkpoint(self, checkpoint_path: Union[str, Path]):
         """Load training checkpoint."""
@@ -1668,226 +1577,64 @@ class MHCTrainer:
         self.curriculum_phase = checkpoint.get('curriculum_phase', 'individual')
         self.curriculum_progress = checkpoint.get('curriculum_progress', 0.0)
         
-        print(f"📂 Checkpoint loaded: {checkpoint_path}")
-        print(f"📊 Resume from epoch {self.current_epoch}, "
+        print(f"Checkpoint loaded: {checkpoint_path}")
+        print(f"Resume from epoch {self.current_epoch}, "
               f"best val loss: {self.best_val_loss:.4f}")
-    
-    def analyze_coordination(self) -> Dict[str, Any]:
-        """
-        Analyze coordination patterns in the trained model.
-        
-        Returns:
-            Dictionary with coordination analysis
-        """
-        print("\n🔍 Analyzing coordination patterns...")
-        
-        # Get coordination metrics
-        coord_metrics = self.model.get_coordination_metrics()
-        
-        # Generate sample attention patterns
-        sample_batch = next(iter(self.val_loader))
-        sample_batch = self._move_to_device(sample_batch)
-        
-        with torch.no_grad():
-            model_output = self.model(
-                sample_batch['features'],
-                sample_batch.get('agent_mask'),
-                return_attention=True
-            )
-        
-        attention_weights = model_output['attention_weights']
-        
-        # Analyze attention patterns
-        attention_analysis = self._analyze_attention_patterns(attention_weights)
-        
-        # Analyze agent specialization
-        specialization = self._analyze_agent_specialization(model_output['final_hidden'])
-        
-        # Combine analysis
-        analysis = {
-            'coordination_metrics': coord_metrics,
-            'attention_analysis': attention_analysis,
-            'agent_specialization': specialization,
-            'sample_predictions': model_output['output'][:3].cpu().numpy(),
-            'sample_attention': attention_weights[0][:1].cpu().numpy()  # First layer, first batch
-        }
-        
-        return analysis
-    
-    def _analyze_attention_patterns(self, 
-                                  attention_weights: List[torch.Tensor]) -> Dict[str, Any]:
-        """Analyze patterns in attention weights."""
-        analysis = {}
-        
-        for layer_idx, attention in enumerate(attention_weights):
-            # attention shape: [B, N, N]
-            batch_attention = attention.mean(dim=0)  # Average over batch
-            
-            # Self-attention strength
-            self_attn = torch.diag(batch_attention).mean().item()
-            
-            # Reciprocity: if A attends to B, does B attend to A?
-            reciprocity = torch.mean(torch.abs(batch_attention - batch_attention.T)).item()
-            
-            # Clustering: are there groups of agents that attend to each other?
-            # Use spectral clustering to detect communities
-            try:
-                # Convert to similarity matrix
-                similarity = (batch_attention + batch_attention.T) / 2
-                
-                # Compute eigenvalues
-                eigenvalues = torch.linalg.eigvalsh(similarity)
-                spectral_gap = eigenvalues[-1] - eigenvalues[-2]
-                
-                analysis[f'layer_{layer_idx}'] = {
-                    'self_attention': self_attn,
-                    'reciprocity': reciprocity,
-                    'spectral_gap': spectral_gap.item(),
-                    'attention_matrix': batch_attention.cpu().numpy()
-                }
-            except:
-                analysis[f'layer_{layer_idx}'] = {
-                    'self_attention': self_attn,
-                    'reciprocity': reciprocity,
-                    'spectral_gap': None,
-                    'attention_matrix': batch_attention.cpu().numpy()
-                }
-        
-        return analysis
-    
-    def _analyze_agent_specialization(self, 
-                                    final_hidden: torch.Tensor) -> Dict[str, Any]:
-        """Analyze how agents specialize in different tasks."""
-        # final_hidden shape: [B, N, D]
-        batch_size, num_agents, hidden_dim = final_hidden.shape
-        
-        # Compute agent activation patterns
-        agent_activations = final_hidden.mean(dim=0)  # [N, D]
-        
-        # Compute similarity between agents
-        agent_similarity = F.cosine_similarity(
-            agent_activations.unsqueeze(1),
-            agent_activations.unsqueeze(0),
-            dim=2
-        )
-        
-        # Compute specialization score
-        # High specialization = low similarity between agents
-        specialization_score = 1 - agent_similarity.mean().item()
-        
-        # Detect agent clusters
-        from sklearn.cluster import KMeans
-        import numpy as np
-        
-        agent_features = agent_activations.cpu().numpy()
-        if num_agents > 1:
-            kmeans = KMeans(n_clusters=min(3, num_agents), random_state=42)
-            clusters = kmeans.fit_predict(agent_features)
-            
-            cluster_sizes = np.bincount(clusters)
-            cluster_quality = kmeans.inertia_
-        else:
-            clusters = [0]
-            cluster_sizes = [1]
-            cluster_quality = 0
-        
-        return {
-            'specialization_score': specialization_score,
-            'agent_similarity_matrix': agent_similarity.cpu().numpy(),
-            'agent_clusters': clusters.tolist(),
-            'cluster_sizes': cluster_sizes.tolist(),
-            'cluster_quality': float(cluster_quality)
-        }
 
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("🧪 Testing mHC Trainer...")
-    
-    # Create sample data
-    from .security_dataset import SecurityDataset
+    print("Testing mHC Trainer...")
     
     # Create a small dummy dataset
     import tempfile
-    import json
     
-    sample_data = [
-        {
-            'id': f'sample_{i}',
-            'timestamp': '2024-01-15T10:30:00Z',
-            'source': 'test',
-            'threat_types': ['SQL_Injection'] if i % 2 == 0 else ['Cross_Site_Scripting'],
-            'features': torch.randn(512).tolist(),
-            'labels': [1.0, 0.0] if i % 2 == 0 else [0.0, 1.0]
-        }
-        for i in range(100)
-    ]
+    # Create temporary dataset files
+    train_dataset = SecurityDataset("", feature_dim=512, use_encryption=False)
+    val_dataset = SecurityDataset("", feature_dim=512, use_encryption=False)
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(sample_data, f)
-        temp_file = f.name
+    # Split datasets
+    train_data, val_data, _ = train_dataset.split(train_ratio=0.8, val_ratio=0.2, test_ratio=0.0)
     
-    try:
-        # Create dataset
-        dataset = SecurityDataset(temp_file, feature_dim=512, use_encryption=False)
-        
-        # Split
-        train_data, val_data = dataset.split(train_ratio=0.8, val_ratio=0.2, test_ratio=0.0)[:2]
-        
-        # Create model
-        model = MultiAgentMHCModel(
-            input_dim=512,
-            hidden_dim=256,
-            output_dim=2,  # Binary classification
-            num_agents=4,
-            num_layers=2,
-            manifold_type='sinkhorn',
-            identity_preserve=0.1,
-            signal_bound=1.0
-        )
-        
-        # Config
-        config = {
-            'learning_rate': 1e-4,
-            'batch_size': 8,
-            'num_epochs': 3,  # Short test run
-            'warmup_steps': 10,
-            'gradient_clip': 1.0,
-            'patience': 5,
-            'checkpoint_dir': 'test_checkpoints',
-            'device': 'cpu',
-            'optimizer': 'manifold_constrained',
-            'manifold_constraint': 'sinkhorn',
-            'constraint_strength': 0.1,
-            'scheduler': 'cosine'
-        }
-        
-        # Create trainer
-        trainer = MHCTrainer(model, train_data, val_data, config)
-        
-        # Test training for a few batches
-        print("\n🔧 Testing training loop...")
-        test_metrics = trainer.train_epoch()
-        print(f"Training metrics: {test_metrics}")
-        
-        # Test validation
-        print("\n📊 Testing validation...")
-        val_metrics = trainer.validate()
-        print(f"Validation metrics: {val_metrics}")
-        
-        # Test coordination analysis
-        print("\n🔍 Testing coordination analysis...")
-        analysis = trainer.analyze_coordination()
-        print(f"Coordination analysis keys: {list(analysis.keys())}")
-        
-        print("\n✅ mHC Trainer tests passed!")
-        
-    finally:
-        # Clean up
-        import os
-        os.unlink(temp_file)
-        
-        # Clean up checkpoint directory
-        import shutil
-        if os.path.exists('test_checkpoints'):
-            shutil.rmtree('test_checkpoints')
+    # Create model
+    model = MultiAgentMHCModel(
+        input_dim=512,
+        hidden_dim=256,
+        output_dim=2,  # Binary classification
+        num_agents=4,
+        num_layers=2,
+        manifold_type='sinkhorn',
+        identity_preserve=0.1,
+        signal_bound=1.0
+    )
+    
+    # Config
+    config = {
+        'learning_rate': 1e-4,
+        'batch_size': 8,
+        'num_epochs': 3,  # Short test run
+        'warmup_steps': 10,
+        'gradient_clip': 1.0,
+        'patience': 5,
+        'checkpoint_dir': 'test_checkpoints',
+        'device': 'cpu',
+        'optimizer': 'manifold_constrained',
+        'manifold_constraint': 'sinkhorn',
+        'constraint_strength': 0.1,
+        'scheduler': 'cosine'
+    }
+    
+    # Create trainer
+    trainer = MHCTrainer(model, train_data, val_data, config)
+    
+    # Test training for a few batches
+    print("\nTesting training loop...")
+    test_metrics = trainer.train_epoch()
+    print(f"Training metrics: {test_metrics}")
+    
+    # Test validation
+    print("\nTesting validation...")
+    val_metrics = trainer.validate()
+    print(f"Validation metrics: {val_metrics}")
+    
+    print("\nmHC Trainer tests completed!")

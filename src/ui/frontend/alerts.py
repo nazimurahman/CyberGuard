@@ -18,7 +18,7 @@ Features:
 """
 
 from flask import Blueprint, render_template, request, jsonify, current_app
-from flask_login import login_required
+from flask_login import login_required, current_user  # Added current_user import
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
@@ -125,7 +125,7 @@ class AlertsManager:
     
     def _generate_alert_id(self) -> str:
         """Generate unique alert ID"""
-        alert_id = f"ALERT-{self.next_alert_id:06d}"
+        alert_id = f"ALERT-{self.next_alert_id:06d}"  # Format with leading zeros
         self.next_alert_id += 1
         return alert_id
     
@@ -203,9 +203,9 @@ class AlertsManager:
         Returns:
             List of filtered alerts
         """
-        filtered_alerts = self.alerts.copy()
+        filtered_alerts = self.alerts.copy()  # Create copy to avoid modifying original
         
-        # Apply filters
+        # Apply filters if provided
         if filters:
             # Filter by severity
             if 'severity' in filters:
@@ -239,10 +239,10 @@ class AlertsManager:
                         if start_date <= datetime.fromisoformat(a['timestamp']) <= end_date
                     ]
                 except ValueError:
-                    pass
+                    pass  # Invalid date format, skip date filtering
             
             # Search in title and description
-            if 'search' in filters:
+            if 'search' in filters and filters['search']:
                 search_term = filters['search'].lower()
                 filtered_alerts = [
                     a for a in filtered_alerts 
@@ -293,10 +293,12 @@ class AlertsManager:
                 if notes:
                     if 'notes' not in alert:
                         alert['notes'] = []
+                    # Use current user if available, otherwise use 'system'
+                    author = getattr(current_user, 'username', 'system') if hasattr(current_user, 'username') else 'system'
                     alert['notes'].append({
                         'timestamp': datetime.now().isoformat(),
                         'text': notes,
-                        'author': 'system'  # In production, would be current user
+                        'author': author
                     })
                 
                 return True
@@ -375,17 +377,20 @@ class AlertsManager:
             if datetime.fromisoformat(alert['timestamp']) > cutoff_date
         ]
 
-# Initialize alerts manager
+# Initialize alerts manager (single instance for the application)
 alerts_manager = AlertsManager()
 
-# Alerts routes
+# ============================================
+# ROUTE DEFINITIONS
+# ============================================
+
 @alerts_blueprint.route('/')
 @login_required
 def alerts_overview():
-    """Alerts overview page"""
+    """Alerts overview page - shows dashboard with statistics and recent alerts"""
     stats = alerts_manager.get_alert_statistics()
     
-    # Get recent alerts
+    # Get recent alerts for dashboard display
     recent_alerts = alerts_manager.get_alerts(limit=10)
     
     return render_template(
@@ -400,36 +405,41 @@ def alerts_overview():
 @alerts_blueprint.route('/list')
 @login_required
 def alerts_list():
-    """List all alerts with filtering"""
-    # Get filter parameters
+    """List all alerts with filtering and pagination support"""
+    # Get filter parameters from query string
     filters = {}
     
-    if 'severity' in request.args:
+    if 'severity' in request.args and request.args['severity']:
         filters['severity'] = request.args['severity']
     
-    if 'status' in request.args:
+    if 'status' in request.args and request.args['status']:
         filters['status'] = request.args['status']
     
-    if 'type' in request.args:
+    if 'type' in request.args and request.args['type']:
         filters['type'] = request.args['type']
     
-    if 'search' in request.args:
+    if 'search' in request.args and request.args['search']:
         filters['search'] = request.args['search']
     
-    if 'start_date' in request.args and 'end_date' in request.args:
+    if 'start_date' in request.args and request.args['start_date'] and \
+       'end_date' in request.args and request.args['end_date']:
         filters['start_date'] = request.args['start_date']
         filters['end_date'] = request.args['end_date']
     
     # Get pagination parameters
-    page = int(request.args.get('page', 1))
+    try:
+        page = int(request.args.get('page', 1))
+    except ValueError:
+        page = 1  # Default to page 1 if invalid value
+    
     per_page = 20
     
-    # Get filtered alerts
+    # Get all filtered alerts
     all_alerts = alerts_manager.get_alerts(filters=filters)
     
-    # Calculate pagination
+    # Calculate pagination info
     total_alerts = len(all_alerts)
-    total_pages = (total_alerts + per_page - 1) // per_page
+    total_pages = max(1, (total_alerts + per_page - 1) // per_page)  # Ensure at least 1 page
     
     # Get alerts for current page
     start_idx = (page - 1) * per_page
@@ -452,7 +462,7 @@ def alerts_list():
 @alerts_blueprint.route('/<alert_id>')
 @login_required
 def alert_detail(alert_id):
-    """Alert detail page"""
+    """Display detailed information for a specific alert"""
     alert = alerts_manager.get_alert(alert_id)
     
     if not alert:
@@ -464,14 +474,22 @@ def alert_detail(alert_id):
         alert=alert
     )
 
+# ============================================
+# API ENDPOINTS
+# ============================================
+
 @alerts_blueprint.route('/api/alerts', methods=['GET'])
 @login_required
 def api_get_alerts():
-    """API endpoint to get alerts"""
+    """API endpoint to get alerts with filtering and pagination"""
     try:
-        # Get parameters
-        limit = int(request.args.get('limit', 50))
-        offset = int(request.args.get('offset', 0))
+        # Get pagination parameters with error handling
+        try:
+            limit = int(request.args.get('limit', 50))
+            offset = int(request.args.get('offset', 0))
+        except ValueError:
+            limit = 50
+            offset = 0
         
         # Get filters from query parameters
         filters = {}
@@ -479,13 +497,13 @@ def api_get_alerts():
         filter_fields = ['severity', 'status', 'type', 'search', 
                         'start_date', 'end_date']
         for field in filter_fields:
-            if field in request.args:
+            if field in request.args and request.args[field]:
                 filters[field] = request.args[field]
         
-        # Get alerts
+        # Get alerts from manager
         alerts = alerts_manager.get_alerts(filters=filters, limit=limit, offset=offset)
         
-        # Get statistics
+        # Get statistics for summary
         stats = alerts_manager.get_alert_statistics()
         
         return jsonify({
@@ -496,7 +514,8 @@ def api_get_alerts():
                 'pagination': {
                     'limit': limit,
                     'offset': offset,
-                    'total': len(alerts_manager.alerts)
+                    'total': len(alerts_manager.alerts),
+                    'returned': len(alerts)
                 }
             }
         })
@@ -505,13 +524,13 @@ def api_get_alerts():
         current_app.logger.error(f"Error getting alerts: {str(e)}")
         return jsonify({
             'status': 'error',
-            'message': str(e)
+            'message': 'Internal server error'
         }), 500
 
 @alerts_blueprint.route('/api/alerts/<alert_id>', methods=['GET'])
 @login_required
 def api_get_alert(alert_id):
-    """API endpoint to get specific alert"""
+    """API endpoint to get a specific alert by ID"""
     alert = alerts_manager.get_alert(alert_id)
     
     if not alert:
@@ -530,6 +549,13 @@ def api_get_alert(alert_id):
 def api_update_alert_status(alert_id):
     """API endpoint to update alert status"""
     try:
+        # Parse JSON request body
+        if not request.is_json:
+            return jsonify({
+                'status': 'error',
+                'message': 'Content-Type must be application/json'
+            }), 400
+        
         data = request.get_json()
         
         if not data or 'status' not in data:
@@ -541,6 +567,7 @@ def api_update_alert_status(alert_id):
         status = data['status']
         notes = data.get('notes')
         
+        # Update alert status
         success = alerts_manager.update_alert_status(alert_id, status, notes)
         
         if not success:
@@ -571,17 +598,25 @@ def api_update_alert_status(alert_id):
 def api_add_alert_note(alert_id):
     """API endpoint to add note to alert"""
     try:
-        data = request.get_json()
-        
-        if not data or 'note' not in data:
+        # Parse JSON request body
+        if not request.is_json:
             return jsonify({
                 'status': 'error',
-                'message': 'Note is required'
+                'message': 'Content-Type must be application/json'
+            }), 400
+        
+        data = request.get_json()
+        
+        if not data or 'note' not in data or not data['note']:
+            return jsonify({
+                'status': 'error',
+                'message': 'Note is required and cannot be empty'
             }), 400
         
         note = data['note']
         author = data.get('author', 'system')
         
+        # Add note to alert
         success = alerts_manager.add_note_to_alert(alert_id, note, author)
         
         if not success:
@@ -605,7 +640,7 @@ def api_add_alert_note(alert_id):
 @alerts_blueprint.route('/api/alerts/statistics', methods=['GET'])
 @login_required
 def api_get_alert_statistics():
-    """API endpoint to get alert statistics"""
+    """API endpoint to get alert statistics for dashboards"""
     stats = alerts_manager.get_alert_statistics()
     
     return jsonify({
@@ -616,8 +651,15 @@ def api_get_alert_statistics():
 @alerts_blueprint.route('/api/alerts/bulk/update', methods=['POST'])
 @login_required
 def api_bulk_update_alerts():
-    """API endpoint for bulk alert updates"""
+    """API endpoint for bulk alert updates (multiple alerts at once)"""
     try:
+        # Parse JSON request body
+        if not request.is_json:
+            return jsonify({
+                'status': 'error',
+                'message': 'Content-Type must be application/json'
+            }), 400
+        
         data = request.get_json()
         
         if not data or 'alert_ids' not in data or 'status' not in data:
@@ -630,6 +672,14 @@ def api_bulk_update_alerts():
         status = data['status']
         notes = data.get('notes')
         
+        # Validate alert_ids is a list
+        if not isinstance(alert_ids, list):
+            return jsonify({
+                'status': 'error',
+                'message': 'alert_ids must be a list'
+            }), 400
+        
+        # Update each alert
         results = []
         for alert_id in alert_ids:
             success = alerts_manager.update_alert_status(alert_id, status, notes)
@@ -638,6 +688,7 @@ def api_bulk_update_alerts():
                 'success': success
             })
         
+        # Count successful updates
         success_count = sum(1 for r in results if r['success'])
         
         return jsonify({
@@ -646,6 +697,11 @@ def api_bulk_update_alerts():
             'data': results
         })
         
+    except ValueError as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 400
     except Exception as e:
         current_app.logger.error(f"Error in bulk update: {str(e)}")
         return jsonify({
@@ -653,5 +709,5 @@ def api_bulk_update_alerts():
             'message': 'Internal server error'
         }), 500
 
-# Export blueprint and manager
+# Export blueprint and manager for use in other modules
 __all__ = ['AlertsManager', 'AlertSeverity', 'AlertStatus', 'AlertType', 'alerts_blueprint']

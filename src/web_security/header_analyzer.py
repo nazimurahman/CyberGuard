@@ -8,7 +8,7 @@ Features: Security header validation, misconfiguration detection, attack pattern
 import re
 import json
 from typing import Dict, List, Any, Optional, Tuple, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import hashlib
 
@@ -44,6 +44,7 @@ class HeaderAnalyzer:
         self.config = config
         
         # Required security headers and their recommended values
+        # Define required security headers with their security configurations
         self.required_headers = {
             'Content-Security-Policy': {
                 'required': True,
@@ -63,7 +64,7 @@ class HeaderAnalyzer:
                 'severity': 'MEDIUM'
             },
             'X-XSS-Protection': {
-                'required': False,  # Deprecated but still useful
+                'required': False,  # Deprecated but still useful for older browsers
                 'secure_values': ['1; mode=block'],
                 'severity': 'MEDIUM'
             },
@@ -82,6 +83,7 @@ class HeaderAnalyzer:
         }
         
         # Headers that shouldn't be exposed (information disclosure)
+        # These headers reveal server information that could help attackers
         self.sensitive_headers = [
             'Server',
             'X-Powered-By',
@@ -93,6 +95,7 @@ class HeaderAnalyzer:
         ]
         
         # Suspicious header patterns (potential attacks)
+        # Regular expressions to detect potential malicious patterns in headers
         self.suspicious_patterns = [
             (r'X-Forwarded-For.*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', 'POTENTIAL_IP_SPOOFING'),
             (r'User-Agent.*(sqlmap|nikto|nmap|metasploit)', 'SECURITY_SCANNER'),
@@ -101,7 +104,7 @@ class HeaderAnalyzer:
             (r'Authorization.*Basic\s+[A-Za-z0-9+/]{20,}', 'BASE64_AUTH'),
         ]
         
-        # Cookie security attributes
+        # Cookie security attributes and their requirements
         self.cookie_security_attrs = {
             'HttpOnly': {'required': True, 'severity': 'HIGH'},
             'Secure': {'required': True, 'severity': 'HIGH'},
@@ -111,7 +114,7 @@ class HeaderAnalyzer:
             'Domain': {'required': False, 'severity': 'LOW'},
         }
         
-        # Cache control directives
+        # Cache control directives and their security implications
         self.cache_directives = {
             'no-store': {'security': 'HIGH', 'description': 'Prevents caching'},
             'no-cache': {'security': 'MEDIUM', 'description': 'Validates with server'},
@@ -120,7 +123,7 @@ class HeaderAnalyzer:
             'max-age': {'security': 'MEDIUM', 'description': 'Cache duration'},
         }
         
-        # CORS headers and security
+        # CORS headers and security configurations
         self.cors_headers = {
             'Access-Control-Allow-Origin': {
                 'insecure_values': ['*'],
@@ -140,7 +143,7 @@ class HeaderAnalyzer:
             },
         }
         
-        # Statistics
+        # Initialize statistics for tracking analysis metrics
         self.stats = {
             'headers_analyzed': 0,
             'security_issues_found': 0,
@@ -161,16 +164,9 @@ class HeaderAnalyzer:
             HeaderAnalysis object with analysis results
         """
         # Normalize header keys to lowercase for consistent processing
+        # This ensures case-insensitive header matching
         req_headers = {k.lower(): v for k, v in request_headers.items()}
         resp_headers = {k.lower(): v for k, v in response_headers.items()}
-        
-        # Initialize results containers
-        security_headers = {}
-        missing_headers = []
-        misconfigured_headers = []
-        suspicious_headers = []
-        information_disclosure = []
-        protocol_issues = []
         
         # 1. Analyze security headers in response
         security_headers = self._analyze_security_headers(resp_headers)
@@ -215,6 +211,7 @@ class HeaderAnalyzer:
         self.stats['missing_headers'] += len(missing_headers)
         self.stats['misconfigured_headers'] += len(misconfigured_headers)
         
+        # Return comprehensive analysis results
         return HeaderAnalysis(
             request_headers=request_headers,
             response_headers=response_headers,
@@ -242,13 +239,16 @@ class HeaderAnalyzer:
         """
         analysis = {}
         
+        # Iterate through each required security header
         for header_name, header_config in self.required_headers.items():
             header_lower = header_name.lower()
             
             if header_lower in headers:
+                # Header is present - analyze its value
                 header_value = headers[header_lower]
                 is_secure = self._is_header_secure(header_name, header_value)
                 
+                # Store analysis results
                 analysis[header_name] = {
                     'present': True,
                     'value': header_value,
@@ -257,6 +257,7 @@ class HeaderAnalyzer:
                     'recommendation': self._get_header_recommendation(header_name, header_value)
                 }
             else:
+                # Header is missing
                 analysis[header_name] = {
                     'present': False,
                     'value': None,
@@ -278,25 +279,28 @@ class HeaderAnalyzer:
         Returns:
             True if header is securely configured
         """
+        # If header is not in required headers list, assume it's secure
         if header_name not in self.required_headers:
-            return True  # Unknown header, assume secure
+            return True
         
+        # Get header configuration
         config = self.required_headers[header_name]
         header_value_lower = header_value.lower()
         
-        # Check for insecure values
+        # Check for insecure values first
         if 'insecure_values' in config:
             for insecure_value in config['insecure_values']:
                 if insecure_value.lower() in header_value_lower:
-                    return False
+                    return False  # Header contains insecure value
         
         # Check for secure values
         if 'secure_values' in config:
             for secure_value in config['secure_values']:
                 if secure_value.lower() in header_value_lower:
-                    return True
+                    return True  # Header contains secure value
         
         # Default: check if value is non-empty
+        # Return True if header has any value, False if empty
         return bool(header_value.strip())
     
     def _get_header_recommendation(self, header_name: str, header_value: str) -> str:
@@ -310,6 +314,7 @@ class HeaderAnalyzer:
         Returns:
             Recommendation string
         """
+        # Predefined recommendations for common security headers
         recommendations = {
             'Content-Security-Policy': 'Use strict CSP without unsafe directives',
             'X-Frame-Options': 'Set to DENY or SAMEORIGIN',
@@ -319,6 +324,7 @@ class HeaderAnalyzer:
             'Referrer-Policy': 'Set to no-referrer or same-origin',
         }
         
+        # Return specific recommendation if available, otherwise generic one
         if header_name in recommendations:
             return recommendations[header_name]
         
@@ -336,7 +342,9 @@ class HeaderAnalyzer:
         """
         missing = []
         
+        # Check each required header
         for header_name, config in self.required_headers.items():
+            # Only check headers marked as required
             if config['required'] and header_name.lower() not in headers:
                 missing.append({
                     'header': header_name,
@@ -359,12 +367,14 @@ class HeaderAnalyzer:
         """
         misconfigured = []
         
+        # Check each required header that is present
         for header_name, config in self.required_headers.items():
             header_lower = header_name.lower()
             
             if header_lower in headers:
                 header_value = headers[header_lower]
                 
+                # Check if header is securely configured
                 if not self._is_header_secure(header_name, header_value):
                     misconfigured.append({
                         'header': header_name,
@@ -390,6 +400,7 @@ class HeaderAnalyzer:
         """
         header_value_lower = header_value.lower()
         
+        # Check specific issues for each header type
         if header_name == 'Content-Security-Policy':
             if "'unsafe-inline'" in header_value_lower:
                 return 'Contains unsafe-inline directive'
@@ -412,6 +423,7 @@ class HeaderAnalyzer:
             if 'unsafe-url' in header_value_lower:
                 return 'Uses unsafe-url policy'
         
+        # Generic issue description
         return 'Insecure configuration'
     
     def _analyze_suspicious_headers(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
@@ -426,6 +438,7 @@ class HeaderAnalyzer:
         """
         suspicious = []
         
+        # Check each header for suspicious patterns
         for header_name, header_value in headers.items():
             header_value_str = str(header_value)
             
@@ -434,15 +447,15 @@ class HeaderAnalyzer:
                 if re.search(pattern, header_value_str, re.IGNORECASE):
                     suspicious.append({
                         'header': header_name,
-                        'value': header_value_str[:100],  # First 100 chars
+                        'value': header_value_str[:100],  # First 100 chars to avoid large output
                         'type': pattern_type,
                         'severity': 'HIGH',
                         'description': f'Suspicious pattern in header {header_name}: {pattern_type}',
                         'recommendation': 'Investigate and potentially block request'
                     })
             
-            # Check for overly long headers (potential buffer overflow)
-            if len(header_value_str) > 8192:  # 8KB limit
+            # Check for overly long headers (potential buffer overflow attacks)
+            if len(header_value_str) > 8192:  # 8KB limit (common web server limit)
                 suspicious.append({
                     'header': header_name,
                     'value_length': len(header_value_str),
@@ -466,6 +479,7 @@ class HeaderAnalyzer:
         """
         disclosures = []
         
+        # Check for sensitive headers that should not be exposed
         for header_name in self.sensitive_headers:
             header_lower = header_name.lower()
             
@@ -480,12 +494,12 @@ class HeaderAnalyzer:
                     'recommendation': f'Remove or obfuscate {header_name} header'
                 })
         
-        # Check for detailed error information
+        # Check for detailed error information in version headers
         error_headers = ['x-aspnet-version', 'x-powered-by', 'server']
         for header in error_headers:
             if header in headers:
                 value = headers[header]
-                # Check if value contains version numbers
+                # Check if value contains version numbers (e.g., Apache/2.4.41)
                 if re.search(r'\d+\.\d+(\.\d+)?', value):
                     disclosures.append({
                         'header': header,
@@ -511,7 +525,7 @@ class HeaderAnalyzer:
         """
         issues = []
         
-        # Check for HTTP instead of HTTPS
+        # Check for HTTP instead of HTTPS in forwarded requests
         if 'x-forwarded-proto' in req_headers:
             if req_headers['x-forwarded-proto'] == 'http':
                 issues.append({
@@ -522,7 +536,7 @@ class HeaderAnalyzer:
                     'recommendation': 'Enforce HTTPS for all requests'
                 })
         
-        # Check for missing security headers on HTTPS
+        # Check for missing HSTS on HTTPS connections
         if 'x-forwarded-proto' in req_headers and req_headers['x-forwarded-proto'] == 'https':
             if 'strict-transport-security' not in resp_headers:
                 issues.append({
@@ -533,7 +547,7 @@ class HeaderAnalyzer:
                     'recommendation': 'Add Strict-Transport-Security header for HTTPS'
                 })
         
-        # Check for insecure redirects
+        # Check for insecure redirects (HTTP instead of HTTPS)
         if 'location' in resp_headers:
             location = resp_headers['location']
             if location.startswith('http://'):
@@ -559,6 +573,7 @@ class HeaderAnalyzer:
         Returns:
             Cookie security analysis
         """
+        # Initialize analysis structure
         analysis = {
             'cookies_found': False,
             'secure_cookies': 0,
@@ -571,13 +586,18 @@ class HeaderAnalyzer:
         if 'set-cookie' in resp_headers:
             analysis['cookies_found'] = True
             
-            # Handle multiple Set-Cookie headers
+            # Handle multiple Set-Cookie headers (can be string or list)
             set_cookie_values = resp_headers['set-cookie']
             if isinstance(set_cookie_values, str):
+                # Single cookie - convert to list for consistent processing
                 set_cookie_values = [set_cookie_values]
+            elif not isinstance(set_cookie_values, list):
+                # If it's neither string nor list, make it an empty list
+                set_cookie_values = []
             
+            # Analyze each cookie
             for cookie_str in set_cookie_values:
-                cookie_analysis = self._analyze_single_cookie(cookie_str)
+                cookie_analysis = self._analyze_single_cookie(str(cookie_str))
                 
                 if cookie_analysis['secure']:
                     analysis['secure_cookies'] += 1
@@ -587,13 +607,18 @@ class HeaderAnalyzer:
                 if cookie_analysis['issues']:
                     analysis['issues'].extend(cookie_analysis['issues'])
         
-        # Check for missing HttpOnly/Secure flags
+        # Add recommendations based on analysis
         if analysis['insecure_cookies'] > 0:
             analysis['recommendations'].append('Add HttpOnly and Secure flags to all cookies')
         
-        # Check for session fixation
-        if 'set-cookie' in resp_headers and any('session' in cookie.lower() for cookie in resp_headers['set-cookie']):
-            analysis['recommendations'].append('Consider regenerating session IDs on login')
+        # Check for session fixation vulnerability
+        if 'set-cookie' in resp_headers:
+            # Extract cookie string(s) for checking
+            cookie_str = resp_headers['set-cookie']
+            if isinstance(cookie_str, list):
+                cookie_str = ' '.join(cookie_str)
+            if 'session' in cookie_str.lower():
+                analysis['recommendations'].append('Consider regenerating session IDs on login')
         
         return analysis
     
@@ -607,22 +632,25 @@ class HeaderAnalyzer:
         Returns:
             Single cookie analysis
         """
+        # Initialize analysis structure
         analysis = {
-            'secure': True,
+            'secure': True,  # Start assuming cookie is secure
             'issues': [],
             'attributes': {}
         }
         
-        # Parse cookie attributes
+        # Parse cookie string into parts
         parts = cookie_str.split(';')
         cookie_name_value = parts[0].strip()
         
-        # Extract attributes
+        # Extract and analyze each attribute
         for part in parts[1:]:
             part = part.strip()
             if '=' in part:
+                # Attribute with value (e.g., Max-Age=3600)
                 attr_name, attr_value = part.split('=', 1)
             else:
+                # Boolean attribute (e.g., HttpOnly, Secure)
                 attr_name, attr_value = part, True
             
             attr_name_lower = attr_name.lower()
@@ -697,6 +725,7 @@ class HeaderAnalyzer:
         Returns:
             Cache security analysis
         """
+        # Initialize analysis structure
         analysis = {
             'cache_control_present': False,
             'cache_directives': {},
@@ -704,13 +733,15 @@ class HeaderAnalyzer:
             'recommendations': []
         }
         
+        # Check for Cache-Control header
         if 'cache-control' in headers:
             analysis['cache_control_present'] = True
             cache_control = headers['cache-control'].lower()
             
-            # Parse directives
+            # Parse directives (comma-separated)
             directives = [d.strip() for d in cache_control.split(',')]
             
+            # Extract each directive
             for directive in directives:
                 if '=' in directive:
                     name, value = directive.split('=', 1)
@@ -719,7 +750,7 @@ class HeaderAnalyzer:
                 
                 analysis['cache_directives'][name] = value
             
-            # Check security
+            # Check security - sensitive content should not be cached
             if 'no-store' not in analysis['cache_directives']:
                 analysis['security_issues'].append({
                     'type': 'MISSING_NO_STORE',
@@ -728,6 +759,7 @@ class HeaderAnalyzer:
                     'recommendation': 'Add no-store directive for sensitive responses'
                 })
             
+            # Check for public caching of sensitive data
             if 'private' not in analysis['cache_directives'] and 'no-store' not in analysis['cache_directives']:
                 analysis['security_issues'].append({
                     'type': 'PUBLIC_CACHE',
@@ -737,6 +769,7 @@ class HeaderAnalyzer:
                 })
         
         else:
+            # Missing Cache-Control header
             analysis['security_issues'].append({
                 'type': 'MISSING_CACHE_CONTROL',
                 'severity': 'LOW',
@@ -763,6 +796,7 @@ class HeaderAnalyzer:
         Returns:
             CORS security analysis
         """
+        # Initialize analysis structure
         analysis = {
             'cors_enabled': False,
             'headers_present': {},
@@ -770,18 +804,20 @@ class HeaderAnalyzer:
             'recommendations': []
         }
         
-        # Check for CORS headers
+        # Check for presence of CORS headers
         for header_name in self.cors_headers.keys():
             header_lower = header_name.lower()
             if header_lower in headers:
                 analysis['cors_enabled'] = True
                 analysis['headers_present'][header_name] = headers[header_lower]
         
+        # If CORS is enabled, analyze the configuration
         if analysis['cors_enabled']:
-            # Analyze Access-Control-Allow-Origin
+            # Analyze Access-Control-Allow-Origin header
             if 'Access-Control-Allow-Origin' in analysis['headers_present']:
                 origin = analysis['headers_present']['Access-Control-Allow-Origin']
                 
+                # Wildcard origin is insecure
                 if origin == '*':
                     analysis['security_issues'].append({
                         'type': 'WILDCARD_CORS_ORIGIN',
@@ -790,7 +826,7 @@ class HeaderAnalyzer:
                         'recommendation': 'Restrict to specific origins'
                     })
                 
-                # Check if credentials are allowed with wildcard
+                # Check for credentials with wildcard origin (critical security issue)
                 if origin == '*' and 'Access-Control-Allow-Credentials' in analysis['headers_present']:
                     if analysis['headers_present']['Access-Control-Allow-Credentials'].lower() == 'true':
                         analysis['security_issues'].append({
@@ -800,7 +836,7 @@ class HeaderAnalyzer:
                             'recommendation': 'Disallow credentials or restrict origin'
                         })
             
-            # Analyze Access-Control-Allow-Methods
+            # Analyze Access-Control-Allow-Methods header
             if 'Access-Control-Allow-Methods' in analysis['headers_present']:
                 methods = analysis['headers_present']['Access-Control-Allow-Methods']
                 if methods == '*':
@@ -811,7 +847,7 @@ class HeaderAnalyzer:
                         'recommendation': 'Restrict to specific methods'
                     })
             
-            # Analyze Access-Control-Allow-Headers
+            # Analyze Access-Control-Allow-Headers header
             if 'Access-Control-Allow-Headers' in analysis['headers_present']:
                 headers_list = analysis['headers_present']['Access-Control-Allow-Headers']
                 if headers_list == '*':
@@ -844,7 +880,7 @@ class HeaderAnalyzer:
         Returns:
             Security score between 0.0 (worst) and 1.0 (best)
         """
-        # Severity weights
+        # Severity weights for different types of issues
         severity_weights = {
             'CRITICAL': 0.9,
             'HIGH': 0.7,
@@ -852,35 +888,34 @@ class HeaderAnalyzer:
             'LOW': 0.1,
         }
         
-        # Calculate penalty from each issue type
-        penalty = 0.0
+        penalty = 0.0  # Start with no penalty
         
-        # Missing headers penalty
+        # Calculate penalty from missing headers
         for issue in missing_headers:
             severity = issue.get('severity', 'LOW')
             penalty += severity_weights.get(severity, 0.1) * 0.3
         
-        # Misconfigured headers penalty
+        # Calculate penalty from misconfigured headers
         for issue in misconfigured_headers:
             severity = issue.get('severity', 'LOW')
             penalty += severity_weights.get(severity, 0.1) * 0.4
         
-        # Suspicious headers penalty
+        # Calculate penalty from suspicious headers
         for issue in suspicious_headers:
             severity = issue.get('severity', 'LOW')
             penalty += severity_weights.get(severity, 0.1) * 0.6
         
-        # Information disclosure penalty
+        # Calculate penalty from information disclosure
         for issue in information_disclosure:
             severity = issue.get('severity', 'LOW')
             penalty += severity_weights.get(severity, 0.1) * 0.2
         
-        # Protocol issues penalty
+        # Calculate penalty from protocol issues
         for issue in protocol_issues:
             severity = issue.get('severity', 'LOW')
             penalty += severity_weights.get(severity, 0.1) * 0.5
         
-        # Cookie issues penalty
+        # Calculate penalty from cookie issues
         if cookie_analysis.get('issues'):
             for issue in cookie_analysis['issues']:
                 severity = issue.get('severity', 'LOW')
@@ -891,12 +926,13 @@ class HeaderAnalyzer:
                        len(suspicious_headers) + len(information_disclosure) + 
                        len(protocol_issues) + len(cookie_analysis.get('issues', [])))
         
-        # Normalize penalty with diminishing returns
+        # Normalize penalty with diminishing returns (more issues don't linearly increase penalty)
         normalized_penalty = min(penalty / (1 + total_issues * 0.1), 1.0)
         
         # Security score is inverse of penalty
         security_score = 1.0 - normalized_penalty
         
+        # Ensure score is within [0.0, 1.0] range
         return max(0.0, min(1.0, security_score))
     
     def get_statistics(self) -> Dict[str, Any]:
@@ -906,4 +942,5 @@ class HeaderAnalyzer:
         Returns:
             Dictionary of statistics
         """
+        # Return a copy to prevent external modification
         return self.stats.copy()

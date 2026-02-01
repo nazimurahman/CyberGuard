@@ -23,22 +23,18 @@ Security Features:
 import os
 import sys
 from pathlib import Path
+from flask import Flask, render_template  # Added missing render_template import
 
 # Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # Changed append to insert for better import resolution
 
 # Package version
 __version__ = "1.0.0"
 __author__ = "CyberGuard Security Team"
 __description__ = "Web Security AI Platform UI"
 
-# Export main components
-from .api.rest_api import CyberGuardAPI, api_blueprint
-from .api.websocket_handler import WebSocketHandler, websocket_blueprint
-from .api.webhook_handler import WebhookHandler, webhook_blueprint
-from .frontend.dashboard import DashboardApp, dashboard_blueprint
-from .frontend.alerts import AlertsManager, alerts_blueprint
-from .frontend.tutor_mode import TutorMode, tutor_blueprint
+# Export main components - Note: These imports must be placed after Flask app creation
+# to avoid circular imports. We'll use local imports in the create_ui_app function.
 
 # Create a factory function to initialize the complete UI
 def create_ui_app(agent_orchestrator=None, security_scanner=None, config=None):
@@ -53,7 +49,14 @@ def create_ui_app(agent_orchestrator=None, security_scanner=None, config=None):
     Returns:
         Flask application instance with all UI components registered
     """
-    from flask import Flask
+    
+    # Import blueprints and components inside function to avoid circular imports
+    from .api.rest_api import CyberGuardAPI, api_blueprint
+    from .api.websocket_handler import WebSocketHandler, websocket_blueprint
+    from .api.webhook_handler import WebhookHandler, webhook_blueprint
+    from .frontend.dashboard import DashboardApp, dashboard_blueprint
+    from .frontend.alerts import AlertsManager, alerts_blueprint
+    from .frontend.tutor_mode import TutorMode, tutor_blueprint
     
     # Create Flask app
     app = Flask(__name__, 
@@ -142,7 +145,7 @@ def register_error_handlers(app):
         """Handle 429 Rate Limit exceeded"""
         return render_template('errors/429.html'), 429
 
-# Export the factory function
+# Export the factory function and components (moved after function definitions)
 __all__ = [
     'create_ui_app',
     'CyberGuardAPI',
@@ -152,5 +155,8 @@ __all__ = [
     'AlertsManager',
     'TutorMode'
 ]
+
+# Note: The component imports need to be handled carefully to avoid circular imports
+# We'll use a lazy loading approach in the actual usage
 
 print(f"CyberGuard UI Package v{__version__} initialized")

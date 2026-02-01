@@ -81,6 +81,23 @@ class TrafficAnomalyAgent(SecurityAgent):
             'behavior_anomaly': 2.5,  # Z-score for behavior
         }
         
+        # Rate limiting rules
+        self.rate_limits = {
+            'ip': {'limit': 100, 'window': 60},      # 100 requests/minute per IP
+            'endpoint': {'limit': 500, 'window': 60}, # 500 requests/minute per endpoint
+            'user': {'limit': 50, 'window': 60},     # 50 requests/minute per user
+        }
+        
+        # Rate limiting storage
+        self.rate_limit_windows = {}  # Track rate limit windows
+        
+        # IP blacklist/whitelist storage
+        self.ip_blacklist = set()
+        self.ip_whitelist = set()
+        
+        # IP geographic location history
+        self.ip_locations = {}
+        
         # Initialize ML models for anomaly detection
         self._initialize_models()
         
@@ -89,13 +106,6 @@ class TrafficAnomalyAgent(SecurityAgent):
         
         # Attack signature database
         self.attack_signatures = self._load_attack_signatures()
-        
-        # Rate limiting rules
-        self.rate_limits = {
-            'ip': {'limit': 100, 'window': 60},      # 100 requests/minute per IP
-            'endpoint': {'limit': 500, 'window': 60}, # 500 requests/minute per endpoint
-            'user': {'limit': 50, 'window': 60},     # 50 requests/minute per user
-        }
         
         # Metrics tracking
         self.metrics = {
@@ -118,10 +128,10 @@ class TrafficAnomalyAgent(SecurityAgent):
         try:
             # Autoencoder for traffic pattern reconstruction
             self.autoencoder = self._create_autoencoder()
-            # Note: In production, these would be pre-trained models
-            print(f"✅ {self.name}: ML models initialized")
+            # Initialize with random weights (would be pre-trained in production)
+            print("Traffic Anomaly Agent: ML models initialized")
         except Exception as e:
-            print(f"⚠️ {self.name}: Model initialization failed: {e}")
+            print(f"Traffic Anomaly Agent: Model initialization failed: {e}")
             # Fallback to statistical methods
             self.autoencoder = None
     
@@ -297,14 +307,14 @@ class TrafficAnomalyAgent(SecurityAgent):
                 'decision': {
                     'threat_level': threat_level,
                     'confidence': confidence,
-                    'evidence': anomalies[:5]  # Top 5 anomalies as evidence
+                    'evidence': anomalies[:5] if anomalies else []  # Top 5 anomalies as evidence
                 }
             }
             
             return response
             
         except Exception as e:
-            print(f"❌ {self.name}: Analysis error: {e}")
+            print(f"Traffic Anomaly Agent: Analysis error: {e}")
             return self._error_response(str(e))
     
     def _validate_traffic_data(self, data: Dict) -> bool:
@@ -318,20 +328,24 @@ class TrafficAnomalyAgent(SecurityAgent):
         
         for field in required_fields:
             if field not in data:
-                print(f"⚠️ Missing required field: {field}")
+                print(f"Missing required field: {field}")
                 return False
         
         # Validate timestamp format
         try:
-            datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+            timestamp_str = data['timestamp']
+            # Handle ISO format with or without Z suffix
+            if timestamp_str.endswith('Z'):
+                timestamp_str = timestamp_str[:-1] + '+00:00'
+            datetime.fromisoformat(timestamp_str)
         except (ValueError, TypeError):
-            print(f"⚠️ Invalid timestamp format: {data['timestamp']}")
+            print(f"Invalid timestamp format: {data['timestamp']}")
             return False
         
         # Validate IP address format
         ip = data['ip_address']
         if not (isinstance(ip, str) and 7 <= len(ip) <= 45):
-            print(f"⚠️ Invalid IP address: {ip}")
+            print(f"Invalid IP address: {ip}")
             return False
         
         return True
@@ -353,7 +367,10 @@ class TrafficAnomalyAgent(SecurityAgent):
         )
         
         # Temporal features
-        timestamp = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+        timestamp_str = data['timestamp']
+        if timestamp_str.endswith('Z'):
+            timestamp_str = timestamp_str[:-1] + '+00:00'
+        timestamp = datetime.fromisoformat(timestamp_str)
         features['hour_of_day'] = timestamp.hour / 24.0  # Normalized 0-1
         features['day_of_week'] = timestamp.weekday() / 7.0  # Normalized 0-1
         features['minute_of_hour'] = timestamp.minute / 60.0  # Normalized 0-1
@@ -439,10 +456,10 @@ class TrafficAnomalyAgent(SecurityAgent):
         In production, this would query external reputation services
         """
         # Check internal blacklist/whitelist
-        if hasattr(self, 'ip_blacklist') and ip in self.ip_blacklist:
+        if ip in self.ip_blacklist:
             return 0.0
         
-        if hasattr(self, 'ip_whitelist') and ip in self.ip_whitelist:
+        if ip in self.ip_whitelist:
             return 1.0
         
         # Default: unknown reputation
@@ -456,8 +473,10 @@ class TrafficAnomalyAgent(SecurityAgent):
             return 0.0
         
         # Count occurrences in last window
-        recent_ips = [entry['ip'] for entry in self.traffic_history 
-                     if time.time() - entry['timestamp'] < 300]  # 5 minutes
+        recent_ips = []
+        for entry in self.traffic_history:
+            if isinstance(entry, dict) and 'ip' in entry:
+                recent_ips.append(entry['ip'])
         
         if not recent_ips:
             return 0.0
@@ -485,11 +504,16 @@ class TrafficAnomalyAgent(SecurityAgent):
         entropy = 0.0
         for count in freq.values():
             probability = count / length
-            entropy -= probability * np.log2(probability)
+            if probability > 0:  # Avoid log(0)
+                entropy -= probability * np.log2(probability)
         
         # Normalize to 0-1 range
-        max_entropy = np.log2(len(set(text))) if text else 0
-        return entropy / max_entropy if max_entropy > 0 else 0.0
+        unique_chars = len(set(text))
+        max_entropy = np.log2(unique_chars) if unique_chars > 0 else 0
+        if max_entropy > 0:
+            return entropy / max_entropy
+        else:
+            return 0.0
     
     def _is_browser_user_agent(self, ua: str) -> float:
         """
@@ -532,13 +556,16 @@ class TrafficAnomalyAgent(SecurityAgent):
         """
         Update traffic history with new request
         """
+        request_data = data.get('request', {})
+        response_data = data.get('response', {})
+        
         entry = {
             'timestamp': time.time(),
             'ip': data['ip_address'],
-            'endpoint': data.get('request', {}).get('endpoint', ''),
-            'method': data.get('request', {}).get('method', 'GET'),
-            'status': data.get('response', {}).get('status', 200),
-            'response_time': data.get('response', {}).get('time', 0),
+            'endpoint': request_data.get('endpoint', ''),
+            'method': request_data.get('method', 'GET'),
+            'status': response_data.get('status', 200),
+            'response_time': response_data.get('time', 0),
             'user_agent': data.get('user_agent', ''),
             'features': features
         }
@@ -551,6 +578,7 @@ class TrafficAnomalyAgent(SecurityAgent):
             self.ip_profiles[ip] = {
                 'request_count': 0,
                 'last_seen': 0,
+                'first_seen': time.time(),
                 'endpoints': set(),
                 'user_agents': set()
             }
@@ -558,7 +586,7 @@ class TrafficAnomalyAgent(SecurityAgent):
         profile = self.ip_profiles[ip]
         profile['request_count'] += 1
         profile['last_seen'] = time.time()
-        profile['endpoints'].add(data.get('request', {}).get('endpoint', ''))
+        profile['endpoints'].add(request_data.get('endpoint', ''))
         profile['user_agents'].add(data.get('user_agent', ''))
     
     def _compute_metrics(self, features: Dict) -> TrafficMetrics:
@@ -569,10 +597,11 @@ class TrafficAnomalyAgent(SecurityAgent):
             return TrafficMetrics()
         
         # Get recent traffic (last 5 minutes)
-        recent_traffic = [
-            entry for entry in self.traffic_history
-            if time.time() - entry['timestamp'] < 300
-        ]
+        recent_traffic = []
+        for entry in self.traffic_history:
+            if isinstance(entry, dict) and 'timestamp' in entry:
+                if time.time() - entry['timestamp'] < 300:
+                    recent_traffic.append(entry)
         
         if not recent_traffic:
             return TrafficMetrics()
@@ -582,34 +611,50 @@ class TrafficAnomalyAgent(SecurityAgent):
         request_rate = request_count / 300  # per second
         
         # Average response time
-        response_times = [entry['response_time'] for entry in recent_traffic 
-                         if entry['response_time'] > 0]
+        response_times = []
+        for entry in recent_traffic:
+            if 'response_time' in entry and entry['response_time'] > 0:
+                response_times.append(entry['response_time'])
+        
         avg_response_time = np.mean(response_times) if response_times else 0
         
         # Error rate
-        error_count = sum(1 for entry in recent_traffic 
-                         if entry['status'] >= 400)
+        error_count = 0
+        for entry in recent_traffic:
+            if 'status' in entry and entry['status'] >= 400:
+                error_count += 1
+        
         error_rate = error_count / request_count if request_count > 0 else 0
         
         # Unique IPs
-        unique_ips = len(set(entry['ip'] for entry in recent_traffic))
+        unique_ips = set()
+        for entry in recent_traffic:
+            if 'ip' in entry:
+                unique_ips.add(entry['ip'])
+        unique_ips_count = len(unique_ips)
         
         # Data transferred (estimate)
-        data_transferred = sum(
-            len(str(entry)) / 1024 / 1024  # MB
-            for entry in recent_traffic
-        )
+        data_transferred = 0
+        for entry in recent_traffic:
+            # Rough estimate: size of entry dict in MB
+            entry_size = len(str(entry).encode('utf-8'))
+            data_transferred += entry_size / 1024 / 1024
         
         # Request entropy
-        endpoints = [entry['endpoint'] for entry in recent_traffic]
-        request_entropy = self._compute_entropy(''.join(endpoints))
+        endpoints = []
+        for entry in recent_traffic:
+            if 'endpoint' in entry:
+                endpoints.append(entry['endpoint'])
+        
+        endpoint_text = ''.join(endpoints)
+        request_entropy = self._compute_entropy(endpoint_text)
         
         return TrafficMetrics(
             request_count=request_count,
             request_rate=request_rate,
             avg_response_time=avg_response_time,
             error_rate=error_rate,
-            unique_ips=unique_ips,
+            unique_ips=unique_ips_count,
             data_transferred=data_transferred,
             request_entropy=request_entropy
         )
@@ -644,15 +689,19 @@ class TrafficAnomalyAgent(SecurityAgent):
         
         # 3. Check for traffic bursts
         if len(self.traffic_history) >= 10:
+            # Get request counts in sliding windows
+            traffic_list = list(self.traffic_history)
             recent_counts = []
-            for i in range(0, len(self.traffic_history), 10):
-                window = list(self.traffic_history)[i:i+10]
+            
+            # Create sliding windows of 10 entries each
+            for i in range(0, len(traffic_list), 10):
+                window = traffic_list[i:i+10]
                 if window:
                     recent_counts.append(len(window))
             
-            if recent_counts:
-                avg_count = np.mean(recent_counts)
-                std_count = np.std(recent_counts)
+            if recent_counts and len(recent_counts) > 1:
+                avg_count = np.mean(recent_counts[:-1])  # Exclude current window
+                std_count = np.std(recent_counts[:-1])
                 latest_count = recent_counts[-1] if recent_counts else 0
                 
                 if std_count > 0 and latest_count > avg_count + 2 * std_count:
@@ -716,7 +765,7 @@ class TrafficAnomalyAgent(SecurityAgent):
                     })
                     
             except Exception as e:
-                print(f"⚠️ ML anomaly detection failed: {e}")
+                print(f"ML anomaly detection failed: {e}")
         
         return anomalies
     
@@ -755,8 +804,10 @@ class TrafficAnomalyAgent(SecurityAgent):
         anomalies = []
         
         ip = data['ip_address']
-        endpoint = data.get('request', {}).get('endpoint', '')
-        user = data.get('user', {}).get('id', 'anonymous')
+        request_data = data.get('request', {})
+        endpoint = request_data.get('endpoint', '')
+        user_data = data.get('user', {})
+        user = user_data.get('id', 'anonymous')
         
         current_time = time.time()
         
@@ -773,7 +824,7 @@ class TrafficAnomalyAgent(SecurityAgent):
         
         # Check endpoint rate limit
         endpoint_key = f"endpoint:{endpoint}"
-        if self._is_rate_limited(endpoint_key, 'endpoint', current_time):
+        if endpoint and self._is_rate_limited(endpoint_key, 'endpoint', current_time):
             anomalies.append({
                 'type': 'ENDPOINT_RATE_LIMIT',
                 'severity': 'MEDIUM',
@@ -784,7 +835,7 @@ class TrafficAnomalyAgent(SecurityAgent):
         
         # Check user rate limit
         user_key = f"user:{user}"
-        if self._is_rate_limited(user_key, 'user', current_time):
+        if user and self._is_rate_limited(user_key, 'user', current_time):
             anomalies.append({
                 'type': 'USER_RATE_LIMIT',
                 'severity': 'MEDIUM',
@@ -801,16 +852,14 @@ class TrafficAnomalyAgent(SecurityAgent):
         
         Implements sliding window rate limiting
         """
-        if not hasattr(self, 'rate_limit_windows'):
-            self.rate_limit_windows = {}
-        
-        if key not in self.rate_limit_windows:
-            self.rate_limit_windows[key] = []
-        
         # Get window configuration
         config = self.rate_limits.get(limit_type, {'limit': 100, 'window': 60})
         limit = config['limit']
         window_seconds = config['window']
+        
+        # Initialize if not exists
+        if key not in self.rate_limit_windows:
+            self.rate_limit_windows[key] = []
         
         # Clean old entries outside window
         window_start = current_time - window_seconds
@@ -838,7 +887,8 @@ class TrafficAnomalyAgent(SecurityAgent):
             profile = self.ip_profiles[ip]
             
             # Check for sudden change in behavior
-            current_endpoint = data.get('request', {}).get('endpoint', '')
+            request_data = data.get('request', {})
+            current_endpoint = request_data.get('endpoint', '')
             current_ua = data.get('user_agent', '')
             
             # Endpoint anomaly: accessing new/different endpoints
@@ -846,13 +896,17 @@ class TrafficAnomalyAgent(SecurityAgent):
                 current_endpoint not in profile['endpoints'] and
                 len(profile['endpoints']) > 5):  # Has established pattern
                 
+                # Get first 5 known endpoints
+                known_endpoints = list(profile['endpoints'])
+                known_endpoints_display = known_endpoints[:5] if len(known_endpoints) > 5 else known_endpoints
+                
                 anomalies.append({
                     'type': 'NEW_ENDPOINT_ACCESS',
                     'severity': 'LOW',
                     'description': f'IP {ip} accessed new endpoint: {current_endpoint}',
                     'ip': ip,
                     'endpoint': current_endpoint,
-                    'known_endpoints': list(profile['endpoints'])[:5]  # First 5
+                    'known_endpoints': known_endpoints_display
                 })
             
             # User agent anomaly: sudden change in UA
@@ -860,13 +914,15 @@ class TrafficAnomalyAgent(SecurityAgent):
                 current_ua not in profile['user_agents'] and
                 len(profile['user_agents']) > 2):
                 
+                known_agents = list(profile['user_agents'])
+                
                 anomalies.append({
                     'type': 'USER_AGENT_CHANGE',
                     'severity': 'LOW',
                     'description': f'IP {ip} changed user agent',
                     'ip': ip,
                     'new_user_agent': current_ua[:100],  # Truncate
-                    'known_user_agents': list(profile['user_agents'])
+                    'known_user_agents': known_agents
                 })
             
             # Request frequency anomaly
@@ -893,13 +949,17 @@ class TrafficAnomalyAgent(SecurityAgent):
         """
         Get request rate for IP in recent window
         """
-        recent_requests = [
-            entry for entry in self.traffic_history
-            if entry['ip'] == ip and 
-            time.time() - entry['timestamp'] < window_seconds
-        ]
+        recent_requests = []
+        for entry in self.traffic_history:
+            if isinstance(entry, dict) and entry.get('ip') == ip:
+                entry_time = entry.get('timestamp', 0)
+                if time.time() - entry_time < window_seconds:
+                    recent_requests.append(entry)
         
-        return len(recent_requests) / window_seconds if window_seconds > 0 else 0
+        if window_seconds > 0 and recent_requests:
+            return len(recent_requests) / window_seconds
+        else:
+            return 0.0
     
     def _detect_geographic_anomalies(self, data: Dict) -> List[Dict]:
         """
@@ -925,13 +985,11 @@ class TrafficAnomalyAgent(SecurityAgent):
             })
         
         # Check for geographic hopping (if we had location history)
-        if hasattr(self, 'ip_locations') and ip in self.ip_locations:
+        if ip in self.ip_locations:
             current_location = mock_country
             previous_locations = self.ip_locations[ip]
             
-            if (current_location not in previous_locations and
-                len(previous_locations) > 0):
-                
+            if previous_locations and current_location not in previous_locations:
                 anomalies.append({
                     'type': 'GEOGRAPHIC_HOPPING',
                     'severity': 'MEDIUM',
@@ -940,6 +998,11 @@ class TrafficAnomalyAgent(SecurityAgent):
                     'previous_country': previous_locations[-1],
                     'current_country': current_location
                 })
+        
+        # Update location history
+        if ip not in self.ip_locations:
+            self.ip_locations[ip] = []
+        self.ip_locations[ip].append(mock_country)
         
         return anomalies
     
@@ -958,7 +1021,10 @@ class TrafficAnomalyAgent(SecurityAgent):
         """
         anomalies = []
         
-        timestamp = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+        timestamp_str = data['timestamp']
+        if timestamp_str.endswith('Z'):
+            timestamp_str = timestamp_str[:-1] + '+00:00'
+        timestamp = datetime.fromisoformat(timestamp_str)
         hour = timestamp.hour
         
         # Check if outside normal business hours
@@ -976,7 +1042,7 @@ class TrafficAnomalyAgent(SecurityAgent):
             anomalies.append({
                 'type': 'WEEKEND_ACCESS',
                 'severity': 'LOW',
-                'description': 'Access on weekend',
+                'description': f'Access on weekend ({timestamp.strftime("%A")})',
                 'day': timestamp.strftime('%A'),
                 'note': 'Weekend access pattern'
             })
@@ -1011,7 +1077,10 @@ class TrafficAnomalyAgent(SecurityAgent):
             max_possible_weight += 1.0  # Max if all were CRITICAL
         
         # Compute threat level (normalized)
-        threat_level = min(1.0, total_weight / max_possible_weight)
+        if max_possible_weight > 0:
+            threat_level = min(1.0, total_weight / max_possible_weight)
+        else:
+            threat_level = 0.0
         
         # Compute confidence based on number and severity of anomalies
         confidence_factors = []
@@ -1030,7 +1099,10 @@ class TrafficAnomalyAgent(SecurityAgent):
         confidence_factors.append(self.confidence)
         
         # Average confidence factors
-        confidence = np.mean(confidence_factors)
+        if confidence_factors:
+            confidence = np.mean(confidence_factors)
+        else:
+            confidence = 0.5
         
         return threat_level, confidence
     
@@ -1061,7 +1133,8 @@ class TrafficAnomalyAgent(SecurityAgent):
         Get current rate limit status for this request
         """
         ip = data['ip_address']
-        endpoint = data.get('request', {}).get('endpoint', '')
+        request_data = data.get('request', {})
+        endpoint = request_data.get('endpoint', '')
         
         status = {
             'ip': ip,
@@ -1070,9 +1143,18 @@ class TrafficAnomalyAgent(SecurityAgent):
         }
         
         for limit_type, config in self.rate_limits.items():
-            key = f"{limit_type}:{ip if limit_type == 'ip' else endpoint}"
+            if limit_type == 'ip':
+                key = f"ip:{ip}"
+            elif limit_type == 'endpoint' and endpoint:
+                key = f"endpoint:{endpoint}"
+            elif limit_type == 'user':
+                user_data = data.get('user', {})
+                user = user_data.get('id', 'anonymous')
+                key = f"user:{user}"
+            else:
+                continue
             
-            if hasattr(self, 'rate_limit_windows') and key in self.rate_limit_windows:
+            if key in self.rate_limit_windows:
                 requests = len(self.rate_limit_windows[key])
                 remaining = max(0, config['limit'] - requests)
                 
@@ -1081,7 +1163,7 @@ class TrafficAnomalyAgent(SecurityAgent):
                     'limit': config['limit'],
                     'remaining': remaining,
                     'window_seconds': config['window'],
-                    'percentage': (requests / config['limit']) * 100
+                    'percentage': (requests / config['limit']) * 100 if config['limit'] > 0 else 0
                 }
         
         return status
@@ -1143,9 +1225,10 @@ class TrafficAnomalyAgent(SecurityAgent):
         
         # Update average processing time (exponential moving average)
         alpha = 0.1
+        current_avg = self.metrics['avg_processing_time']
         self.metrics['avg_processing_time'] = (
             alpha * processing_time + 
-            (1 - alpha) * self.metrics['avg_processing_time']
+            (1 - alpha) * current_avg
         )
         
         if anomaly_detected:
@@ -1184,7 +1267,7 @@ class TrafficAnomalyAgent(SecurityAgent):
             'traffic_stats': {
                 'history_size': len(self.traffic_history),
                 'unique_ips_tracked': len(self.ip_profiles),
-                'rate_limits_active': len(getattr(self, 'rate_limit_windows', {})),
+                'rate_limits_active': len(self.rate_limit_windows),
                 'avg_processing_time': self.metrics['avg_processing_time']
             },
             'config': {

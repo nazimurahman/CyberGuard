@@ -9,6 +9,8 @@ import json
 import hashlib
 import hmac
 import asyncio
+import re  # Missing import for regex operations
+import ipaddress  # Missing import for IP validation
 from typing import Dict, List, Any, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -27,14 +29,14 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    print("⚠️ Redis not available - using in-memory store (not production ready)")
+    print("Warning: Redis not available - using in-memory store (not production ready)")
 
 try:
     from prometheus_client import Counter, Histogram, Gauge
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False
-    print("⚠️ Prometheus not available - metrics disabled")
+    print("Warning: Prometheus not available - metrics disabled")
 
 # Configure logging
 logging.basicConfig(
@@ -42,6 +44,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
 
 # ============================================================================
 # DATA CLASSES FOR CONFIGURATION
@@ -68,6 +71,7 @@ class RateLimitConfig:
         if self.window_seconds <= 0:
             return False, "window_seconds must be positive"
         return True, "Configuration valid"
+
 
 @dataclass
 class SecurityHeadersConfig:
@@ -101,6 +105,7 @@ class SecurityHeadersConfig:
     cross_origin_embedder_policy: str = "require-corp"
     cross_origin_resource_policy: str = "same-origin"
 
+
 @dataclass
 class ThreatDetectionConfig:
     """
@@ -129,6 +134,7 @@ class ThreatDetectionConfig:
     enable_behavioral_analysis: bool = True
     anomaly_detection_window: int = 100  # Requests to analyze
     anomaly_threshold: float = 3.0  # Standard deviations from mean
+
 
 # ============================================================================
 # CORE MIDDLEWARE CLASSES
@@ -251,7 +257,8 @@ class RateLimiter:
         # Check burst limit
         if recent_timestamps:
             time_since_last = current_time - recent_timestamps[-1]
-            if time_since_last < (self.config.window_seconds / self.config.burst_limit):
+            burst_limit_interval = self.config.window_seconds / self.config.burst_limit
+            if time_since_last < burst_limit_interval:
                 # Too many requests in burst
                 if PROMETHEUS_AVAILABLE:
                     self.blocked_counter.labels(client_ip=client_ip, reason='burst').inc()
@@ -264,7 +271,7 @@ class RateLimiter:
         
         # Not rate limited, record this request
         if self.redis_client and REDIS_AVAILABLE:
-            self.redis_client.rpush(f"rate_limit:{client_ip}", current_time)
+            self.redis_client.rpush(f"rate_limit:{client_ip}", str(current_time))
             self.redis_client.expire(f"rate_limit:{client_ip}", self.config.window_seconds)
         else:
             self.local_store[client_ip].append(current_time)
@@ -296,7 +303,7 @@ class RateLimiter:
         if self.redis_client and REDIS_AVAILABLE:
             violations = self.redis_client.incr(violation_key)
             self.redis_client.expire(violation_key, 3600)  # Expire after 1 hour
-            return violations
+            return int(violations) if violations else 0
         else:
             # In-memory tracking
             if client_ip not in self.local_store:
@@ -304,6 +311,7 @@ class RateLimiter:
             self.local_store[client_ip].append(time.time())
             return len([ts for ts in self.local_store[client_ip] 
                        if ts > time.time() - 3600])
+
 
 class ThreatDetector:
     """
@@ -761,6 +769,7 @@ class ThreatDetector:
         
         return current_max
 
+
 class APISecurityMiddleware:
     """
     Main API Security Middleware class
@@ -924,7 +933,6 @@ class APISecurityMiddleware:
     
     def _is_valid_ip(self, ip: str) -> bool:
         """Validate IP address format"""
-        import ipaddress
         try:
             ipaddress.ip_address(ip)
             return True
@@ -957,10 +965,11 @@ class APISecurityMiddleware:
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get middleware performance metrics"""
+        block_rate = self.blocked_counter / max(self.request_counter, 1) if self.request_counter > 0 else 0
         return {
             'total_requests': self.request_counter,
             'blocked_requests': self.blocked_counter,
-            'block_rate': self.blocked_counter / max(self.request_counter, 1),
+            'block_rate': block_rate,
             'rate_limit_violations': len(self.rate_limiter.bans),
             'active_bots_detected': len([ip for ip, patterns in self.threat_detector.request_patterns.items() 
                                         if len(patterns) > 100]),  # High activity threshold
@@ -973,6 +982,7 @@ class APISecurityMiddleware:
         self.blocked_counter = 0
         self.rate_limiter.bans.clear()
         self.threat_detector.request_patterns.clear()
+
 
 # ============================================================================
 # FASTAPI INTEGRATION
@@ -1005,132 +1015,141 @@ class FastAPISecurityMiddleware:
     
     def _add_middleware_to_app(self):
         """Add security middleware to FastAPI application"""
-        from fastapi import Request, Response
-        from fastapi.middleware import Middleware
-        from starlette.middleware.base import BaseHTTPMiddleware
-        
-        class SecurityMiddleware(BaseHTTPMiddleware):
-            def __init__(self, app, parent):
-                super().__init__(app)
-                self.parent = parent
+        try:
+            from fastapi import Request, Response
+            from fastapi.middleware import Middleware
+            from starlette.middleware.base import BaseHTTPMiddleware
             
-            async def dispatch(self, request: Request, call_next):
-                # Check if path is exempt
-                if any(request.url.path.startswith(path) for path in self.parent.exempt_paths):
-                    return await call_next(request)
+            class SecurityMiddleware(BaseHTTPMiddleware):
+                def __init__(self, app, parent):
+                    super().__init__(app)
+                    self.parent = parent
                 
-                # Prepare request data for security middleware
-                request_data = {
-                    'method': request.method,
-                    'path': str(request.url.path),
-                    'headers': dict(request.headers),
-                    'query_params': dict(request.query_params),
-                    'remote_addr': request.client.host if request.client else '0.0.0.0',
-                    'body': await self._extract_body(request)
-                }
-                
-                # Process through security middleware
-                security_result = await self.parent.api_middleware.process_request(request_data)
-                
-                # Check if request should be blocked
-                if security_result['decision'] == 'BLOCK':
-                    # Create blocked response
-                    block_reason = security_result.get('block_reason', 'security_violation')
-                    block_details = security_result.get('block_details', {})
+                async def dispatch(self, request: Request, call_next):
+                    # Check if path is exempt
+                    if any(request.url.path.startswith(path) for path in self.parent.exempt_paths):
+                        return await call_next(request)
                     
-                    response_data = {
-                        'error': 'Request blocked',
-                        'reason': block_reason,
-                        'details': block_details,
-                        'timestamp': datetime.now().isoformat(),
-                        'request_id': request.headers.get('X-Request-ID', 'unknown')
+                    # Prepare request data for security middleware
+                    request_data = {
+                        'method': request.method,
+                        'path': str(request.url.path),
+                        'headers': dict(request.headers),
+                        'query_params': dict(request.query_params),
+                        'remote_addr': request.client.host if request.client else '0.0.0.0',
+                        'body': await self._extract_body(request)
                     }
                     
-                    return Response(
-                        content=json.dumps(response_data, indent=2),
-                        status_code=429 if block_reason == 'rate_limit' else 403,
-                        media_type='application/json',
-                        headers={
-                            'X-CyberGuard-Blocked': 'true',
-                            'X-CyberGuard-Block-Reason': block_reason
-                        }
-                    )
-                
-                # Request allowed, add security headers to response
-                response = await call_next(request)
-                
-                # Add security headers
-                security_headers = security_result.get('security_headers', {})
-                for header_name, header_value in security_headers.items():
-                    response.headers[header_name] = header_value
-                
-                # Add custom headers for monitoring
-                response.headers['X-CyberGuard-Processed'] = 'true'
-                response.headers['X-CyberGuard-Threat-Score'] = str(
-                    security_result.get('threat_analysis', {}).get('threat_score', 0.0)
-                )
-                response.headers['X-CyberGuard-Processing-Time'] = str(
-                    security_result.get('processing_time', 0.0)
-                )
-                
-                return response
-            
-            async def _extract_body(self, request: Request):
-                """Extract request body for analysis"""
-                try:
-                    # Check content type
-                    content_type = request.headers.get('content-type', '')
+                    # Process through security middleware
+                    security_result = await self.parent.api_middleware.process_request(request_data)
                     
-                    if 'application/json' in content_type:
-                        body = await request.json()
-                        return json.dumps(body)
-                    elif 'application/x-www-form-urlencoded' in content_type:
-                        body = await request.form()
-                        return str(dict(body))
-                    elif 'multipart/form-data' in content_type:
-                        # Don't parse large multipart data
-                        return "[multipart/form-data]"
-                    else:
-                        # Try to read text for other content types
-                        body = await request.body()
-                        return body.decode('utf-8', errors='ignore')[:10000]  # Limit size
-                except Exception as e:
-                    logger.debug(f"Could not extract request body: {e}")
-                    return ""
-        
-        # Add the middleware
-        self.app.add_middleware(SecurityMiddleware, parent=self)
+                    # Check if request should be blocked
+                    if security_result['decision'] == 'BLOCK':
+                        # Create blocked response
+                        block_reason = security_result.get('block_reason', 'security_violation')
+                        block_details = security_result.get('block_details', {})
+                        
+                        response_data = {
+                            'error': 'Request blocked',
+                            'reason': block_reason,
+                            'details': block_details,
+                            'timestamp': datetime.now().isoformat(),
+                            'request_id': request.headers.get('X-Request-ID', 'unknown')
+                        }
+                        
+                        return Response(
+                            content=json.dumps(response_data, indent=2),
+                            status_code=429 if block_reason == 'rate_limit' else 403,
+                            media_type='application/json',
+                            headers={
+                                'X-CyberGuard-Blocked': 'true',
+                                'X-CyberGuard-Block-Reason': block_reason
+                            }
+                        )
+                    
+                    # Request allowed, add security headers to response
+                    response = await call_next(request)
+                    
+                    # Add security headers
+                    security_headers = security_result.get('security_headers', {})
+                    for header_name, header_value in security_headers.items():
+                        response.headers[header_name] = header_value
+                    
+                    # Add custom headers for monitoring
+                    response.headers['X-CyberGuard-Processed'] = 'true'
+                    response.headers['X-CyberGuard-Threat-Score'] = str(
+                        security_result.get('threat_analysis', {}).get('threat_score', 0.0)
+                    )
+                    response.headers['X-CyberGuard-Processing-Time'] = str(
+                        security_result.get('processing_time', 0.0)
+                    )
+                    
+                    return response
+                
+                async def _extract_body(self, request: Request):
+                    """Extract request body for analysis"""
+                    try:
+                        # Check content type
+                        content_type = request.headers.get('content-type', '')
+                        
+                        if 'application/json' in content_type:
+                            body = await request.json()
+                            return json.dumps(body)
+                        elif 'application/x-www-form-urlencoded' in content_type:
+                            body = await request.form()
+                            return str(dict(body))
+                        elif 'multipart/form-data' in content_type:
+                            # Don't parse large multipart data
+                            return "[multipart/form-data]"
+                        else:
+                            # Try to read text for other content types
+                            body = await request.body()
+                            return body.decode('utf-8', errors='ignore')[:10000]  # Limit size
+                    except Exception as e:
+                        logger.debug(f"Could not extract request body: {e}")
+                        return ""
+            
+            # Add the middleware
+            self.app.add_middleware(SecurityMiddleware, parent=self)
+            
+        except ImportError:
+            logger.warning("FastAPI or Starlette not available. FastAPI integration disabled.")
     
     def add_health_endpoint(self):
         """Add health check endpoint to FastAPI app"""
-        from fastapi import APIRouter
-        
-        router = APIRouter()
-        
-        @router.get("/health")
-        async def health_check():
-            """Health check endpoint for monitoring"""
-            return {
-                'status': 'healthy',
-                'timestamp': datetime.now().isoformat(),
-                'metrics': self.api_middleware.get_metrics(),
-                'version': '1.0.0'
-            }
-        
-        @router.get("/metrics")
-        async def metrics():
-            """Prometheus metrics endpoint"""
-            if PROMETHEUS_AVAILABLE:
-                from prometheus_client import generate_latest
-                from starlette.responses import Response
-                return Response(
-                    content=generate_latest(),
-                    media_type='text/plain'
-                )
-            else:
-                return {'error': 'Prometheus not available'}
-        
-        self.app.include_router(router)
+        try:
+            from fastapi import APIRouter
+            
+            router = APIRouter()
+            
+            @router.get("/health")
+            async def health_check():
+                """Health check endpoint for monitoring"""
+                return {
+                    'status': 'healthy',
+                    'timestamp': datetime.now().isoformat(),
+                    'metrics': self.api_middleware.get_metrics(),
+                    'version': '1.0.0'
+                }
+            
+            @router.get("/metrics")
+            async def metrics():
+                """Prometheus metrics endpoint"""
+                if PROMETHEUS_AVAILABLE:
+                    from prometheus_client import generate_latest
+                    from starlette.responses import Response
+                    return Response(
+                        content=generate_latest(),
+                        media_type='text/plain'
+                    )
+                else:
+                    return {'error': 'Prometheus not available'}
+            
+            self.app.include_router(router)
+            
+        except ImportError:
+            logger.warning("FastAPI not available. Health endpoints disabled.")
+
 
 # ============================================================================
 # DECORATORS FOR ENDPOINT PROTECTION
@@ -1172,6 +1191,7 @@ def secure_endpoint(rate_limit: Optional[int] = None,
         
         return wrapper
     return decorator
+
 
 # ============================================================================
 # EXAMPLE USAGE
@@ -1235,6 +1255,7 @@ def example_usage():
         print("\nMetrics:", json.dumps(metrics, indent=2))
     
     asyncio.run(process_example())
+
 
 if __name__ == "__main__":
     # Run example

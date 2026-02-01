@@ -1,11 +1,6 @@
-# docker/Dockerfile
-
-# ==============================================================================
-# CYBERGUARD DOCKERFILE - PRODUCTION-GRADE WEB SECURITY AI SYSTEM
-# ==============================================================================
+# Multi-stage build for optimized security and performance
 
 # Stage 1: Builder - For compiling dependencies and building the application
-# ==============================================================================
 FROM python:3.11-slim-bookworm AS builder
 
 # ARG - Build arguments that can be passed during build time
@@ -33,7 +28,6 @@ LABEL maintainer="security@cyberguard.ai" \
       org.label-schema.name="CyberGuard" \
       org.label-schema.description="Intelligent Web Threat Analysis & Defense Platform" \
       org.label-schema.version="1.0.0" \
-      org.label-schema.build-date="${BUILD_DATE}" \
       org.label-schema.vcs-ref="${GIT_COMMIT}" \
       org.label-schema.vcs-url="https://github.com/cyberguard/cyberguard" \
       org.label-schema.schema-version="1.0"
@@ -51,7 +45,6 @@ RUN apt-get update && apt-get upgrade -y && \
     g++ \
     # Database client libraries
     libpq-dev \
-    libmariadb-dev \
     # SSL/TLS libraries
     libssl-dev \
     libffi-dev \
@@ -60,25 +53,14 @@ RUN apt-get update && apt-get upgrade -y && \
     libbz2-dev \
     libreadline-dev \
     libsqlite3-dev \
-    llvm \
-    libncurses5-dev \
-    libncursesw5-dev \
-    xz-utils \
-    tk-dev \
-    libgdbm-dev \
-    libnss3-dev \
-    libedit-dev \
-    libc6-dev \
     # Networking tools
     curl \
     wget \
     netcat \
-    iputils-ping \
-    dnsutils \
     # Process monitoring
     procps \
     # Text processing
-    vim \
+    vim-tiny \
     # Git for version control
     git \
     # Clean up apt cache to reduce image size
@@ -86,7 +68,8 @@ RUN apt-get update && apt-get upgrade -y && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry for dependency management
-RUN curl -sSL https://install.python-poetry.org | python3 -
+# Using explicit installation instead of pip install to avoid version conflicts
+RUN curl -sSL https://install.python-poetry.org | python3 - --version ${POETRY_VERSION}
 
 # Copy dependency files first (for better Docker layer caching)
 COPY pyproject.toml poetry.lock ./
@@ -101,7 +84,6 @@ RUN poetry install \
     && rm -rf "$POETRY_HOME"
 
 # Stage 2: Runtime - Minimal image for running the application
-# ==============================================================================
 FROM python:3.11-slim-bookworm AS runtime
 
 # Security hardening: Run as non-root user
@@ -121,7 +103,7 @@ RUN groupadd -g ${GROUP_ID} cyberguard && \
 
 WORKDIR /app
 
-# Copy only necessary files from builder stage
+# Copy Python packages from builder stage
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
@@ -137,35 +119,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy application code
+# Copy application code with proper ownership
 COPY --chown=cyberguard:cyberguard . .
 
 # Create necessary directories with proper permissions
-RUN mkdir -p logs/security logs/agent logs/audit && \
-    mkdir -p data/threat_feeds data/cve_database data/attack_patterns data/quarantined && \
-    mkdir -p models/trained models/checkpoints && \
+RUN mkdir -p /app/logs/security /app/logs/agent /app/logs/audit && \
+    mkdir -p /app/data/threat_feeds /app/data/cve_database /app/data/attack_patterns /app/data/quarantined && \
+    mkdir -p /app/models/trained /app/models/checkpoints && \
     chown -R cyberguard:cyberguard /app && \
-    chmod -R 755 /app && \
-    # Make scripts executable
-    chmod +x scripts/*.sh
+    chmod -R 755 /app
+
+# Ensure scripts directory exists and make scripts executable
+RUN if [ -d "scripts" ]; then chmod +x scripts/*.sh 2>/dev/null || true; fi
 
 # Switch to non-root user
 USER cyberguard
 
 # HEALTHCHECK - Container health monitoring
+# Note: Healthcheck will fail if health endpoint doesn't exist
 HEALTHCHECK --interval=30s \
             --timeout=3s \
             --start-period=10s \
             --retries=3 \
-            CMD python -c "import requests; requests.get('http://localhost:8080/health', timeout=2)" || exit 1
+            CMD python -c "import sys, requests; sys.exit(0 if requests.get('http://localhost:8080/health', timeout=2).status_code == 200 else 1)" || exit 1
 
 # EXPOSE - Document which ports the container listens on
 # Dashboard port
-EXPOSE 8080 
+EXPOSE 8080
 # API port 
 EXPOSE 8000  
-# Database port (if running locally)
-EXPOSE 5432  
 
 # VOLUME - Define mount points for persistent data
 VOLUME ["/app/logs", "/app/data", "/app/models"]

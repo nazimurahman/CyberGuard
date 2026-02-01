@@ -8,6 +8,7 @@ Provides explanations, examples, and remediation guidance for security issues
 import torch
 import json
 import random
+import hashlib  # Added missing import for hashlib
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from enum import Enum
@@ -22,6 +23,18 @@ class EducationLevel(Enum):
     INTERMEDIATE = "intermediate" # Basic security understanding
     ADVANCED = "advanced"        # Security professional
     EXPERT = "expert"           # Security specialist
+    
+    # Added for comparison support in min() function
+    @property
+    def value_index(self):
+        """Get numerical value for difficulty comparison"""
+        levels = {
+            "beginner": 1,
+            "intermediate": 2,
+            "advanced": 3,
+            "expert": 4
+        }
+        return levels[self.value]
 
 # Enum for learning styles
 class LearningStyle(Enum):
@@ -94,19 +107,19 @@ class ThreatEducationAgent:
         self.name = "Threat Education Agent"
         
         # Education database
-        self.lessons = self._load_security_lessons()
-        self.threat_explanations = self._load_threat_explanations()
+        self.lessons = self._load_security_lessons()  # Load pre-defined security lessons
+        self.threat_explanations = self._load_threat_explanations()  # Load threat explanations
         
         # User profiles (in production, would be persistent)
-        self.user_profiles: Dict[str, Dict[str, Any]] = {}
+        self.user_profiles: Dict[str, Dict[str, Any]] = {}  # Store user learning profiles
         
         # Learning analytics
         self.analytics = {
-            'lessons_delivered': 0,
-            'explanations_provided': 0,
-            'users_educated': 0,
-            'average_engagement': 0.0,
-            'knowledge_gap_identified': 0
+            'lessons_delivered': 0,        # Count of lessons delivered
+            'explanations_provided': 0,    # Count of threat explanations provided
+            'users_educated': 0,           # Count of unique users educated
+            'average_engagement': 0.0,     # Average user engagement score
+            'knowledge_gap_identified': 0  # Count of identified knowledge gaps
         }
         
         # Agent confidence
@@ -114,9 +127,9 @@ class ThreatEducationAgent:
         
         # Adaptive learning parameters
         self.adaptive_parameters = {
-            'difficulty_scaling': 0.1,  # How quickly to increase difficulty
+            'difficulty_scaling': 0.1,     # How quickly to increase difficulty
             'reinforcement_frequency': 3,  # Reinforce concepts every N lessons
-            'style_preference_weight': 0.7  # How much to weight learning style
+            'style_preference_weight': 0.7 # How much to weight learning style
         }
     
     def _load_security_lessons(self) -> Dict[str, SecurityLesson]:
@@ -126,7 +139,7 @@ class ThreatEducationAgent:
         Returns:
             Dictionary of lessons keyed by lesson_id
         """
-        lessons = {}
+        lessons = {}  # Dictionary to store all lessons
         
         # OWASP Top-10 Lessons
         owasp_lessons = [
@@ -167,7 +180,7 @@ class ThreatEducationAgent:
                         "type": "multiple_choice",
                         "question": "Which is NOT a valid access control mechanism?",
                         "options": ["RBAC", "ABAC", "IBAC", "PBAC (Public Based)"],
-                        "answer": 3,
+                        "answer": 3,  # Index of correct answer (0-based)
                         "explanation": "PBAC (Public Based Access Control) is not a standard access control model"
                     },
                     {
@@ -243,6 +256,7 @@ class ThreatEducationAgent:
             )
         ]
         
+        # Add OWASP lessons to dictionary
         for lesson in owasp_lessons:
             lessons[lesson.lesson_id] = lesson
         
@@ -300,10 +314,11 @@ class ThreatEducationAgent:
             )
         ]
         
+        # Add web security lessons to dictionary
         for lesson in web_lessons:
             lessons[lesson.lesson_id] = lesson
         
-        return lessons
+        return lessons  # Return all loaded lessons
     
     def _load_threat_explanations(self) -> Dict[str, ThreatExplanation]:
         """
@@ -312,7 +327,7 @@ class ThreatEducationAgent:
         Returns:
             Dictionary of threat explanations keyed by threat name
         """
-        explanations = {}
+        explanations = {}  # Dictionary to store threat explanations
         
         # OWASP Top-10 Threats
         explanations["SQL Injection"] = ThreatExplanation(
@@ -470,7 +485,7 @@ class ThreatEducationAgent:
             ]
         )
         
-        return explanations
+        return explanations  # Return all loaded threat explanations
     
     def analyze(self, security_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -489,9 +504,9 @@ class ThreatEducationAgent:
             Dictionary with educational content and guidance
         """
         import time
-        start_time = time.time()
+        start_time = time.time()  # Start timing for performance measurement
         
-        # Extract parameters
+        # Extract parameters from security data
         threat_type = security_data.get('threat_type', 'GENERAL_SECURITY')
         threat_level = security_data.get('threat_level', 0.5)
         evidence = security_data.get('evidence', [])
@@ -506,7 +521,7 @@ class ThreatEducationAgent:
         
         user_profile = self.user_profiles[user_id]
         
-        # Determine learning style
+        # Determine learning style from input or profile
         if learning_style_str:
             try:
                 learning_style = LearningStyle(learning_style_str.lower())
@@ -515,7 +530,7 @@ class ThreatEducationAgent:
         else:
             learning_style = user_profile['preferred_style']
         
-        # Determine education level
+        # Determine education level from input or profile
         if education_level_str:
             try:
                 education_level = EducationLevel(education_level_str.lower())
@@ -538,10 +553,10 @@ class ThreatEducationAgent:
         
         # Step 5: Update analytics
         self.analytics['explanations_provided'] += 1
-        if user_id == 'anonymous':
+        if user_id != 'anonymous' and user_id not in [p.get('user_id', '') for p in self.user_profiles.values() if p.get('user_id')]:
             self.analytics['users_educated'] += 1
         
-        processing_time = time.time() - start_time
+        processing_time = time.time() - start_time  # Calculate total processing time
         
         return {
             'agent_id': self.agent_id,
@@ -577,7 +592,7 @@ class ThreatEducationAgent:
         # Default to intermediate level if not specified
         default_level = EducationLevel.INTERMEDIATE
         
-        # Try to infer from context
+        # Try to infer education level from user role in context
         if 'role' in user_context:
             role = user_context['role'].lower()
             if 'developer' in role or 'engineer' in role:
@@ -591,17 +606,18 @@ class ThreatEducationAgent:
         styles = list(LearningStyle)
         preferred_style = random.choice(styles)
         
+        # Create and return user profile dictionary
         return {
             'user_id': user_context.get('user_id', 'anonymous'),
             'education_level': default_level,
             'preferred_style': preferred_style,
-            'topics_studied': [],
-            'knowledge_gaps': [],
-            'interaction_history': [],
+            'topics_studied': [],  # List of topics user has studied
+            'knowledge_gaps': [],  # Identified knowledge gaps
+            'interaction_history': [],  # History of learning interactions
             'last_active': datetime.now(),
-            'engagement_score': 0.5,
-            'completion_rate': 0.0,
-            'adaptive_difficulty': default_level
+            'engagement_score': 0.5,  # Initial engagement score
+            'completion_rate': 0.0,   # Lesson completion rate
+            'adaptive_difficulty': default_level  # Adaptive difficulty level
         }
     
     def _get_threat_explanation(self, threat_type: str,
@@ -616,7 +632,7 @@ class ThreatEducationAgent:
         Returns:
             Tailored threat explanation or None
         """
-        # Find matching threat explanation
+        # Find matching threat explanation by searching threat names
         threat_key = None
         for key in self.threat_explanations.keys():
             if threat_type.lower() in key.lower() or key.lower() in threat_type.lower():
@@ -624,12 +640,12 @@ class ThreatEducationAgent:
                 break
         
         if not threat_key:
-            # Create generic explanation
+            # Create generic explanation if no specific one found
             return self._create_generic_explanation(threat_type, education_level)
         
         explanation = self.threat_explanations[threat_key]
         
-        # Tailor explanation to education level
+        # Tailor explanation to education level (simplify or expand)
         tailored_explanation = self._tailor_explanation(explanation, education_level)
         
         return tailored_explanation
@@ -657,6 +673,7 @@ class ThreatEducationAgent:
             description = f"{threat_type} represents a security vulnerability class with specific attack vectors."
             how_it_works = f"Technical exploitation of {threat_type} involves specific patterns and techniques."
         
+        # Create and return generic threat explanation
         return ThreatExplanation(
             threat_name=threat_type,
             threat_type="General Security",
@@ -688,26 +705,24 @@ class ThreatEducationAgent:
         Returns:
             Tailored threat explanation
         """
-        # Create a copy to modify
         import copy
-        tailored = copy.deepcopy(explanation)
+        tailored = copy.deepcopy(explanation)  # Create a deep copy to modify
         
-        # Simplify for beginners
+        # Simplify for beginners by reducing information density
         if education_level == EducationLevel.BEGINNER:
             tailored.description = self._simplify_text(explanation.description, 2)
             tailored.how_it_works = self._simplify_text(explanation.how_it_works, 2)
-            tailored.real_world_examples = explanation.real_world_examples[:1]
-            tailored.attack_vectors = explanation.attack_vectors[:2]
-            tailored.prevention = explanation.prevention[:3]
-            tailored.remediation = explanation.remediation[:2]
+            tailored.real_world_examples = explanation.real_world_examples[:1]  # Keep only first example
+            tailored.attack_vectors = explanation.attack_vectors[:2]  # Keep only first 2 vectors
+            tailored.prevention = explanation.prevention[:3]  # Keep only first 3 prevention methods
+            tailored.remediation = explanation.remediation[:2]  # Keep only first 2 remediation steps
         
-        # Expand for experts
+        # Expand for experts with additional technical details
         elif education_level == EducationLevel.EXPERT:
-            # Add technical details
             tailored.description += "\n\nTechnical Classification: CWE-based analysis available."
             tailored.how_it_works += "\n\nAdvanced exploitation techniques include memory corruption and protocol manipulation."
         
-        return tailored
+        return tailored  # Return the tailored explanation
     
     def _simplify_text(self, text: str, sentence_count: int) -> str:
         """
@@ -720,10 +735,10 @@ class ThreatEducationAgent:
         Returns:
             Simplified text
         """
-        sentences = text.split('. ')
-        simplified = '. '.join(sentences[:sentence_count])
+        sentences = text.split('. ')  # Split text into sentences
+        simplified = '. '.join(sentences[:sentence_count])  # Join first N sentences
         if simplified and not simplified.endswith('.'):
-            simplified += '.'
+            simplified += '.'  # Ensure it ends with period
         return simplified
     
     def _get_tailored_lesson(self, threat_type: str,
@@ -740,7 +755,7 @@ class ThreatEducationAgent:
         Returns:
             Tailored security lesson or None
         """
-        # Find relevant lessons
+        # Find relevant lessons that match the threat type
         relevant_lessons = []
         for lesson_id, lesson in self.lessons.items():
             # Match by threat type in title or category
@@ -749,13 +764,13 @@ class ThreatEducationAgent:
                 relevant_lessons.append(lesson)
         
         if not relevant_lessons:
-            # Create dynamic lesson
+            # Create dynamic lesson if no pre-defined lesson exists
             return self._create_dynamic_lesson(threat_type, education_level, learning_style)
         
-        # Select lesson closest to user's education level
+        # Select lesson closest to user's education level using numerical comparison
         selected_lesson = min(
             relevant_lessons,
-            key=lambda l: abs(l.difficulty.value - education_level.value)
+            key=lambda l: abs(l.difficulty.value_index - education_level.value_index)
         )
         
         # Tailor content to learning style
@@ -777,10 +792,10 @@ class ThreatEducationAgent:
         Returns:
             Dynamic security lesson
         """
-        # Generate lesson ID
+        # Generate unique lesson ID using MD5 hash of threat type
         lesson_id = f"DYN-{hashlib.md5(threat_type.encode()).hexdigest()[:8]}"
         
-        # Create content based on learning style
+        # Define content templates for different learning styles
         content_templates = {
             LearningStyle.VISUAL: {
                 "visual": f"Diagram showing {threat_type} attack flow",
@@ -808,6 +823,7 @@ class ThreatEducationAgent:
             }
         }
         
+        # Create and return dynamic lesson
         return SecurityLesson(
             lesson_id=lesson_id,
             title=f"Understanding {threat_type}",
@@ -860,10 +876,10 @@ class ThreatEducationAgent:
             Lesson with tailored content emphasis
         """
         import copy
-        tailored = copy.deepcopy(lesson)
+        tailored = copy.deepcopy(lesson)  # Create a copy to modify
         
         # Reorder content based on learning style preference
-        if learning_style in tailored.content:
+        if learning_style.value in tailored.content:
             # Move preferred style to front in description
             preferred_content = tailored.content[learning_style.value]
             other_content = {k: v for k, v in tailored.content.items() 
@@ -874,18 +890,18 @@ class ThreatEducationAgent:
             new_content.update(other_content)
             tailored.content = new_content
         
-        # Adjust examples based on style
+        # Adjust examples based on style preferences
         if learning_style == LearningStyle.VISUAL:
-            # Add visual descriptions
+            # Add visual hints to examples
             for example in tailored.examples:
                 example['visual_hint'] = "Look for visual patterns in the attack flow"
         
         elif learning_style == LearningStyle.AUDITORY:
-            # Add auditory hints
+            # Add auditory hints to examples
             for example in tailored.examples:
                 example['audio_hint'] = "Listen for suspicious patterns in system logs"
         
-        return tailored
+        return tailored  # Return the tailored lesson
     
     def _generate_guidance(self, threat_type: str, threat_level: float,
                          evidence: List[Dict], education_level: EducationLevel) -> Dict[str, Any]:
@@ -894,14 +910,14 @@ class ThreatEducationAgent:
         
         Args:
             threat_type: Type of threat
-            threat_level: Severity score
+            threat_level: Severity score (0.0 to 1.0)
             evidence: Evidence of threat
             education_level: User's education level
             
         Returns:
             Actionable guidance dictionary
         """
-        # Determine guidance level based on threat level
+        # Determine guidance urgency based on threat level
         if threat_level >= 0.8:
             urgency = "IMMEDIATE ACTION REQUIRED"
             timeline = "Within 24 hours"
@@ -936,7 +952,7 @@ class ThreatEducationAgent:
             "time_estimate": "30 minutes"
         })
         
-        # Step 2: Containment
+        # Step 2: Containment (only for medium+ threats)
         if threat_level >= 0.5:
             steps.append({
                 "step": 2,
@@ -951,9 +967,10 @@ class ThreatEducationAgent:
                 "time_estimate": "1-2 hours"
             })
         
-        # Step 3: Remediation
+        # Step 3: Remediation with threat-specific actions
         remediation_actions = []
         
+        # Define remediation actions based on threat type
         if threat_type == "SQL Injection":
             remediation_actions = [
                 "Implement parameterized queries",
@@ -961,7 +978,7 @@ class ThreatEducationAgent:
                 "Review and sanitize all user inputs",
                 "Rotate database credentials"
             ]
-        elif threat_type == "XSS":
+        elif threat_type == "XSS" or "Cross-Site Scripting" in threat_type:
             remediation_actions = [
                 "Implement output encoding",
                 "Add Content Security Policy headers",
@@ -977,7 +994,7 @@ class ThreatEducationAgent:
             ]
         
         steps.append({
-            "step": 3,
+            "step": 3 if threat_level >= 0.5 else 2,  # Adjust step number
             "title": "Remediation",
             "actions": remediation_actions,
             "tools": ["Code editor", "Security scanner", "Configuration management"],
@@ -985,8 +1002,9 @@ class ThreatEducationAgent:
         })
         
         # Step 4: Verification
+        verification_step = 4 if threat_level >= 0.5 else 3
         steps.append({
-            "step": 4,
+            "step": verification_step,
             "title": "Verification",
             "actions": [
                 "Test fixes in staging environment",
@@ -1000,7 +1018,7 @@ class ThreatEducationAgent:
         
         # Step 5: Prevention (for future)
         steps.append({
-            "step": 5,
+            "step": verification_step + 1,
             "title": "Prevention",
             "actions": [
                 "Implement security training",
@@ -1012,13 +1030,14 @@ class ThreatEducationAgent:
             "time_estimate": "Ongoing"
         })
         
-        # Adjust guidance based on education level
+        # Adjust guidance language based on education level
         if education_level == EducationLevel.BEGINNER:
             # Simplify language, provide more hand-holding
             for step in steps:
                 step['simplified'] = True
                 step['actions'] = [a + " (ask for help if needed)" for a in step['actions']]
         
+        # Return comprehensive guidance dictionary
         return {
             "urgency": urgency,
             "priority": priority,
@@ -1054,30 +1073,30 @@ class ThreatEducationAgent:
         
         profile = self.user_profiles[user_id]
         
-        # Record interaction
+        # Record interaction in history
         interaction = {
             "timestamp": datetime.now().isoformat(),
             "threat_type": threat_type,
             "education_level": education_level.value,
-            "duration": random.randint(5, 30)  # Simulated
+            "duration": random.randint(5, 30)  # Simulated duration
         }
         
         profile['interaction_history'].append(interaction)
         
-        # Update topics studied
+        # Update topics studied if new topic
         if threat_type not in profile['topics_studied']:
             profile['topics_studied'].append(threat_type)
         
-        # Update engagement score
+        # Update engagement score (increase by 5%)
         profile['engagement_score'] = min(1.0, profile['engagement_score'] * 1.05)
         
-        # Update last active
+        # Update last active timestamp
         profile['last_active'] = datetime.now()
         
-        # Check for knowledge gaps (simplified)
+        # Check for knowledge gaps (simplified logic)
         if len(profile['interaction_history']) > 3:
             recent_topics = [i['threat_type'] for i in profile['interaction_history'][-3:]]
-            if len(set(recent_topics)) == 1:  # Same topic repeatedly
+            if len(set(recent_topics)) == 1:  # Same topic repeatedly studied
                 profile['knowledge_gaps'].append({
                     "topic": threat_type,
                     "gap": "Needs reinforcement",
@@ -1086,22 +1105,27 @@ class ThreatEducationAgent:
                 self.analytics['knowledge_gap_identified'] += 1
     
     def _get_reasoning_state(self) -> torch.Tensor:
-        """Get current reasoning state for mHC coordination"""
+        """
+        Get current reasoning state for mHC coordination
+        
+        Returns:
+            Tensor with agent state features
+        """
         features = []
         
-        # Education metrics
-        features.append(self.confidence)
-        features.append(self.analytics['lessons_delivered'] / 1000.0)
-        features.append(self.analytics['explanations_provided'] / 1000.0)
-        features.append(self.analytics['users_educated'] / 100.0)
-        features.append(self.analytics['average_engagement'])
+        # Education metrics (normalized)
+        features.append(self.confidence)  # Agent confidence level
+        features.append(self.analytics['lessons_delivered'] / 1000.0)  # Normalized lessons delivered
+        features.append(self.analytics['explanations_provided'] / 1000.0)  # Normalized explanations
+        features.append(self.analytics['users_educated'] / 100.0)  # Normalized users educated
+        features.append(self.analytics['average_engagement'])  # Engagement score
         
-        # Knowledge base metrics
-        features.append(len(self.lessons) / 100.0)
-        features.append(len(self.threat_explanations) / 50.0)
-        features.append(len(self.user_profiles) / 50.0)
+        # Knowledge base metrics (normalized)
+        features.append(len(self.lessons) / 100.0)  # Normalized lesson count
+        features.append(len(self.threat_explanations) / 50.0)  # Normalized threat explanations
+        features.append(len(self.user_profiles) / 50.0)  # Normalized user profiles
         
-        # Learning effectiveness (simulated)
+        # Learning effectiveness (average engagement across users)
         recent_engagement = 0.0
         for profile in self.user_profiles.values():
             recent_engagement += profile.get('engagement_score', 0.0)
@@ -1109,16 +1133,31 @@ class ThreatEducationAgent:
         if self.user_profiles:
             recent_engagement /= len(self.user_profiles)
         
-        features.append(recent_engagement)
+        features.append(recent_engagement)  # Average engagement score
         
-        # Pad to 512 dimensions
+        # Pad to 512 dimensions with zeros
         while len(features) < 512:
             features.append(0.0)
         
+        # Create and return PyTorch tensor
         return torch.tensor(features[:512], dtype=torch.float32)
     
     def get_agent_status(self) -> Dict[str, Any]:
-        """Get current agent status and metrics"""
+        """
+        Get current agent status and metrics
+        
+        Returns:
+            Dictionary with agent status information
+        """
+        # Calculate average engagement from user profiles
+        total_engagement = sum(profile.get('engagement_score', 0.0) 
+                              for profile in self.user_profiles.values())
+        avg_engagement = (total_engagement / len(self.user_profiles) 
+                         if self.user_profiles else 0.0)
+        
+        # Update analytics with current engagement
+        self.analytics['average_engagement'] = avg_engagement
+        
         return {
             'agent_id': self.agent_id,
             'agent_name': self.name,

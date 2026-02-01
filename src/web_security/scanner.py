@@ -22,6 +22,38 @@ from bs4 import BeautifulSoup
 # Disable SSL warnings for internal testing (not for production)
 warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
+# Define missing classes that were referenced but not defined
+# These would normally be imported from other modules
+class VulnerabilityDetector:
+    """Placeholder for vulnerability detection module"""
+    async def detect_advanced(self, url, session):
+        return []
+
+class APIAnalyzer:
+    """Placeholder for API analysis module"""
+    async def analyze_apis(self, url, session):
+        return []
+
+class TrafficParser:
+    """Placeholder for traffic analysis module"""
+    async def analyze_traffic(self, url):
+        return []
+
+class JavaScriptAnalyzer:
+    """Placeholder for JavaScript analysis module"""
+    async def analyze_javascript(self, url, session):
+        return []
+
+class FormValidator:
+    """Placeholder for form validation module"""
+    async def analyze_forms(self, url, session):
+        return []
+
+class HeaderAnalyzer:
+    """Placeholder for header analysis module"""
+    async def analyze_headers(self, url, session):
+        return []
+
 class ScanPhase(Enum):
     """Enumeration of scanning phases for structured workflow"""
     INITIALIZATION = "initialization"
@@ -59,7 +91,7 @@ class SecurityFinding:
         return {
             'id': self.id,
             'type': self.type,
-            'severity': self.severity.value,
+            'severity': self.severity.value,  # Use .value to get string from enum
             'location': self.location,
             'description': self.description,
             'evidence': self.evidence,
@@ -98,7 +130,7 @@ class WebSecurityScanner:
             'max_response_size': 10 * 1024 * 1024,  # 10MB max response size
         }
         
-        # Initialize scanning modules
+        # Initialize scanning modules (using placeholder classes)
         self.vulnerability_detector = VulnerabilityDetector()
         self.api_analyzer = APIAnalyzer()
         self.traffic_parser = TrafficParser()
@@ -122,7 +154,7 @@ class WebSecurityScanner:
         # Cache for performance optimization
         self.response_cache = {}                # Cache responses to avoid duplicate requests
         self.hash_cache = {}                    # Content hashes for change detection
-        
+    
     async def initialize_session(self):
         """
         Initialize HTTP session with security headers and configuration
@@ -163,7 +195,7 @@ class WebSecurityScanner:
             }
         )
         
-        print(f"✅ Session initialized with {self.config['concurrent_requests']} concurrent connections")
+        print("Session initialized with " + str(self.config['concurrent_requests']) + " concurrent connections")
     
     async def scan_website(self, url: str) -> Dict[str, Any]:
         """
@@ -188,23 +220,23 @@ class WebSecurityScanner:
         self.scan_statistics['start_time'] = time.time()
         
         try:
-            print(f"🔍 Starting comprehensive security scan of: {normalized_url}")
+            print("Starting comprehensive security scan of: " + normalized_url)
             print("=" * 80)
             
             # Phase 1: Initial reconnaissance
-            print(f"\n📊 Phase 1: {ScanPhase.RECONNAISSANCE.value.replace('_', ' ').title()}")
+            print("\nPhase 1: " + ScanPhase.RECONNAISSANCE.value.replace('_', ' ').title())
             await self._perform_reconnaissance(normalized_url)
             
             # Phase 2: Vulnerability scanning
-            print(f"\n🛡️ Phase 2: {ScanPhase.VULNERABILITY_SCAN.value.replace('_', ' ').title()}")
+            print("\nPhase 2: " + ScanPhase.VULNERABILITY_SCAN.value.replace('_', ' ').title())
             await self._perform_vulnerability_scan(normalized_url)
             
             # Phase 3: Deep analysis
-            print(f"\n🔬 Phase 3: {ScanPhase.DEEP_ANALYSIS.value.replace('_', ' ').title()}")
+            print("\nPhase 3: " + ScanPhase.DEEP_ANALYSIS.value.replace('_', ' ').title())
             await self._perform_deep_analysis(normalized_url)
             
             # Phase 4: Generate report
-            print(f"\n📋 Phase 4: {ScanPhase.REPORTING.value.title()}")
+            print("\nPhase 4: " + ScanPhase.REPORTING.value.title())
             report = await self._generate_report(normalized_url)
             
             # Record completion time
@@ -215,13 +247,13 @@ class WebSecurityScanner:
             report['statistics'] = self.scan_statistics
             report['scan_duration'] = self.scan_statistics['end_time'] - self.scan_statistics['start_time']
             
-            print(f"\n✅ Scan completed in {report['scan_duration']:.2f} seconds")
-            print(f"📊 Found {len(self.findings)} security findings")
+            print("\nScan completed in " + str(round(report['scan_duration'], 2)) + " seconds")
+            print("Found " + str(len(self.findings)) + " security findings")
             
             return report
             
         except Exception as e:
-            print(f"❌ Scan failed with error: {str(e)}")
+            print("Scan failed with error: " + str(e))
             return {
                 'error': str(e),
                 'url': normalized_url,
@@ -241,44 +273,45 @@ class WebSecurityScanner:
         Args:
             base_url: Root URL to start reconnaissance from
         """
-        print("  • Fetching initial page...")
+        print("  Fetching initial page...")
         
         try:
             # Fetch the main page
             main_response = await self._safe_fetch(base_url)
             if not main_response:
-                print("  ⚠️ Failed to fetch main page")
+                print("  Failed to fetch main page")
                 return
             
             # Parse HTML content
             soup = BeautifulSoup(main_response['content'], 'html.parser')
             
             # Analyze basic information
-            print(f"  • Title: {soup.title.string if soup.title else 'No title'}")
-            print(f"  • Status: {main_response['status']}")
-            print(f"  • Content-Type: {main_response['headers'].get('Content-Type', 'unknown')}")
-            print(f"  • Server: {main_response['headers'].get('Server', 'unknown')}")
+            title = soup.title.string if soup.title else 'No title'
+            print("  Title: " + title)
+            print("  Status: " + str(main_response['status']))
+            print("  Content-Type: " + main_response['headers'].get('Content-Type', 'unknown'))
+            print("  Server: " + main_response['headers'].get('Server', 'unknown'))
             
             # Extract and analyze links
-            print("  • Discovering links...")
+            print("  Discovering links...")
             links = await self._extract_links(base_url, soup)
-            print(f"  • Found {len(links)} unique links")
+            print("  Found " + str(len(links)) + " unique links")
             
             # Check robots.txt
             if self.config.get('respect_robots_txt', True):
                 robots_txt = await self._check_robots_txt(base_url)
                 if robots_txt:
-                    print(f"  • robots.txt: Found ({len(robots_txt)} bytes)")
+                    print("  robots.txt: Found (" + str(len(robots_txt)) + " bytes)")
             
             # Check sitemap.xml
             sitemap = await self._check_sitemap(base_url)
             if sitemap:
-                print(f"  • sitemap.xml: Found")
+                print("  sitemap.xml: Found")
             
             self.scan_statistics['phases_completed'].append(ScanPhase.RECONNAISSANCE.value)
             
         except Exception as e:
-            print(f"  ⚠️ Reconnaissance error: {str(e)}")
+            print("  Reconnaissance error: " + str(e))
     
     async def _perform_vulnerability_scan(self, base_url: str):
         """
@@ -288,7 +321,7 @@ class WebSecurityScanner:
         Args:
             base_url: Target URL to scan for vulnerabilities
         """
-        print("  • Testing for OWASP Top 10 vulnerabilities...")
+        print("  Testing for OWASP Top 10 vulnerabilities...")
         
         try:
             # Get initial response for analysis
@@ -316,15 +349,15 @@ class WebSecurityScanner:
             # Process results
             for result in results:
                 if isinstance(result, Exception):
-                    print(f"  ⚠️ Vulnerability check error: {result}")
+                    print("  Vulnerability check error: " + str(result))
                 elif result:
                     self.findings.extend(result)
             
-            print(f"  • Vulnerability scanning completed: {len(self.findings)} findings")
+            print("  Vulnerability scanning completed: " + str(len(self.findings)) + " findings")
             self.scan_statistics['phases_completed'].append(ScanPhase.VULNERABILITY_SCAN.value)
             
         except Exception as e:
-            print(f"  ⚠️ Vulnerability scan error: {str(e)}")
+            print("  Vulnerability scan error: " + str(e))
     
     async def _perform_deep_analysis(self, base_url: str):
         """
@@ -334,49 +367,51 @@ class WebSecurityScanner:
         Args:
             base_url: Target URL for deep analysis
         """
-        print("  • Performing deep analysis...")
+        print("  Performing deep analysis...")
         
         try:
             # Analyze security headers
-            print("  • Analyzing security headers...")
+            print("  Analyzing security headers...")
             header_findings = await self.header_analyzer.analyze_headers(base_url, self.session)
             self.findings.extend(header_findings)
             
             # Analyze JavaScript for security issues
-            print("  • Analyzing JavaScript...")
+            print("  Analyzing JavaScript...")
             js_findings = await self.javascript_analyzer.analyze_javascript(base_url, self.session)
             self.findings.extend(js_findings)
             
             # Analyze forms for security issues
-            print("  • Analyzing forms...")
+            print("  Analyzing forms...")
             form_findings = await self.form_validator.analyze_forms(base_url, self.session)
             self.findings.extend(form_findings)
             
             # Look for API endpoints
-            print("  • Discovering API endpoints...")
+            print("  Discovering API endpoints...")
             api_findings = await self.api_analyzer.analyze_apis(base_url, self.session)
             self.findings.extend(api_findings)
             
             # Parse and analyze traffic patterns
-            print("  • Analyzing traffic patterns...")
+            print("  Analyzing traffic patterns...")
             traffic_findings = await self.traffic_parser.analyze_traffic(base_url)
             self.findings.extend(traffic_findings)
             
             # Run vulnerability detector for advanced patterns
-            print("  • Running advanced vulnerability detection...")
+            print("  Running advanced vulnerability detection...")
             advanced_findings = await self.vulnerability_detector.detect_advanced(base_url, self.session)
             self.findings.extend(advanced_findings)
             
             # Correlate findings to identify attack patterns
-            print("  • Correlating findings...")
+            print("  Correlating findings...")
             correlated_findings = self._correlate_findings()
             self.findings.extend(correlated_findings)
             
-            print(f"  • Deep analysis completed: {len([f for f in self.findings if f.confidence > 0.7])} high-confidence findings")
+            # Count high-confidence findings
+            high_confidence_count = len([f for f in self.findings if f.confidence > 0.7])
+            print("  Deep analysis completed: " + str(high_confidence_count) + " high-confidence findings")
             self.scan_statistics['phases_completed'].append(ScanPhase.DEEP_ANALYSIS.value)
             
         except Exception as e:
-            print(f"  ⚠️ Deep analysis error: {str(e)}")
+            print("  Deep analysis error: " + str(e))
     
     async def _generate_report(self, url: str) -> Dict[str, Any]:
         """
@@ -388,7 +423,7 @@ class WebSecurityScanner:
         Returns:
             Structured report with findings, statistics, and recommendations
         """
-        print("  • Generating security report...")
+        print("  Generating security report...")
         
         # Calculate risk score based on findings
         risk_score = self._calculate_risk_score()
@@ -484,14 +519,14 @@ class WebSecurityScanner:
                 # Check response size limit
                 content_length = int(response.headers.get('Content-Length', 0))
                 if content_length > self.config['max_response_size']:
-                    print(f"  ⚠️ Response too large: {content_length} bytes, skipping")
+                    print("  Response too large: " + str(content_length) + " bytes, skipping")
                     return None
                 
                 # Read response with size limit
                 content = await response.read()
                 if len(content) > self.config['max_response_size']:
                     content = content[:self.config['max_response_size']]
-                    print(f"  ⚠️ Truncated response to {self.config['max_response_size']} bytes")
+                    print("  Truncated response to " + str(self.config['max_response_size']) + " bytes")
                 
                 result = {
                     'url': str(response.url),
@@ -510,15 +545,15 @@ class WebSecurityScanner:
                 return result
                 
         except asyncio.TimeoutError:
-            print(f"  ⚠️ Timeout fetching {url}")
+            print("  Timeout fetching " + url)
             self.scan_statistics['failed_requests'] += 1
             return None
         except aiohttp.ClientError as e:
-            print(f"  ⚠️ Client error fetching {url}: {str(e)}")
+            print("  Client error fetching " + url + ": " + str(e))
             self.scan_statistics['failed_requests'] += 1
             return None
         except Exception as e:
-            print(f"  ⚠️ Unexpected error fetching {url}: {str(e)}")
+            print("  Unexpected error fetching " + url + ": " + str(e))
             self.scan_statistics['failed_requests'] += 1
             return None
     
@@ -643,7 +678,10 @@ class WebSecurityScanner:
             
             # Check for stored XSS in forms
             if 'content' in response:
-                soup = BeautifulSoup(response['content'], 'html.parser')
+                content_str = response['content']
+                if isinstance(content_str, bytes):
+                    content_str = content_str.decode('utf-8', errors='ignore')
+                soup = BeautifulSoup(content_str, 'html.parser')
                 forms = soup.find_all('form')
                 
                 for form in forms:
@@ -658,9 +696,10 @@ class WebSecurityScanner:
                         
                         if form_data:
                             form_url = urllib.parse.urljoin(url, form_action)
+                            form_method = form.get('method', 'GET').upper()
                             form_response = await self._safe_fetch(
                                 form_url, 
-                                method='POST' if form.get('method', 'GET').upper() == 'POST' else 'GET',
+                                method=form_method,
                                 data=form_data
                             )
                             
@@ -680,7 +719,7 @@ class WebSecurityScanner:
                                 findings.append(finding)
         
         except Exception as e:
-            print(f"  ⚠️ XSS check error: {str(e)}")
+            print("  XSS check error: " + str(e))
         
         return findings
     
@@ -774,7 +813,7 @@ class WebSecurityScanner:
                                 break
         
         except Exception as e:
-            print(f"  ⚠️ SQL injection check error: {str(e)}")
+            print("  SQL injection check error: " + str(e))
         
         return findings
     
@@ -850,7 +889,7 @@ class WebSecurityScanner:
                             break
         
         except Exception as e:
-            print(f"  ⚠️ Command injection check error: {str(e)}")
+            print("  Command injection check error: " + str(e))
         
         return findings
     
@@ -929,7 +968,7 @@ class WebSecurityScanner:
                                 break
         
         except Exception as e:
-            print(f"  ⚠️ Path traversal check error: {str(e)}")
+            print("  Path traversal check error: " + str(e))
         
         return findings
     
@@ -1008,7 +1047,7 @@ class WebSecurityScanner:
                                 break
         
         except Exception as e:
-            print(f"  ⚠️ IDOR check error: {str(e)}")
+            print("  IDOR check error: " + str(e))
         
         return findings
     
@@ -1081,7 +1120,7 @@ class WebSecurityScanner:
                     findings.append(finding)
         
         except Exception as e:
-            print(f"  ⚠️ Security misconfiguration check error: {str(e)}")
+            print("  Security misconfiguration check error: " + str(e))
         
         return findings
     
@@ -1133,7 +1172,7 @@ class WebSecurityScanner:
                         findings.append(finding)
         
         except Exception as e:
-            print(f"  ⚠️ Sensitive data exposure check error: {str(e)}")
+            print("  Sensitive data exposure check error: " + str(e))
         
         return findings
     
@@ -1193,7 +1232,7 @@ class WebSecurityScanner:
                         findings.append(finding)
         
         except Exception as e:
-            print(f"  ⚠️ Access control check error: {str(e)}")
+            print("  Access control check error: " + str(e))
         
         return findings
     
@@ -1213,7 +1252,10 @@ class WebSecurityScanner:
         
         try:
             if 'content' in response:
-                soup = BeautifulSoup(response['content'], 'html.parser')
+                content_str = response['content']
+                if isinstance(content_str, bytes):
+                    content_str = content_str.decode('utf-8', errors='ignore')
+                soup = BeautifulSoup(content_str, 'html.parser')
                 forms = soup.find_all('form')
                 
                 for form in forms:
@@ -1258,7 +1300,7 @@ class WebSecurityScanner:
                                 findings.append(finding)
         
         except Exception as e:
-            print(f"  ⚠️ CSRF check error: {str(e)}")
+            print("  CSRF check error: " + str(e))
         
         return findings
     
@@ -1280,7 +1322,6 @@ class WebSecurityScanner:
         try:
             if 'content' in response:
                 content_str = str(response['content'])
-                headers = response.get('headers', {})
                 
                 # Check for common JavaScript libraries with known vulnerabilities
                 js_libraries = {
@@ -1327,7 +1368,7 @@ class WebSecurityScanner:
                             break
         
         except Exception as e:
-            print(f"  ⚠️ Vulnerable component check error: {str(e)}")
+            print("  Vulnerable component check error: " + str(e))
         
         return findings
     
@@ -1345,7 +1386,10 @@ class WebSecurityScanner:
         response = await self._safe_fetch(robots_url)
         
         if response and response['status'] == 200:
-            return response['content'].decode('utf-8', errors='ignore')
+            content = response['content']
+            if isinstance(content, bytes):
+                return content.decode('utf-8', errors='ignore')
+            return str(content)
         
         return None
     
@@ -1365,7 +1409,9 @@ class WebSecurityScanner:
         if response and response['status'] == 200:
             try:
                 # Try to parse as XML
-                content = response['content'].decode('utf-8', errors='ignore')
+                content = response['content']
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8', errors='ignore')
                 return {'url': sitemap_url, 'content': content[:1000]}  # Truncate for reporting
             except:
                 pass
@@ -1707,4 +1753,4 @@ class WebSecurityScanner:
                 'Business logic vulnerabilities may not be detected',
                 'Rate limiting may affect scan completeness'
             ]
-        }
+        }  

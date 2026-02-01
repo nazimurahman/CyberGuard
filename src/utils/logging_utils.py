@@ -1,4 +1,3 @@
-# CyberGuard/src/utils/logging_utils.py
 """
 Logging Utilities for CyberGuard Web Security AI System.
 
@@ -21,7 +20,7 @@ import os
 import time
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Union, Callable
+from typing import Dict, Any, Optional, List, Union, Callable, Tuple  # Fixed: Added Tuple import
 from dataclasses import dataclass, asdict
 from enum import Enum
 import hashlib
@@ -196,7 +195,7 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=False)
     
     @property
-    def default_fields(self):
+    def default_fields(self) -> set:
         """Default fields in LogRecord."""
         return {
             'args', 'asctime', 'created', 'exc_info', 'exc_text', 'filename',
@@ -245,7 +244,9 @@ class SecurityLogger:
         # File handler (if specified)
         if log_file:
             # Ensure directory exists
-            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            log_dir = os.path.dirname(log_file)
+            if log_dir:  # Only create directory if path has a directory component
+                os.makedirs(log_dir, exist_ok=True)
             
             # Create rotating file handler
             file_handler = logging.handlers.RotatingFileHandler(
@@ -364,6 +365,11 @@ class SecurityLogger:
             source_ip: Source IP address
             resource: Affected resource
         """
+        # Create details dictionary with threat_type included
+        event_details = details or {}
+        if 'threat_type' not in event_details:
+            event_details['threat_type'] = threat_type
+        
         event = SecurityEvent(
             timestamp=datetime.now().isoformat(),
             event_type=SecurityEventType.THREAT_DETECTED,
@@ -371,7 +377,7 @@ class SecurityLogger:
             source_ip=source_ip,
             resource=resource,
             description=description,
-            details=details or {},
+            details=event_details,
             outcome="DETECTED"
         )
         
@@ -482,7 +488,7 @@ class AuditLogger:
         return None
     
     def log_audit_event(self, user_id: str, action: str, resource: str,
-                       details: Dict[str, Any], outcome: str = "SUCCESS"):
+                       details: Dict[str, Any], outcome: str = "SUCCESS") -> str:
         """
         Log audit event with chain verification.
         
@@ -492,6 +498,9 @@ class AuditLogger:
             resource: Resource affected
             details: Additional details
             outcome: Outcome of the action
+            
+        Returns:
+            Entry hash string
         """
         timestamp = datetime.now().isoformat()
         
@@ -781,7 +790,7 @@ class PerformanceMonitor:
     
     def _collect_metrics(self):
         """Background thread to collect system metrics."""
-        import psutil
+        import psutil  # Moved import inside function to avoid dependency issues
         
         while self._running:
             try:
@@ -844,8 +853,9 @@ class PerformanceMonitor:
                     if isinstance(metrics_copy[key], list):
                         metrics_copy[key] = metrics_copy[key][-100:]  # Keep last 100
                 
-            with open(self.metrics_file, 'w') as f:
-                json.dump(metrics_copy, f, indent=2)
+            if self.metrics_file:  # Check if metrics_file is not None
+                with open(self.metrics_file, 'w') as f:
+                    json.dump(metrics_copy, f, indent=2)
                 
         except Exception as e:
             print(f"Error saving metrics: {e}")
@@ -954,7 +964,10 @@ def setup_logger(name: str = "CyberGuard",
     
     # File handler (if specified)
     if log_file:
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        # Ensure directory exists
+        log_dir = os.path.dirname(log_file)
+        if log_dir:  # Only create directory if path has a directory component
+            os.makedirs(log_dir, exist_ok=True)
         
         file_handler = logging.handlers.RotatingFileHandler(
             log_file,
@@ -1127,7 +1140,7 @@ if __name__ == "__main__":
     # Performance monitoring
     perf_monitor = get_performance_monitor()
     perf_monitor.record_response_time("/api/scan", 0.125)
-    perf_monitor.record_agent_performance("agent_001", "threat_analysis", 0.25)
+    perf_monitor.record_agent_performance("agent_001", "threat_analysis", 0.25, True)
     
     # Get performance report
     report = perf_monitor.get_performance_report()

@@ -27,13 +27,13 @@ import pytest
 import sys
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import time
 
-# Add src to path for imports
+# Add src to path for imports - allows importing from the parent directory
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import test utilities
+# Import test utilities from the tests directory
 from tests.test_utils import (
     create_mock_threat_data,
     create_mock_website_data,
@@ -41,40 +41,40 @@ from tests.test_utils import (
     TEST_CONFIG
 )
 
-# Test markers
+# Test markers - categorize tests for selective running
 pytestmark = [
-    pytest.mark.agents,
-    pytest.mark.unit
+    pytest.mark.agents,  # Mark all tests in this file as agent tests
+    pytest.mark.unit     # Mark as unit tests
 ]
 
 class TestWebThreatDetectionAgent:
-    """Tests for Web Threat Detection Agent"""
+    """Test suite for Web Threat Detection Agent functionality"""
     
     def test_agent_initialization(self, threat_detection_agent):
-        """Test agent initialization with correct parameters"""
-        # Arrange & Act: Agent is created by fixture
+        """Test that agent initializes with correct parameters and structure"""
+        # Arrange & Act: Agent is created by the pytest fixture 'threat_detection_agent'
         agent = threat_detection_agent
         
-        # Assert: Verify agent properties
-        assert hasattr(agent, 'agent_id'), "Agent should have agent_id"
-        assert hasattr(agent, 'name'), "Agent should have name"
+        # Assert: Verify agent has required attributes
+        assert hasattr(agent, 'agent_id'), "Agent should have agent_id attribute"
+        assert hasattr(agent, 'name'), "Agent should have name attribute"
         assert hasattr(agent, 'confidence'), "Agent should have confidence attribute"
         
-        # Verify agent ID format
-        assert isinstance(agent.agent_id, str), "agent_id should be string"
+        # Verify agent ID is a non-empty string
+        assert isinstance(agent.agent_id, str), "agent_id should be a string"
         assert len(agent.agent_id) > 0, "agent_id should not be empty"
         
-        # Verify agent name
-        assert isinstance(agent.name, str), "name should be string"
+        # Verify agent name is a non-empty string
+        assert isinstance(agent.name, str), "name should be a string"
         assert len(agent.name) > 0, "name should not be empty"
         
-        # Verify confidence is within valid range
+        # Verify confidence is within valid 0-1 range
         assert 0.0 <= agent.confidence <= 1.0, \
             f"confidence should be between 0 and 1, got {agent.confidence}"
     
-    def test_agent_analyze_xss(self, threat_detection_agent, mock_threat_data):
-        """Test agent detection of XSS threats"""
-        # Arrange
+    def test_agent_analyze_xss(self, threat_detection_agent):
+        """Test agent's ability to detect Cross-Site Scripting (XSS) threats"""
+        # Arrange: Create test data with XSS payload
         agent = threat_detection_agent
         threat_data = {
             'url': 'https://test.com/?q=<script>alert(1)</script>',
@@ -83,46 +83,46 @@ class TestWebThreatDetectionAgent:
             'method': 'GET'
         }
         
-        # Act
+        # Act: Call agent's analyze method
         result = agent.analyze(threat_data)
         
-        # Assert
+        # Assert: Validate result structure
         validate_test_result(
             result,
             expected_type=dict,
             expected_keys=['agent_id', 'findings', 'threat_level', 'confidence']
         )
         
-        # Verify result structure
+        # Verify result contains correct agent identifier
         assert result['agent_id'] == agent.agent_id, \
             "Result should contain correct agent_id"
         
-        # Verify threat level is calculated
+        # Verify threat level is a numeric value in valid range
         assert isinstance(result['threat_level'], (int, float)), \
             "threat_level should be numeric"
         assert 0.0 <= result['threat_level'] <= 1.0, \
             f"threat_level should be between 0 and 1, got {result['threat_level']}"
         
-        # Verify confidence is calculated
+        # Verify confidence score is a numeric value in valid range
         assert isinstance(result['confidence'], (int, float)), \
             "confidence should be numeric"
         assert 0.0 <= result['confidence'] <= 1.0, \
             f"confidence should be between 0 and 1, got {result['confidence']}"
         
-        # If XSS is detected, verify findings
+        # If threat is detected (threat_level > 0), verify findings exist
         if result['threat_level'] > 0:
             assert len(result['findings']) > 0, \
                 "Should have findings if threat level > 0"
             
-            # Verify finding structure
+            # Verify each finding has required structure
             for finding in result['findings']:
-                assert 'type' in finding, "Finding should have type"
-                assert 'severity' in finding, "Finding should have severity"
-                assert 'description' in finding, "Finding should have description"
+                assert 'type' in finding, "Finding should have type field"
+                assert 'severity' in finding, "Finding should have severity field"
+                assert 'description' in finding, "Finding should have description field"
     
     def test_agent_analyze_sqli(self, threat_detection_agent):
-        """Test agent detection of SQL injection threats"""
-        # Arrange
+        """Test agent's ability to detect SQL Injection threats"""
+        # Arrange: Create test data with SQL injection payload
         agent = threat_detection_agent
         sqli_data = {
             'url': 'https://test.com/login?username=admin&password=%27OR%271%27%3D%271',
@@ -131,15 +131,15 @@ class TestWebThreatDetectionAgent:
             'method': 'GET'
         }
         
-        # Act
+        # Act: Call agent's analyze method
         result = agent.analyze(sqli_data)
         
-        # Assert
+        # Assert: Basic validation of result
         assert result['threat_level'] >= 0, "threat_level should be non-negative"
         
-        # If SQLi is detected
+        # If SQL injection is strongly detected (threat_level > 0.5)
         if result['threat_level'] > 0.5:
-            # Verify SQLi findings
+            # Find all SQL injection findings in results
             sqli_findings = [
                 f for f in result['findings']
                 if f.get('type') == 'SQL_INJECTION'
@@ -148,8 +148,8 @@ class TestWebThreatDetectionAgent:
                 "Should detect SQL injection in malicious payload"
     
     def test_agent_analyze_csrf(self, threat_detection_agent):
-        """Test agent detection of CSRF vulnerabilities"""
-        # Arrange: POST request without CSRF token
+        """Test agent's ability to detect CSRF vulnerabilities"""
+        # Arrange: Create POST request without CSRF token (potential CSRF vulnerability)
         agent = threat_detection_agent
         csrf_data = {
             'url': 'https://test.com/transfer',
@@ -160,50 +160,48 @@ class TestWebThreatDetectionAgent:
             'method': 'POST'
         }
         
-        # Act
+        # Act: Call agent's analyze method
         result = agent.analyze(csrf_data)
         
-        # Assert
-        # Check for CSRF findings
+        # Assert: Check for CSRF findings in results
         csrf_findings = [
             f for f in result['findings']
             if f.get('type') == 'CSRF'
         ]
         
-        # Either CSRF is detected or not, but result should be valid
+        # Confidence should be non-negative regardless of findings
         assert result['confidence'] >= 0, "confidence should be non-negative"
     
     def test_agent_confidence_update(self, threat_detection_agent):
-        """Test agent confidence update based on analysis"""
-        # Arrange
+        """Test agent's confidence updating mechanism based on analysis results"""
+        # Arrange: Get initial confidence and create mock result
         agent = threat_detection_agent
         initial_confidence = agent.confidence
         
-        # Mock analysis with high certainty
+        # Create mock analysis result with high certainty
         mock_result = {
-            'certainty': 0.9,  # High certainty
-            'threat_level': 0.8
+            'certainty': 0.9,  # High certainty score
+            'threat_level': 0.8  # High threat level
         }
         
-        # Act
+        # Act: Update agent confidence based on mock result
         new_confidence = agent.update_confidence(mock_result)
         
-        # Assert
+        # Assert: Validate updated confidence
         assert isinstance(new_confidence, float), \
-            "Updated confidence should be float"
+            "Updated confidence should be a float"
         assert 0.0 <= new_confidence <= 1.0, \
             f"confidence should be between 0 and 1, got {new_confidence}"
         
-        # With high certainty, confidence should increase or stay same
-        # (but not necessarily, depends on implementation)
+        # Confidence should be non-negative (implementation specific behavior)
         assert new_confidence >= 0, "confidence should be non-negative"
     
     def test_agent_memory_management(self, threat_detection_agent):
-        """Test agent memory management and bounded memory"""
+        """Test agent's memory management capabilities and bounded memory constraints"""
         # Arrange
         agent = threat_detection_agent
         
-        # Act: Add multiple analyses to memory
+        # Act: Simulate multiple analyses to fill memory
         for i in range(20):
             analysis_result = {
                 'findings': [{'type': 'TEST', 'severity': 'LOW'}],
@@ -212,91 +210,93 @@ class TestWebThreatDetectionAgent:
             }
             agent.update_confidence(analysis_result)
         
-        # Get reasoning state (tests memory conversion)
+        # Get reasoning state to test memory serialization/deserialization
         reasoning_state = agent.get_reasoning_state()
         
-        # Assert
-        # Reasoning state should exist (could be zero tensor if no memory)
+        # Assert: Reasoning state should exist (could be empty/zero but not None)
         assert reasoning_state is not None, \
-            "get_reasoning_state should return something"
+            "get_reasoning_state should return a value (even if empty)"
     
     def test_agent_error_handling(self, threat_detection_agent):
-        """Test agent error handling with invalid input"""
+        """Test agent's error handling with various invalid inputs"""
         # Arrange
         agent = threat_detection_agent
         
-        # Test with various invalid inputs
+        # List of invalid inputs to test
         invalid_inputs = [
-            None,  # None input
-            {},  # Empty dict
+            None,  # Null input
+            {},  # Empty dictionary
             {'invalid': 'data'},  # Missing required fields
-            123,  # Wrong type
-            []  # List instead of dict
+            123,  # Wrong data type (integer instead of dict)
+            []  # Wrong data type (list instead of dict)
         ]
         
+        # Test each invalid input
         for invalid_input in invalid_inputs:
             # Act & Assert: Should handle gracefully without crashing
             try:
                 result = agent.analyze(invalid_input)
-                # If it returns, should be a valid structure
+                # If method returns, result should be a valid dictionary structure
                 if result:
                     assert isinstance(result, dict), \
-                        "Result should be dict even for invalid input"
+                        "Result should be a dictionary even for invalid input"
             except Exception as e:
-                # Should be a specific, expected exception, not generic
+                # Agent should raise specific, expected exceptions, not generic ones
                 assert not isinstance(e, KeyboardInterrupt), \
-                    "Should not raise KeyboardInterrupt"
-                # Log the exception type for debugging
+                    "Should not raise KeyboardInterrupt for invalid input"
+                # Log exception type for debugging (not required for test pass/fail)
                 print(f"Expected exception for invalid input: {type(e).__name__}")
     
     def test_agent_performance(self, threat_detection_agent):
-        """Test agent analysis performance"""
+        """Test agent's analysis performance with timing measurements"""
         # Arrange
         agent = threat_detection_agent
         test_data = create_mock_threat_data('xss')
-        num_iterations = 10
+        num_iterations = 10  # Number of test iterations
         
-        # Act: Measure analysis time
+        # Act: Measure analysis time across multiple iterations
         start_time = time.time()
         
         for i in range(num_iterations):
-            # Modify data slightly each iteration
+            # Create slightly modified data for each iteration
             data = test_data.copy()
             data['payload'] = f"<script>alert('test{i}')</script>"
+            # Create request data from payload
             result = agent.analyze({
                 'url': f"https://test.com/?q={data['payload']}",
                 'headers': {},
                 'body': '',
                 'method': 'GET'
             })
-            assert result is not None, "Analysis should return result"
+            # Ensure analysis returns a result
+            assert result is not None, "Analysis should return a result"
         
         end_time = time.time()
         total_time = end_time - start_time
         avg_time = total_time / num_iterations
         
-        # Assert: Should complete within reasonable time
-        # Typical threshold: < 100ms per analysis
-        max_avg_time = 0.1  # 100ms
+        # Assert: Performance should be within acceptable limits
+        max_avg_time = 0.1  # Maximum average time per analysis (100ms)
         assert avg_time < max_avg_time, \
             f"Average analysis time {avg_time:.3f}s exceeds threshold {max_avg_time}s"
         
+        # Print performance metrics for debugging
         print(f"Performance: {num_iterations} analyses in {total_time:.3f}s "
               f"(avg: {avg_time:.3f}s)")
     
     @pytest.mark.parametrize("threat_type,expected_min_threat", [
-        ('xss', 0.7),  # XSS should be high threat
-        ('sqli', 0.8),  # SQLi should be very high threat
-        ('csrf', 0.3),  # CSRF might be medium threat
+        ('xss', 0.7),  # XSS should be high threat (0.7+)
+        ('sqli', 0.8),  # SQL injection should be very high threat (0.8+)
+        ('csrf', 0.3),  # CSRF might be medium threat (0.3+)
     ])
     def test_agent_threat_type_detection(self, threat_detection_agent, 
                                          threat_type, expected_min_threat):
-        """Parameterized test for different threat type detection"""
+        """Parameterized test to verify detection of different threat types"""
         # Arrange
         agent = threat_detection_agent
         threat_data = create_mock_threat_data(threat_type)
         
-        # Create request data with threat payload
+        # Create request data incorporating threat payload
         request_data = {
             'url': f'https://test.com/?payload={threat_data["payload"]}',
             'headers': {},
@@ -304,208 +304,215 @@ class TestWebThreatDetectionAgent:
             'method': 'GET'
         }
         
-        # Act
+        # Act: Analyze the threat
         result = agent.analyze(request_data)
         
-        # Assert
-        # Threat level should be above minimum for this threat type
-        # (or at least non-zero if threat is present)
-        if threat_data['payload']:  # Only if payload exists
+        # Assert: Threat should be detected if payload exists
+        if threat_data['payload']:  # Only check if payload is not empty
             assert result['threat_level'] > 0, \
-                f"{threat_type} should be detected as threat"
+                f"{threat_type} should be detected as a threat"
 
 class TestTrafficAnomalyAgent:
-    """Tests for Traffic Anomaly Detection Agent"""
+    """Test suite for Traffic Anomaly Detection Agent"""
     
     def test_traffic_agent_initialization(self, traffic_anomaly_agent):
         """Test traffic anomaly agent initialization"""
         # Arrange & Act: Agent is created by fixture
         agent = traffic_anomaly_agent
         
-        # Assert
-        assert hasattr(agent, 'agent_id'), "Agent should have agent_id"
-        assert hasattr(agent, 'name'), "Agent should have name"
+        # Assert: Verify agent has required attributes
+        assert hasattr(agent, 'agent_id'), "Agent should have agent_id attribute"
+        assert hasattr(agent, 'name'), "Agent should have name attribute"
         
-        # Verify it's a traffic anomaly agent
-        assert 'traffic' in agent.name.lower() or 'anomaly' in agent.name.lower(), \
-            "Agent should be traffic anomaly agent"
+        # Verify agent name indicates it's a traffic anomaly agent
+        agent_name_lower = agent.name.lower()
+        assert 'traffic' in agent_name_lower or 'anomaly' in agent_name_lower, \
+            "Agent name should indicate it's a traffic anomaly agent"
     
     def test_traffic_pattern_analysis(self, traffic_anomaly_agent):
-        """Test traffic pattern analysis"""
+        """Test analysis of traffic patterns for anomalies"""
         # Arrange
         agent = traffic_anomaly_agent
         
-        # Create mock traffic data
+        # Create mock traffic data with potential anomalies
         traffic_data = {
-            'requests_per_second': 1000,  # High traffic
-            'avg_response_time': 50,  # ms
-            'error_rate': 0.05,  # 5% errors
-            'user_agents': ['Chrome', 'Firefox', 'Python-requests'],
-            'ip_addresses': ['192.168.1.1', '192.168.1.2', '10.0.0.1']
+            'requests_per_second': 1000,  # High traffic volume
+            'avg_response_time': 50,  # Average response time in milliseconds
+            'error_rate': 0.05,  # 5% error rate
+            'user_agents': ['Chrome', 'Firefox', 'Python-requests'],  # Mix of user agents
+            'ip_addresses': ['192.168.1.1', '192.168.1.2', '10.0.0.1']  # Source IPs
         }
         
-        # Act
-        # Note: Actual method name may vary
+        # Act: Try different possible method names for traffic analysis
         if hasattr(agent, 'analyze_traffic'):
+            # If agent has specific traffic analysis method
             result = agent.analyze_traffic(traffic_data)
         elif hasattr(agent, 'analyze'):
+            # If agent uses generic analyze method
             result = agent.analyze({'traffic': traffic_data})
         else:
-            pytest.skip("Traffic analysis method not available")
+            # Skip test if agent doesn't have expected methods
+            pytest.skip("Traffic analysis method not available on agent")
         
-        # Assert
-        assert result is not None, "Traffic analysis should return result"
+        # Assert: Result should exist and contain analysis scores
+        assert result is not None, "Traffic analysis should return a result"
+        
+        # Result should contain either anomaly score or threat level
         if isinstance(result, dict):
-            assert 'anomaly_score' in result or 'threat_level' in result, \
-                "Should include anomaly or threat score"
+            has_anomaly_score = 'anomaly_score' in result
+            has_threat_level = 'threat_level' in result
+            assert has_anomaly_score or has_threat_level, \
+                "Result should include either anomaly_score or threat_level"
 
 class TestBotDetectionAgent:
-    """Tests for Bot Detection Agent"""
+    """Test suite for Bot Detection Agent"""
     
     def test_bot_agent_initialization(self, bot_detection_agent):
         """Test bot detection agent initialization"""
         # Arrange & Act: Agent is created by fixture
         agent = bot_detection_agent
         
-        # Assert
-        assert hasattr(agent, 'agent_id'), "Agent should have agent_id"
-        assert hasattr(agent, 'name'), "Agent should have name"
+        # Assert: Verify agent has required attributes
+        assert hasattr(agent, 'agent_id'), "Agent should have agent_id attribute"
+        assert hasattr(agent, 'name'), "Agent should have name attribute"
         
-        # Verify it's a bot detection agent
+        # Verify agent name indicates it's a bot detection agent
         assert 'bot' in agent.name.lower(), \
-            "Agent should be bot detection agent"
+            "Agent name should indicate it's a bot detection agent"
     
     def test_bot_signature_detection(self, bot_detection_agent):
-        """Test bot signature detection"""
+        """Test detection of bot signatures in requests"""
         # Arrange
         agent = bot_detection_agent
         
         # Create request with bot-like characteristics
         bot_request = {
             'user_agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-            'requests_per_minute': 100,  # High rate
-            'pattern': 'sequential',  # Sequential access pattern
-            'mouse_movements': 0,  # No mouse movements
-            'javascript_enabled': False  # No JavaScript
+            'requests_per_minute': 100,  # High request rate typical of bots
+            'pattern': 'sequential',  # Sequential access pattern typical of crawlers
+            'mouse_movements': 0,  # No mouse movements (bot indicator)
+            'javascript_enabled': False  # JavaScript disabled (bot indicator)
         }
         
-        # Act
+        # Act: Try different possible method names for bot detection
         if hasattr(agent, 'detect_bot'):
+            # If agent has specific bot detection method
             result = agent.detect_bot(bot_request)
         elif hasattr(agent, 'analyze'):
+            # If agent uses generic analyze method
             result = agent.analyze({'request': bot_request})
         else:
-            pytest.skip("Bot detection method not available")
+            # Skip test if agent doesn't have expected methods
+            pytest.skip("Bot detection method not available on agent")
         
-        # Assert
-        assert result is not None, "Bot detection should return result"
+        # Assert: Result should exist
+        assert result is not None, "Bot detection should return a result"
 
 class TestAgentIntegration:
-    """Integration tests for multiple agents"""
+    """Integration tests for multiple agents working together"""
     
     def test_multiple_agent_coordination(self, agent_orchestrator):
-        """Test coordination between multiple agents"""
+        """Test coordination between multiple agents for comprehensive analysis"""
         # Arrange
         orchestrator = agent_orchestrator
         
-        # Create test security data
+        # Create test security data with multiple threat indicators
         security_data = {
-            'url': 'https://test.com/?q=<script>alert(1)</script>',
-            'headers': {'User-Agent': 'Test-Bot/1.0'},
+            'url': 'https://test.com/?q=<script>alert(1)</script>',  # XSS payload
+            'headers': {'User-Agent': 'Test-Bot/1.0'},  # Suspicious user agent
             'body': '',
             'method': 'GET',
-            'timestamp': '2024-01-01T00:00:00Z'
+            'timestamp': '2024-01-01T00:00:00Z'  # ISO format timestamp
         }
         
-        # Act: Coordinate analysis
+        # Act: Coordinate analysis across all agents
         if hasattr(orchestrator, 'coordinate_analysis'):
             result = orchestrator.coordinate_analysis(security_data)
         else:
-            pytest.skip("Agent coordination not available")
+            pytest.skip("Agent coordination method not available")
         
-        # Assert
+        # Assert: Validate coordination result structure
         validate_test_result(
             result,
             expected_type=dict,
             expected_keys=['final_decision', 'agent_analyses']
         )
         
-        # Verify all agents participated
+        # Verify all agents participated in analysis
         assert len(result['agent_analyses']) == len(orchestrator.agents), \
-            "All agents should provide analyses"
+            "All agents should provide analyses in coordinated result"
         
-        # Verify final decision exists
+        # Verify final decision structure
         final_decision = result['final_decision']
-        assert 'action' in final_decision, "Final decision should include action"
-        assert 'threat_level' in final_decision, "Final decision should include threat_level"
+        assert 'action' in final_decision, "Final decision should include action field"
+        assert 'threat_level' in final_decision, "Final decision should include threat_level field"
         
-        # Verify action is valid
+        # Verify action is one of the valid security actions
         valid_actions = ['ALLOW', 'BLOCK', 'CHALLENGE', 'MONITOR']
         assert final_decision['action'] in valid_actions, \
-            f"Action should be one of {valid_actions}"
+            f"Action should be one of {valid_actions}, got {final_decision['action']}"
     
     def test_agent_conflict_resolution(self, agent_orchestrator):
-        """Test resolution when agents have conflicting opinions"""
+        """Test resolution when different agents have conflicting threat assessments"""
         # Arrange
         orchestrator = agent_orchestrator
         
-        # Create data that might cause conflicts
-        # (e.g., looks malicious to one agent but normal to another)
+        # Create data that might cause conflicting assessments between agents
         conflicting_data = {
-            'url': 'https://test.com/admin',  # Admin panel - might be suspicious
+            'url': 'https://test.com/admin',  # Admin panel access - might be suspicious
             'headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Authorization': 'Bearer test_token'
             },
             'body': '',
             'method': 'GET',
-            'source_ip': '192.168.1.100'
+            'source_ip': '192.168.1.100'  # Internal IP address
         }
         
-        # Act
+        # Act: Coordinate analysis on conflicting data
         if hasattr(orchestrator, 'coordinate_analysis'):
             result = orchestrator.coordinate_analysis(conflicting_data)
         else:
-            pytest.skip("Agent coordination not available")
+            pytest.skip("Agent coordination method not available")
         
-        # Assert: System should handle conflicts gracefully
-        assert result is not None, "Should handle conflicting data"
+        # Assert: System should handle conflicts and produce a decision
+        assert result is not None, "Should handle conflicting data and return a result"
         
         # Decision should be made despite conflicts
         final_decision = result['final_decision']
         assert final_decision['confidence'] >= 0, \
-            "Should have confidence score even with conflicts"
+            "Should have confidence score even with conflicting agent opinions"
         
-        # Should indicate if human review is needed
+        # If system has human review flag, verify it's set appropriately for low confidence
         if 'requires_human_review' in final_decision:
-            # If confidence is low, human review might be needed
+            # Low confidence decisions should flag for human review
             if final_decision['confidence'] < 0.6:
                 assert final_decision['requires_human_review'] is True, \
-                    "Low confidence should require human review"
+                    "Low confidence decisions should require human review"
 
 @pytest.mark.integration
 class TestEndToEndAgentWorkflow:
-    """End-to-end tests for complete agent workflow"""
+    """End-to-end tests for complete agent workflow from detection to response"""
     
     def test_complete_threat_detection_workflow(self, threat_detection_agent):
-        """Test complete workflow from detection to recommendation"""
-        # Arrange: Complete attack scenario
+        """Test complete workflow: threat detection, analysis, and response recommendation"""
+        # Arrange: Simulate a complete attack scenario
         attack_scenario = {
             'url': 'https://vulnerable.com/login',
             'headers': {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'User-Agent': 'Mozilla/5.0'
             },
-            'body': 'username=admin&password=%27OR%271%27%3D%271',
+            'body': 'username=admin&password=%27OR%271%27%3D%271',  # SQL injection payload
             'method': 'POST',
             'source_ip': '10.0.0.100',
             'timestamp': '2024-01-01T12:00:00Z'
         }
         
-        # Act: Full analysis
+        # Act: Perform full threat analysis
         result = threat_detection_agent.analyze(attack_scenario)
         
-        # Assert: Complete result structure
+        # Assert: Verify complete result structure with all required fields
         required_keys = [
             'agent_id',
             'findings',
@@ -514,27 +521,31 @@ class TestEndToEndAgentWorkflow:
             'recommended_action'
         ]
         
+        # Check all required keys exist in result
         for key in required_keys:
-            assert key in result, f"Result should contain {key}"
+            assert key in result, f"Result should contain {key} field"
         
-        # Verify actionable output
-        if result['threat_level'] > 0.7:
+        # Verify actionable output for high-threat scenarios
+        if result['threat_level'] > 0.7:  # High threat threshold
             assert result['recommended_action'] is not None, \
-                "High threat should have recommended action"
+                "High threat level should have a recommended action"
             assert len(result['recommended_action']) > 0, \
-                "Recommended action should not be empty"
+                "Recommended action should not be empty string"
         
-        # Verify findings are actionable
+        # Verify findings are actionable with complete information
         for finding in result['findings']:
-            assert 'type' in finding, "Finding should have type"
-            assert 'severity' in finding, "Finding should have severity"
-            assert 'description' in finding, "Finding should have description"
+            assert 'type' in finding, "Finding should have type field"
+            assert 'severity' in finding, "Finding should have severity field"
+            assert 'description' in finding, "Finding should have description field"
             
-            # High severity findings should have remediation
+            # High severity findings should include remediation guidance
             if finding.get('severity') in ['HIGH', 'CRITICAL']:
-                assert 'remediation' in finding or 'recommendation' in finding, \
-                    "High severity findings should include remediation"
+                has_remediation = 'remediation' in finding
+                has_recommendation = 'recommendation' in finding
+                assert has_remediation or has_recommendation, \
+                    "High severity findings should include remediation or recommendation"
 
+# Main execution block for running tests directly
 if __name__ == "__main__":
-    # Allow running tests directly
+    # Run tests in verbose mode when script is executed directly
     pytest.main([__file__, "-v"])

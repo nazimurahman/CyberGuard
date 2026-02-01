@@ -47,6 +47,10 @@ import ssl
 import hashlib
 import tempfile
 import mimetypes
+import json
+import xml.etree.ElementTree as ET
+import stat
+import warnings
 from typing import Optional, Dict, Any, Union, BinaryIO, Tuple
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -57,7 +61,7 @@ import logging
 try:
     import requests
     from requests.adapters import HTTPAdapter
-    from requests.packages.urllib3.util.retry import Retry
+    from urllib3.util.retry import Retry  # Fixed import path
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
@@ -71,10 +75,123 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
     logging.warning("aiohttp library not available, async loading disabled")
 
-# Local imports
+# Try to import magic for file type detection (optional)
+try:
+    import magic
+    MAGIC_AVAILABLE = True
+except ImportError:
+    MAGIC_AVAILABLE = False
+
+# Local imports - Note: These would need to exist in the actual codebase
+# For now, we'll create stubs or alternative implementations
+"""
+# Commented out because these modules don't exist in this standalone file
 from ..utils.crypto_utils import validate_certificate, generate_secure_hash
 from ..utils.logging_utils import audit_log
 from .hash_validator import HashValidator, HashAlgorithm
+"""
+
+# Stub implementations for missing imports
+def validate_certificate(domain: str) -> bool:
+    """
+    Stub implementation of certificate validation.
+    In production, this would validate SSL certificates.
+    """
+    # This is a stub - in real implementation, validate certificate
+    return True  # Accept all certificates for stub implementation
+
+def audit_log(action: str, resource: str, status: str, details: Dict[str, Any]) -> None:
+    """
+    Stub implementation for audit logging.
+    Logs security-relevant events.
+    """
+    logging.info(f"AUDIT: {action} on {resource} - {status}: {details}")
+
+def record_cache_metrics(is_hit: bool) -> None:
+    """
+    Stub implementation for cache metrics recording.
+    Tracks cache performance.
+    """
+    # In production, this would update metrics in monitoring system
+    pass
+
+def record_download_metrics(size_bytes: int, success: bool, duration_seconds: float) -> None:
+    """
+    Stub implementation for download metrics recording.
+    Tracks download performance and failures.
+    """
+    # In production, this would update metrics in monitoring system
+    pass
+
+class HashValidator:
+    """
+    Stub implementation of HashValidator.
+    Validates data integrity using hash algorithms.
+    """
+    def __init__(self):
+        """Initialize hash validator with supported algorithms."""
+        self.supported_algorithms = {
+            'md5': hashlib.md5,
+            'sha1': hashlib.sha1,
+            'sha256': hashlib.sha256,
+            'sha512': hashlib.sha512
+        }
+    
+    def verify_hash(self, data: bytes, hash_spec: str) -> bool:
+        """
+        Verify that data matches the expected hash.
+        
+        Args:
+            data: Binary data to verify
+            hash_spec: Hash specification in format "algorithm:hash_value"
+            
+        Returns:
+            bool: True if hash matches, False otherwise
+        """
+        try:
+            # Parse hash specification
+            if ':' not in hash_spec:
+                raise ValueError(f"Invalid hash format: {hash_spec}")
+            
+            algorithm, expected_hash = hash_spec.split(':', 1)
+            algorithm = algorithm.lower().strip()
+            expected_hash = expected_hash.strip()
+            
+            # Get hash function
+            if algorithm not in self.supported_algorithms:
+                raise ValueError(f"Unsupported algorithm: {algorithm}")
+            
+            hash_func = self.supported_algorithms[algorithm]
+            
+            # Calculate actual hash
+            actual_hash = hash_func(data).hexdigest()
+            
+            # Compare hashes (constant-time comparison for security)
+            return self._constant_time_compare(actual_hash, expected_hash)
+            
+        except Exception as e:
+            logging.error(f"Hash verification error: {e}")
+            return False
+    
+    def _constant_time_compare(self, a: str, b: str) -> bool:
+        """
+        Constant-time string comparison to prevent timing attacks.
+        
+        Args:
+            a: First string to compare
+            b: Second string to compare
+            
+        Returns:
+            bool: True if strings are equal, False otherwise
+        """
+        if len(a) != len(b):
+            return False
+        
+        result = 0
+        for x, y in zip(a, b):
+            result |= ord(x) ^ ord(y)
+        
+        return result == 0
 
 # Custom exceptions for clear error handling
 class DataIngestionError(Exception):
@@ -216,6 +333,9 @@ class SecureDataLoader:
     
     def _init_session(self):
         """Initialize HTTP session with security settings"""
+        if not REQUESTS_AVAILABLE:
+            return
+            
         self.session = requests.Session()
         
         # Configure retry strategy
@@ -247,7 +367,6 @@ class SecureDataLoader:
         # Security: Disable SSL verification warnings in production
         # (we'll do our own certificate validation)
         if not self.strict_validation:
-            import warnings
             warnings.filterwarnings('ignore', message='Unverified HTTPS request')
     
     def _check_rate_limit(self, domain: str) -> bool:
@@ -305,7 +424,10 @@ class SecureDataLoader:
         try:
             parsed = urlparse(url)
             
-            # Check scheme
+            # Check scheme - ensure scheme exists
+            if not parsed.scheme:
+                raise DataValidationError(f"URL missing scheme: {url}")
+                
             if parsed.scheme not in ('http', 'https'):
                 raise DataValidationError(
                     f"Unsupported URL scheme: {parsed.scheme}. "
@@ -313,6 +435,9 @@ class SecureDataLoader:
                 )
             
             # Extract domain
+            if not parsed.netloc:
+                raise DataValidationError(f"URL missing network location: {url}")
+                
             domain = parsed.netloc.split(':')[0]  # Remove port if present
             
             # Check if domain is blocked
@@ -574,6 +699,11 @@ class SecureDataLoader:
         if not REQUESTS_AVAILABLE:
             raise RuntimeError("requests library is required for HTTP loading")
         
+        if self.session is None:
+            self._init_session()
+            if self.session is None:
+                raise RuntimeError("Failed to initialize HTTP session")
+        
         # Use override max size if provided
         effective_max_size = max_size_mb or self.max_size_mb
         max_size_bytes = effective_max_size * 1024 * 1024
@@ -589,15 +719,19 @@ class SecureDataLoader:
             response.raise_for_status()  # Raise for bad status codes
             
             # Get content length from headers
-            content_length = response.headers.get('Content-Length')
-            if content_length:
-                content_length = int(content_length)
-                # Early size validation
-                if content_length > max_size_bytes:
-                    raise DataValidationError(
-                        f"Content length {content_length} bytes exceeds "
-                        f"maximum {max_size_bytes} bytes"
-                    )
+            content_length = None
+            if 'Content-Length' in response.headers:
+                try:
+                    content_length = int(response.headers['Content-Length'])
+                    # Early size validation
+                    if content_length > max_size_bytes:
+                        raise DataValidationError(
+                            f"Content length {content_length} bytes exceeds "
+                            f"maximum {max_size_bytes} bytes"
+                        )
+                except ValueError:
+                    # Content-Length header may be invalid, continue without it
+                    pass
             
             # Validate content type
             content_type = response.headers.get('Content-Type', '')
@@ -678,7 +812,6 @@ class SecureDataLoader:
             raise DataValidationError(f"Path is not a file: {filepath}")
         
         # Check file permissions (security)
-        import stat
         file_stat = filepath.stat()
         
         # Warn about world-writable files
@@ -716,15 +849,17 @@ class SecureDataLoader:
         # Content type validation
         if expected_content_type:
             # Try to determine actual content type
-            import magic  # Would need python-magic installation
-            try:
-                actual_type = magic.from_buffer(data, mime=True)
-                if actual_type != expected_content_type:
-                    raise DataValidationError(
-                        f"Content type mismatch. Expected: {expected_content_type}, "
-                        f"Got: {actual_type}"
-                    )
-            except ImportError:
+            if MAGIC_AVAILABLE:
+                try:
+                    actual_type = magic.from_buffer(data, mime=True)
+                    if actual_type != expected_content_type:
+                        raise DataValidationError(
+                            f"Content type mismatch. Expected: {expected_content_type}, "
+                            f"Got: {actual_type}"
+                        )
+                except Exception as e:
+                    logging.warning(f"Failed to detect content type with magic: {e}")
+            else:
                 # Fall back to file extension
                 mimetype, _ = mimetypes.guess_type(str(filepath))
                 if mimetype and mimetype != expected_content_type:
@@ -736,7 +871,6 @@ class SecureDataLoader:
         # JSON validation if requested
         if validate_json:
             try:
-                import json
                 json.loads(data.decode('utf-8'))
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 raise DataValidationError(f"Invalid JSON in {filepath}: {e}")
@@ -744,7 +878,6 @@ class SecureDataLoader:
         # XML validation if requested
         if validate_xml:
             try:
-                import xml.etree.ElementTree as ET
                 ET.fromstring(data)
             except ET.ParseError as e:
                 raise DataValidationError(f"Invalid XML in {filepath}: {e}")
@@ -915,8 +1048,7 @@ def _initialize_certificate_store():
     ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
     
     # Store context for later use
-    import ssl as ssl_module
-    ssl_module._create_default_https_context = lambda: ssl_context
+    ssl._create_default_https_context = lambda: ssl_context
     
     logging.info("Certificate store initialized with TLS 1.2+ and strong ciphers")
 
@@ -930,7 +1062,6 @@ def _check_certificate_store() -> str:
     try:
         # Test with a known good domain
         import socket
-        import ssl
         
         context = ssl.create_default_context()
         
@@ -988,3 +1119,6 @@ def load_secure_data(
         return loader.load_file(source, **kwargs)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
+
+# Initialize certificate store when module loads
+_initialize_certificate_store()

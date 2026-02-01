@@ -37,7 +37,8 @@ import hashlib
 import time
 from datetime import datetime
 
-from .base_agent import SecurityAgent, SecurityFinding, ThreatSeverity
+# Import necessary base classes - FIXED: Added missing imports
+from .base_agent import SecurityAgent, SecurityFinding, ThreatSeverity, AgentState
 
 
 class WebThreatDetectionAgent(SecurityAgent):
@@ -103,7 +104,7 @@ class WebThreatDetectionAgent(SecurityAgent):
             'max_patterns_per_type': 1000
         }
         
-        print(f"✅ Web Threat Detection Agent initialized with {len(self.threat_patterns)} patterns")
+        print(f"Web Threat Detection Agent initialized with {len(self.threat_patterns)} patterns")
     
     def _load_threat_patterns(self) -> Dict[str, List[Dict[str, Any]]]:
         """
@@ -525,28 +526,32 @@ class WebThreatDetectionAgent(SecurityAgent):
             
             # ==================== LAYER 1: PATTERN MATCHING ====================
             if self.detection_engines['pattern_matcher']['enabled']:
-                pattern_findings, pattern_score, pattern_certainty = self.detection_engines['pattern_matcher']['engine'](normalized_data)
+                # FIXED: Call pattern matcher engine correctly
+                pattern_findings, pattern_score, pattern_certainty = self._pattern_match_engine(normalized_data)
                 all_findings.extend(pattern_findings)
                 threat_scores.append(pattern_score)
                 certainties.append(pattern_certainty)
             
             # ==================== LAYER 2: HEURISTIC ANALYSIS ====================
             if self.detection_engines['heuristic_analyzer']['enabled']:
-                heuristic_findings, heuristic_score, heuristic_certainty = self.detection_engines['heuristic_analyzer']['engine'](normalized_data)
+                # FIXED: Call heuristic analyzer engine correctly
+                heuristic_findings, heuristic_score, heuristic_certainty = self._heuristic_analysis_engine(normalized_data)
                 all_findings.extend(heuristic_findings)
                 threat_scores.append(heuristic_score)
                 certainties.append(heuristic_certainty)
             
             # ==================== LAYER 3: CONTEXT-AWARE ANALYSIS ====================
             if self.detection_engines['context_analyzer']['enabled']:
-                context_findings, context_score, context_certainty = self.detection_engines['context_analyzer']['engine'](normalized_data, all_findings)
+                # FIXED: Call context analyzer engine correctly
+                context_findings, context_score, context_certainty = self._context_aware_engine(normalized_data, all_findings)
                 all_findings.extend(context_findings)
                 threat_scores.append(context_score)
                 certainties.append(context_certainty)
             
             # ==================== LAYER 4: SEQUENCE ANALYSIS ====================
             if self.detection_engines['sequence_analyzer']['enabled']:
-                sequence_findings, sequence_score, sequence_certainty = self.detection_engines['sequence_analyzer']['engine'](normalized_data, all_findings)
+                # FIXED: Call sequence analyzer engine correctly
+                sequence_findings, sequence_score, sequence_certainty = self._sequence_analysis_engine(normalized_data, all_findings)
                 all_findings.extend(sequence_findings)
                 threat_scores.append(sequence_score)
                 certainties.append(sequence_certainty)
@@ -828,7 +833,7 @@ class WebThreatDetectionAgent(SecurityAgent):
                                     'match_count': len(matches),
                                     'weight': weight
                                 },
-                                recommendation=self._get_recommendation_for_threat(threat_type),
+                                recommendation=self._get_recommendation_for_threat(threat_type.upper()),
                                 references=pattern_data['references']
                             )
                             
@@ -1841,6 +1846,14 @@ class WebThreatDetectionAgent(SecurityAgent):
         4. Support capacity planning
         """
         
+        # FIXED: Initialize metrics if not present
+        if 'avg_processing_time' not in self.metrics:
+            self.metrics['avg_processing_time'] = processing_time
+            self.metrics['threats_detected'] = 0
+            self.metrics['successful_analyses'] = 0
+            self.metrics['total_analyses'] = 0
+            self.metrics['success_rate'] = 0.0
+        
         # Update processing time (exponential moving average)
         self.metrics['avg_processing_time'] = (
             0.9 * self.metrics['avg_processing_time'] + 
@@ -1852,12 +1865,13 @@ class WebThreatDetectionAgent(SecurityAgent):
             if finding.severity.value >= ThreatSeverity.MEDIUM.value:
                 self.metrics['threats_detected'] += 1
         
-        # Update success rate
-        successful_analyses = self.metrics.get('successful_analyses', 0)
-        total_analyses = self.metrics.get('total_analyses', 0)
+        # Update analysis counts
+        self.metrics['total_analyses'] += 1
+        self.metrics['successful_analyses'] += 1  # Assuming successful if no exception
         
-        if total_analyses > 0:
-            self.metrics['success_rate'] = successful_analyses / total_analyses
+        # Update success rate
+        if self.metrics['total_analyses'] > 0:
+            self.metrics['success_rate'] = self.metrics['successful_analyses'] / self.metrics['total_analyses']
     
     def _create_whitelist_response(self, start_time: float) -> Dict[str, Any]:
         """

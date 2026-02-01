@@ -4,27 +4,6 @@ Website Plugin Deployment Module for CyberGuard
 
 Provides a lightweight JavaScript plugin that can be easily integrated into any website
 for real-time security monitoring and protection.
-
-Features:
-- Real-time threat detection
-- Non-intrusive integration (single script tag)
-- Configurable security policies
-- Automated incident response
-- Performance monitoring
-- GDPR/CCPA compliant
-
-Usage:
-1. Add script tag to website:
-   <script src="https://cdn.cyberguard.ai/plugin/v1/cyberguard.js"></script>
-   
-2. Initialize with configuration:
-   <script>
-     CyberGuard.init({
-       apiKey: 'YOUR_API_KEY',
-       mode: 'protection',
-       logLevel: 'warn'
-     });
-   </script>
 """
 
 import os
@@ -38,43 +17,44 @@ import aiohttp
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 import logging
+import urllib.parse
 
-# Local imports
-from ..web_security.scanner import WebSecurityScanner
-from ..agents.agent_orchestrator import AgentOrchestrator
-from ..utils.crypto_utils import generate_hmac, validate_signature
+# Local imports - assuming these exist in the project structure
+# Note: These imports might need adjustment based on actual project structure
+try:
+    from ..web_security.scanner import WebSecurityScanner
+    from ..agents.agent_orchestrator import AgentOrchestrator
+except ImportError:
+    # Fallback for standalone testing
+    class WebSecurityScanner:
+        def __init__(self, config):
+            self.config = config
+    
+    class AgentOrchestrator:
+        def __init__(self, state_dim):
+            self.state_dim = state_dim
 
 # Configure module logger
 logger = logging.getLogger(__name__)
 
 class PluginMode(Enum):
-    """Operation modes for the website plugin"""
-    MONITOR = "monitor"         # Monitor only, no blocking
-    PROTECTION = "protection"   # Actively block threats
-    DEBUG = "debug"            # Debug mode with detailed logging
-    LEARNING = "learning"      # Learning mode for training
+    """
+    Operation modes for the website plugin.
+    
+    MONITOR: Only monitor requests, no blocking
+    PROTECTION: Actively block detected threats
+    DEBUG: Debug mode with detailed logging
+    LEARNING: Learning mode for training the system
+    """
+    MONITOR = "monitor"
+    PROTECTION = "protection"
+    DEBUG = "debug"
+    LEARNING = "learning"
 
 @dataclass
 class PluginConfig:
     """
     Configuration for the CyberGuard website plugin.
-    
-    Attributes:
-        api_key: API key for authentication (required)
-        mode: Operation mode (default: PROTECTION)
-        log_level: Logging level (default: 'warn')
-        blocked_countries: List of country codes to block
-        allowed_user_agents: List of allowed user agents
-        rate_limit_requests: Max requests per minute (default: 100)
-        rate_limit_window: Time window for rate limiting in seconds
-        enable_xss_protection: Enable XSS detection (default: True)
-        enable_sqli_protection: Enable SQL injection detection (default: True)
-        enable_bot_protection: Enable bot detection (default: True)
-        enable_ddos_protection: Enable DDoS protection (default: True)
-        custom_rules: Custom security rules
-        callback_url: Webhook URL for incident notifications
-        enable_analytics: Send anonymous usage analytics (default: True)
-        data_retention_days: Days to retain data (default: 30)
     """
     api_key: str
     mode: PluginMode = PluginMode.PROTECTION
@@ -92,8 +72,18 @@ class PluginConfig:
     enable_analytics: bool = True
     data_retention_days: int = 30
     
+    def __post_init__(self):
+        """Post-initialization processing for enum conversion."""
+        if isinstance(self.mode, str):
+            self.mode = PluginMode(self.mode)
+    
     def validate(self) -> bool:
-        """Validate configuration parameters"""
+        """
+        Validate all configuration parameters.
+        
+        Returns:
+            bool: True if configuration is valid, False otherwise
+        """
         if not self.api_key or len(self.api_key) < 32:
             logger.error("Invalid API key: must be at least 32 characters")
             return False
@@ -113,30 +103,35 @@ class PluginConfig:
         return True
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert configuration to dictionary"""
+        """
+        Convert configuration to dictionary format.
+        
+        Returns:
+            dict: Dictionary representation of configuration
+        """
         config_dict = asdict(self)
         config_dict['mode'] = self.mode.value
         return config_dict
     
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'PluginConfig':
-        """Create configuration from dictionary"""
-        # Convert mode string to enum
-        if 'mode' in config_dict and isinstance(config_dict['mode'], str):
-            config_dict['mode'] = PluginMode(config_dict['mode'])
+        """
+        Create configuration from dictionary.
+        
+        Args:
+            config_dict: Dictionary containing configuration parameters
+            
+        Returns:
+            PluginConfig: Instance of PluginConfig
+        """
         return cls(**config_dict)
 
 class WebsitePlugin:
     """
     Main website plugin class for CyberGuard security integration.
     
-    This class handles:
-    - Request interception and analysis
-    - Threat detection and blocking
-    - Rate limiting
-    - Bot detection
-    - Real-time monitoring
-    - Incident reporting
+    Handles request interception, threat detection, rate limiting,
+    bot detection, real-time monitoring, and incident reporting.
     """
     
     def __init__(self, config: PluginConfig):
@@ -149,21 +144,21 @@ class WebsitePlugin:
         Raises:
             ValueError: If configuration is invalid
         """
-        # Validate configuration
         if not config.validate():
             raise ValueError("Invalid plugin configuration")
         
         self.config = config
         self.mode = config.mode
         
-        # Initialize security components
+        # Initialize security components with default configs
         self.scanner = WebSecurityScanner({})
         self.orchestrator = AgentOrchestrator(state_dim=512)
         
         # Initialize request tracking for rate limiting
+        # Dictionary format: {ip_address: [list_of_request_timestamps]}
         self.request_tracker: Dict[str, List[datetime]] = {}
         
-        # Initialize threat database
+        # Initialize threat database for storing blocked entities
         self.threat_database: Dict[str, Any] = {
             'blocked_ips': set(),
             'blocked_sessions': set(),
@@ -171,7 +166,7 @@ class WebsitePlugin:
             'whitelist': set()
         }
         
-        # Statistics
+        # Initialize statistics tracking
         self.stats = {
             'total_requests': 0,
             'blocked_requests': 0,
@@ -180,7 +175,7 @@ class WebsitePlugin:
             'start_time': datetime.now()
         }
         
-        # Initialize webhook client if callback URL is provided
+        # Initialize webhook client for incident notifications
         self.webhook_client = None
         if config.callback_url:
             self._initialize_webhook_client()
@@ -189,8 +184,10 @@ class WebsitePlugin:
         logger.info(f"API Key: {config.api_key[:8]}...{config.api_key[-4:]}")
     
     def _initialize_webhook_client(self):
-        """Initialize asynchronous webhook client for incident notifications"""
-        import aiohttp
+        """
+        Initialize asynchronous webhook client for sending incident notifications.
+        Uses aiohttp for asynchronous HTTP requests.
+        """
         self.webhook_client = aiohttp.ClientSession()
     
     async def analyze_request(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,13 +195,13 @@ class WebsitePlugin:
         Analyze a web request for security threats.
         
         Args:
-            request_data: Dictionary containing request information:
+            request_data: Dictionary containing:
                 - ip: Client IP address
                 - user_agent: User agent string
                 - url: Request URL
                 - method: HTTP method
                 - headers: Request headers
-                - body: Request body (if any)
+                - body: Request body
                 - cookies: Request cookies
                 - referrer: Referrer URL
                 - timestamp: Request timestamp
@@ -218,13 +215,12 @@ class WebsitePlugin:
                 - reasons: Reasons for action
                 - session_id: Generated session ID
         """
-        # Increment request counter
         self.stats['total_requests'] += 1
         
-        # Generate session ID for tracking
+        # Generate unique session ID for request tracking
         session_id = self._generate_session_id(request_data)
         
-        # Check rate limiting
+        # Step 1: Check rate limiting
         rate_limit_result = self._check_rate_limit(request_data.get('ip'))
         if not rate_limit_result['allowed']:
             return {
@@ -237,7 +233,7 @@ class WebsitePlugin:
                 'block_reason': 'rate_limit'
             }
         
-        # Check blocked countries
+        # Step 2: Check blocked countries
         if self.config.blocked_countries:
             country = self._get_country_from_ip(request_data.get('ip'))
             if country in self.config.blocked_countries:
@@ -251,7 +247,7 @@ class WebsitePlugin:
                     'block_reason': 'country_block'
                 }
         
-        # Check user agent
+        # Step 3: Check allowed user agents
         user_agent = request_data.get('user_agent', '')
         if self.config.allowed_user_agents and user_agent not in self.config.allowed_user_agents:
             return {
@@ -264,7 +260,7 @@ class WebsitePlugin:
                 'block_reason': 'user_agent'
             }
         
-        # Check blocked IPs
+        # Step 4: Check blocked IPs
         client_ip = request_data.get('ip')
         if client_ip in self.threat_database['blocked_ips']:
             return {
@@ -277,7 +273,7 @@ class WebsitePlugin:
                 'block_reason': 'ip_block'
             }
         
-        # Check blocked sessions
+        # Step 5: Check blocked sessions
         if session_id in self.threat_database['blocked_sessions']:
             return {
                 'allowed': False,
@@ -289,12 +285,10 @@ class WebsitePlugin:
                 'block_reason': 'session_block'
             }
         
-        # Perform security analysis based on mode
+        # Step 6: Perform security analysis based on mode
         if self.mode in [PluginMode.PROTECTION, PluginMode.DEBUG]:
-            # Run comprehensive security analysis
             security_analysis = await self._perform_security_analysis(request_data)
             
-            # Check if threats were detected
             if security_analysis['threats']:
                 self.stats['threats_detected'] += 1
                 
@@ -303,16 +297,16 @@ class WebsitePlugin:
                     action = 'BLOCK'
                     self.stats['blocked_requests'] += 1
                     
-                    # Add to blocked IPs if threat is critical
+                    # Add to blocked IPs for critical threats
                     if security_analysis['threat_level'] > 0.9:
                         self.threat_database['blocked_ips'].add(client_ip)
-                        
-                    # Trigger webhook if configured
+                    
+                    # Send webhook notification
                     if self.webhook_client:
                         await self._send_webhook_notification(request_data, security_analysis)
                 
                 elif security_analysis['threat_level'] > 0.4:
-                    action = 'CHALLENGE'  # CAPTCHA or 2FA
+                    action = 'CHALLENGE'
                 else:
                     action = 'ALLOW'
             else:
@@ -329,7 +323,6 @@ class WebsitePlugin:
             }
         
         else:  # MONITOR or LEARNING mode
-            # Perform analysis but don't block
             security_analysis = await self._perform_security_analysis(request_data)
             
             if security_analysis['threats']:
@@ -361,7 +354,7 @@ class WebsitePlugin:
         reasons = []
         details = {}
         
-        # 1. Check for XSS attacks
+        # 1. XSS attack detection
         if self.config.enable_xss_protection:
             xss_result = self._detect_xss(request_data)
             if xss_result['detected']:
@@ -370,7 +363,7 @@ class WebsitePlugin:
                 reasons.append(xss_result['reason'])
                 details['xss'] = xss_result
         
-        # 2. Check for SQL injection
+        # 2. SQL injection detection
         if self.config.enable_sqli_protection:
             sqli_result = self._detect_sqli(request_data)
             if sqli_result['detected']:
@@ -379,7 +372,7 @@ class WebsitePlugin:
                 reasons.append(sqli_result['reason'])
                 details['sqli'] = sqli_result
         
-        # 3. Check for bot activity
+        # 3. Bot activity detection
         if self.config.enable_bot_protection:
             bot_result = self._detect_bot(request_data)
             if bot_result['detected']:
@@ -388,16 +381,17 @@ class WebsitePlugin:
                 reasons.append(bot_result['reason'])
                 details['bot'] = bot_result
         
-        # 4. Check custom rules
+        # 4. Custom rules checking
         for rule in self.config.custom_rules:
             rule_result = self._check_custom_rule(rule, request_data)
             if rule_result['detected']:
-                threats.append(f"CUSTOM_RULE_{rule.get('id', 'unknown')}")
+                rule_id = rule.get('id', 'unknown')
+                threats.append(f"CUSTOM_RULE_{rule_id}")
                 threat_level = max(threat_level, rule_result['threat_level'])
                 reasons.append(rule_result['reason'])
-                details[f"custom_rule_{rule.get('id', 'unknown')}"] = rule_result
+                details[f"custom_rule_{rule_id}"] = rule_result
         
-        # 5. Check for DDoS patterns
+        # 5. DDoS pattern detection
         if self.config.enable_ddos_protection:
             ddos_result = self._detect_ddos(request_data)
             if ddos_result['detected']:
@@ -421,7 +415,7 @@ class WebsitePlugin:
             request_data: Request information
             
         Returns:
-            Detection results
+            Dictionary with detection results
         """
         xss_patterns = [
             '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick=',
@@ -434,22 +428,23 @@ class WebsitePlugin:
         reason = ""
         location = ""
         
-        # Check URL
-        url = request_data.get('url', '')
+        # Check URL for XSS patterns
+        url = request_data.get('url', '').lower()
         for pattern in xss_patterns:
-            if pattern in url.lower():
+            if pattern in url:
                 detected = True
                 threat_level = 0.8
                 reason = f"XSS pattern '{pattern}' found in URL"
                 location = 'url'
                 break
         
-        # Check request body
+        # Check request body for XSS patterns
         if not detected:
             body = request_data.get('body', '')
             if isinstance(body, str):
+                body_lower = body.lower()
                 for pattern in xss_patterns:
-                    if pattern in body.lower():
+                    if pattern in body_lower:
                         detected = True
                         threat_level = 0.9
                         reason = f"XSS pattern '{pattern}' found in request body"
@@ -472,7 +467,7 @@ class WebsitePlugin:
             request_data: Request information
             
         Returns:
-            Detection results
+            Dictionary with detection results
         """
         sqli_patterns = [
             "' OR '1'='1", "' OR '1'='1' --", "' OR '1'='1' /*",
@@ -487,12 +482,12 @@ class WebsitePlugin:
         reason = ""
         location = ""
         
-        # Check URL parameters
-        import urllib.parse
+        # Parse URL query parameters
         url = request_data.get('url', '')
         parsed_url = urllib.parse.urlparse(url)
         query_params = urllib.parse.parse_qs(parsed_url.query)
         
+        # Check each query parameter value
         for param, values in query_params.items():
             for value in values:
                 for pattern in sqli_patterns:
@@ -535,36 +530,34 @@ class WebsitePlugin:
             request_data: Request information
             
         Returns:
-            Detection results
+            Dictionary with detection results
         """
         user_agent = request_data.get('user_agent', '').lower()
         
-        # Known bot user agents
         bot_patterns = [
             'bot', 'crawler', 'spider', 'scraper', 'curl', 'wget',
             'python-requests', 'java', 'go-http-client', 'php',
             'okhttp', 'apache-httpclient', 'libwww', 'lwp', 'ruby'
         ]
         
-        # Check if user agent contains bot patterns
         detected = False
         threat_level = 0.0
         reason = ""
         
+        # Check user agent for bot patterns
         for pattern in bot_patterns:
             if pattern in user_agent:
                 detected = True
-                threat_level = 0.3  # Lower threat level for bots
+                threat_level = 0.3
                 reason = f"Bot user agent detected: contains '{pattern}'"
                 break
         
-        # Additional bot detection heuristics
+        # Additional heuristic: check request frequency
         if not detected:
-            # Check request frequency from this IP
             ip = request_data.get('ip')
             if ip:
                 request_count = self._get_request_count(ip)
-                if request_count > 100:  # More than 100 requests
+                if request_count > 100:
                     detected = True
                     threat_level = 0.5
                     reason = f"High request frequency: {request_count} requests"
@@ -585,7 +578,7 @@ class WebsitePlugin:
             request_data: Request information
             
         Returns:
-            Detection results
+            Dictionary with detection results
         """
         ip = request_data.get('ip')
         if not ip:
@@ -594,14 +587,14 @@ class WebsitePlugin:
         # Get recent requests from this IP
         recent_requests = self.request_tracker.get(ip, [])
         
-        # Check request frequency (requests per second)
+        # Count requests in last 10 seconds
         current_time = datetime.now()
         time_window = timedelta(seconds=10)
         recent_count = sum(1 for req_time in recent_requests 
                           if current_time - req_time < time_window)
         
-        detected = recent_count > 50  # More than 50 requests in 10 seconds
-        threat_level = min(1.0, recent_count / 100)  # Scale with request count
+        detected = recent_count > 50
+        threat_level = min(1.0, recent_count / 100)
         
         if detected:
             reason = f"DDoS pattern detected: {recent_count} requests in 10 seconds"
@@ -619,17 +612,15 @@ class WebsitePlugin:
     def _check_custom_rule(self, rule: Dict[str, Any], 
                           request_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Check a custom security rule.
+        Check a custom security rule against request data.
         
         Args:
             rule: Custom rule configuration
             request_data: Request information
             
         Returns:
-            Detection results
+            Dictionary with rule checking results
         """
-        # Simple rule checking logic
-        # In production, this would be more sophisticated
         rule_type = rule.get('type', 'pattern')
         pattern = rule.get('pattern', '')
         field = rule.get('field', '')
@@ -640,7 +631,6 @@ class WebsitePlugin:
         reason = ""
         
         if rule_type == 'pattern' and pattern:
-            # Check pattern in specified field
             field_value = request_data.get(field, '')
             if isinstance(field_value, str) and pattern in field_value:
                 detected = True
@@ -656,31 +646,31 @@ class WebsitePlugin:
     
     def _check_rate_limit(self, ip: Optional[str]) -> Dict[str, Any]:
         """
-        Check if request exceeds rate limit.
+        Check if request exceeds rate limit for given IP.
         
         Args:
             ip: Client IP address
             
         Returns:
-            Rate limiting result
+            Dictionary with rate limiting results
         """
         if not ip:
             return {'allowed': True, 'reason': ''}
         
         current_time = datetime.now()
         
-        # Initialize request list for this IP if not exists
+        # Initialize request list for new IPs
         if ip not in self.request_tracker:
             self.request_tracker[ip] = []
         
-        # Clean old requests
+        # Clean old requests outside rate limit window
         time_window = timedelta(seconds=self.config.rate_limit_window)
         self.request_tracker[ip] = [
             req_time for req_time in self.request_tracker[ip]
             if current_time - req_time < time_window
         ]
         
-        # Check rate limit
+        # Check if limit exceeded
         request_count = len(self.request_tracker[ip])
         
         if request_count >= self.config.rate_limit_requests:
@@ -699,45 +689,38 @@ class WebsitePlugin:
     
     def _generate_session_id(self, request_data: Dict[str, Any]) -> str:
         """
-        Generate a unique session ID for request tracking.
+        Generate unique session ID for request tracking.
         
         Args:
             request_data: Request information
             
         Returns:
-            Unique session ID
+            str: Unique session ID
         """
-        # Create session identifier from request data
         session_data = f"{request_data.get('ip', '')}:{request_data.get('user_agent', '')}:{datetime.now().timestamp()}"
-        
-        # Generate SHA256 hash
         session_hash = hashlib.sha256(session_data.encode()).hexdigest()
-        
-        # Return first 16 characters as session ID
         return session_hash[:16]
     
     def _get_country_from_ip(self, ip: Optional[str]) -> str:
         """
-        Get country code from IP address.
+        Get country code from IP address (simplified implementation).
         
         Args:
             ip: IP address
             
         Returns:
-            Country code or 'UNKNOWN'
+            str: Country code or 'UNKNOWN'
         """
         if not ip:
             return 'UNKNOWN'
         
-        # Simplified country detection
-        # In production, use GeoIP database or service
         try:
-            # This is a simplified example
-            # In reality, you would use a GeoIP database
-            if ip.startswith('192.168.') or ip.startswith('10.') or ip.startswith('172.'):
+            # Check for local/private IPs
+            if ip.startswith('192.168.') or ip.startswith('10.') or (ip.startswith('172.') and 16 <= int(ip.split('.')[1]) <= 31):
                 return 'LOCAL'
             
-            # Mock some country codes for demonstration
+            # Simplified mock implementation
+            # In production, use a proper GeoIP database
             ip_hash = hash(ip) % 100
             if ip_hash < 20:
                 return 'US'
@@ -749,18 +732,18 @@ class WebsitePlugin:
                 return 'DE'
             else:
                 return 'OTHER'
-        except:
+        except Exception:
             return 'UNKNOWN'
     
     def _get_request_count(self, ip: str) -> int:
         """
-        Get total request count for an IP.
+        Get total request count for an IP address.
         
         Args:
             ip: IP address
             
         Returns:
-            Number of requests
+            int: Number of requests from this IP
         """
         return len(self.request_tracker.get(ip, []))
     
@@ -777,7 +760,6 @@ class WebsitePlugin:
             return
         
         try:
-            # Prepare notification payload
             notification = {
                 'timestamp': datetime.now().isoformat(),
                 'event_type': 'SECURITY_INCIDENT',
@@ -792,7 +774,6 @@ class WebsitePlugin:
                 'session_id': analysis_result.get('session_id')
             }
             
-            # Send webhook
             async with self.webhook_client.post(
                 self.config.callback_url,
                 json=notification,
@@ -806,7 +787,7 @@ class WebsitePlugin:
     
     def get_statistics(self) -> Dict[str, Any]:
         """
-        Get plugin statistics.
+        Get plugin statistics and metrics.
         
         Returns:
             Dictionary with plugin statistics
@@ -845,11 +826,24 @@ class WebsitePlugin:
         logger.info(f"Plugin configuration updated. Mode changed from {old_mode.value} to {self.mode.value}")
         
         # Reinitialize webhook client if callback URL changed
-        if new_config.callback_url != getattr(self.config, 'callback_url', None):
+        if new_config.callback_url != self.config.callback_url:
             if self.webhook_client:
-                await self.webhook_client.close()
-            if new_config.callback_url:
-                self._initialize_webhook_client()
+                # Note: This should be awaited in async context
+                # For synchronous context, we'll create a new task
+                asyncio.create_task(self._close_and_reinit_webhook(new_config.callback_url))
+    
+    async def _close_and_reinit_webhook(self, new_callback_url: Optional[str]):
+        """
+        Close existing webhook client and reinitialize with new URL.
+        
+        Args:
+            new_callback_url: New callback URL or None
+        """
+        if self.webhook_client:
+            await self.webhook_client.close()
+        
+        if new_callback_url:
+            self._initialize_webhook_client()
     
     def block_ip(self, ip: str, reason: str = "Manual block"):
         """
@@ -875,15 +869,18 @@ class WebsitePlugin:
     
     def get_blocked_ips(self) -> List[str]:
         """
-        Get list of blocked IP addresses.
+        Get list of currently blocked IP addresses.
         
         Returns:
-            List of blocked IPs
+            List of blocked IP addresses
         """
         return list(self.threat_database['blocked_ips'])
     
     async def cleanup(self):
-        """Clean up resources and close connections."""
+        """
+        Clean up resources and close connections.
+        Removes old request data based on retention period.
+        """
         if self.webhook_client:
             await self.webhook_client.close()
         
@@ -903,7 +900,6 @@ class WebsitePlugin:
         
         logger.info("Plugin cleanup completed")
 
-# JavaScript generator for client-side plugin
 def generate_javascript_plugin(config: PluginConfig) -> str:
     """
     Generate JavaScript code for the website plugin.
@@ -912,7 +908,7 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         config: Plugin configuration
         
     Returns:
-        JavaScript code as string
+        str: JavaScript code as string
     """
     js_template = """
 // CyberGuard Website Security Plugin v1.0
@@ -926,10 +922,8 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
     
     // Plugin state
     let pluginInitialized = false;
-    let requestQueue = [];
-    let processingQueue = false;
     
-    // Logging function
+    // Logging function with configurable levels
     function log(level, message) {{
         if (CONFIG.log_level === 'debug' || 
             (CONFIG.log_level === 'warn' && level === 'warn') ||
@@ -938,13 +932,13 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         }}
     }}
     
-    // Generate request ID
+    // Generate unique request ID
     function generateRequestId() {{
         return 'req_' + Math.random().toString(36).substr(2, 9) + 
                '_' + Date.now().toString(36);
     }}
     
-    // Collect request data
+    // Collect browser and request data
     function collectRequestData() {{
         return {{
             url: window.location.href,
@@ -962,7 +956,7 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         }};
     }}
     
-    // Send request to CyberGuard API
+    // Send request to CyberGuard API for analysis
     async function sendToCyberGuard(requestData) {{
         const requestId = generateRequestId();
         
@@ -989,32 +983,32 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
             
             const result = await response.json();
             
-            // Handle result
+            // Handle analysis result
             if (result.action === 'BLOCK') {{
                 handleBlock(result);
                 return false;
             }} else if (result.action === 'CHALLENGE') {{
-                return handleChallenge(result);
+                return await handleChallenge(result);
             }} else if (result.action === 'MONITOR') {{
-                log('info', `Request monitored: ${{result.reasons?.join(', ')}}`);
+                log('info', `Request monitored: ${{result.reasons ? result.reasons.join(', ') : 'No specific reasons'}}`);
                 return true;
             }}
             
             return true;
             
         }} catch (error) {{
-            // Fallback: allow request on error
+            // Allow request on API error (fail-open strategy)
             log('error', `API error: ${{error.message}}`);
             return true;
         }}
     }}
     
-    // Handle block action
+    // Handle block action by showing security page
     function handleBlock(result) {{
-        log('warn', `Request blocked: ${{result.reasons?.join(', ')}}`);
+        log('warn', `Request blocked: ${{result.reasons ? result.reasons.join(', ') : 'Security violation'}}`);
         
-        // Show block page
-        document.documentElement.innerHTML = `
+        // Create security block page
+        const blockPage = `
             <!DOCTYPE html>
             <html>
             <head>
@@ -1052,33 +1046,37 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
             </head>
             <body>
                 <div class="container">
-                    <h1>⚠️ Access Blocked</h1>
+                    <h1>Access Blocked</h1>
                     <p>Your request has been blocked by our security system.</p>
                     
                     <div class="details">
-                        <p><strong>Reason:</strong> ${{result.reasons?.join(', ') || 'Security policy violation'}}</p>
-                        <p><strong>Threat Level:</strong> ${{(result.threat_level * 100).toFixed(1)}}%</p>
-                        <p><strong>Request ID:</strong> ${{result.session_id}}</p>
-                        ${{result.analysis_details ? `<p><strong>Details:</strong> ${{JSON.stringify(result.analysis_details)}}</p>` : ''}}
+                        <p><strong>Reason:</strong> ${{result.reasons ? result.reasons.join(', ') : 'Security policy violation'}}</p>
+                        <p><strong>Threat Level:</strong> ${{result.threat_level ? (result.threat_level * 100).toFixed(1) : 0}}%</p>
+                        <p><strong>Request ID:</strong> ${{result.session_id || 'N/A'}}</p>
                     </div>
                     
                     <div class="contact">
                         If you believe this is an error, please contact support.
                         <br>
-                        Reference: ${{result.session_id}}
+                        Reference: ${{result.session_id || 'N/A'}}
                     </div>
                 </div>
             </body>
             </html>
         `;
+        
+        // Replace current page with block page
+        document.open();
+        document.write(blockPage);
+        document.close();
     }}
     
-    // Handle challenge action
-    function handleChallenge(result) {{
+    // Handle challenge action (e.g., CAPTCHA)
+    async function handleChallenge(result) {{
         return new Promise((resolve) => {{
-            log('info', `Challenge required: ${{result.reasons?.join(', ')}}`);
+            log('info', `Challenge required: ${{result.reasons ? result.reasons.join(', ') : 'Security verification'}}`);
             
-            // Show challenge modal
+            // Create challenge modal
             const modal = document.createElement('div');
             modal.style.cssText = `
                 position: fixed;
@@ -1093,14 +1091,28 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
                 z-index: 9999;
             `;
             
+            // Simple math CAPTCHA
+            const num1 = Math.floor(Math.random() * 10) + 1;
+            const num2 = Math.floor(Math.random() * 10) + 1;
+            const answer = num1 + num2;
+            
             modal.innerHTML = `
                 <div style="background: white; padding: 30px; border-radius: 8px; max-width: 400px;">
                     <h3 style="margin-top: 0;">Security Verification Required</h3>
-                    <p>${{result.reasons?.join('<br>') || 'Please complete the verification to continue.'}}</p>
+                    <p>${{result.reasons ? result.reasons.join('<br>') : 'Please complete the verification to continue.'}}</p>
                     
-                    <div id="challenge-container" style="margin: 20px 0;"></div>
+                    <div style="margin: 20px 0;">
+                        <p>Please solve: <strong>${{num1}} + ${{num2}} = ?</strong></p>
+                        <input type="number" id="captcha-answer" placeholder="Enter sum" style="
+                            width: 100%;
+                            padding: 8px;
+                            margin: 10px 0;
+                            border: 1px solid #ddd;
+                            border-radius: 4px;
+                        ">
+                    </div>
                     
-                    <button id="cyberguard-retry" style="
+                    <button id="cyberguard-verify" style="
                         background: #007bff;
                         color: white;
                         border: none;
@@ -1113,24 +1125,8 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
             
             document.body.appendChild(modal);
             
-            // Simple CAPTCHA challenge
-            const container = document.getElementById('challenge-container');
-            const num1 = Math.floor(Math.random() * 10) + 1;
-            const num2 = Math.floor(Math.random() * 10) + 1;
-            const answer = num1 + num2;
-            
-            container.innerHTML = `
-                <p>Please solve: <strong>${{num1}} + ${{num2}} = ?</strong></p>
-                <input type="number" id="captcha-answer" placeholder="Enter sum" style="
-                    width: 100%;
-                    padding: 8px;
-                    margin: 10px 0;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                ">
-            `;
-            
-            document.getElementById('cyberguard-retry').onclick = function() {{
+            // Handle verification button click
+            document.getElementById('cyberguard-verify').onclick = function() {{
                 const userAnswer = parseInt(document.getElementById('captcha-answer').value);
                 
                 if (userAnswer === answer) {{
@@ -1143,38 +1139,42 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         }});
     }}
     
-    // Intercept navigation
+    // Intercept navigation methods
     function interceptNavigation() {{
-        // Override window.location methods
         const originalAssign = window.location.assign;
         const originalReplace = window.location.replace;
-        const originalHrefSet = Object.getOwnPropertyDescriptor(window.location, 'href').set;
+        const locationDescriptor = Object.getOwnPropertyDescriptor(window.location, 'href');
         
+        // Override location.assign
         window.location.assign = function(url) {{
             processNavigation(url, originalAssign);
         }};
         
+        // Override location.replace
         window.location.replace = function(url) {{
             processNavigation(url, originalReplace);
         }};
         
-        Object.defineProperty(window.location, 'href', {{
-            set: function(url) {{
-                processNavigation(url, originalHrefSet);
-            }},
-            get: Object.getOwnPropertyDescriptor(window.location, 'href').get
-        }});
+        // Override location.href setter
+        if (locationDescriptor && locationDescriptor.set) {{
+            Object.defineProperty(window.location, 'href', {{
+                set: function(url) {{
+                    processNavigation(url, locationDescriptor.set);
+                }},
+                get: locationDescriptor.get
+            }});
+        }}
         
         // Intercept link clicks
         document.addEventListener('click', function(e) {{
             let target = e.target;
             
-            // Find the closest anchor tag
+            // Find closest anchor element
             while (target && target.tagName !== 'A') {{
                 target = target.parentNode;
             }}
             
-            if (target && target.href) {{
+            if (target && target.href && target.target !== '_blank') {{
                 e.preventDefault();
                 processNavigation(target.href, function(url) {{
                     window.location.href = url;
@@ -1183,7 +1183,7 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         }}, true);
     }}
     
-    // Process navigation
+    // Process navigation with security check
     async function processNavigation(url, originalMethod) {{
         const requestData = collectRequestData();
         requestData.url = url;
@@ -1191,7 +1191,7 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         
         const allowed = await sendToCyberGuard(requestData);
         
-        if (allowed) {{
+        if (allowed && originalMethod) {{
             originalMethod.call(window.location, url);
         }}
     }}
@@ -1205,15 +1205,22 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
             const requestData = collectRequestData();
             requestData.url = form.action || window.location.href;
             requestData.method = form.method || 'POST';
-            requestData.formData = new FormData(form);
+            
+            // Collect form data
+            const formData = new FormData(form);
+            const formDataObj = {{}};
+            for (let [key, value] of formData.entries()) {{
+                formDataObj[key] = value;
+            }}
+            requestData.formData = formDataObj;
             
             const allowed = await sendToCyberGuard(requestData);
             
             if (allowed) {{
-                // Convert FormData to URLSearchParams for GET, or submit normally for POST
+                // Submit form based on method
                 if (requestData.method.toUpperCase() === 'GET') {{
-                    const params = new URLSearchParams(requestData.formData);
-                    window.location.href = requestData.url + '?' + params.toString();
+                    const params = new URLSearchParams(formData);
+                    window.location.href = requestData.url + (requestData.url.includes('?') ? '&' : '?') + params.toString();
                 }} else {{
                     form.submit();
                 }}
@@ -1228,9 +1235,9 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         window.fetch = async function(resource, init) {{
             const requestData = collectRequestData();
             requestData.url = typeof resource === 'string' ? resource : resource.url;
-            requestData.method = (init?.method || 'GET').toUpperCase();
+            requestData.method = (init && init.method ? init.method : 'GET').toUpperCase();
             
-            if (init?.body) {{
+            if (init && init.body) {{
                 requestData.body = typeof init.body === 'string' ? init.body : 'Binary data';
             }}
             
@@ -1244,7 +1251,7 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         }};
     }}
     
-    // Initialize plugin
+    // Initialize the plugin
     function init() {{
         if (pluginInitialized) {{
             log('warn', 'Plugin already initialized');
@@ -1279,13 +1286,13 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         log('info', 'CyberGuard plugin initialized successfully');
     }}
     
-    // Public API
+    // Public API exposed to window object
     window.CyberGuard = {{
         init: init,
         config: CONFIG,
         version: '1.0.0',
         
-        // Debug methods
+        // Debug methods for testing
         getRequestData: collectRequestData,
         simulateRequest: sendToCyberGuard,
         
@@ -1293,7 +1300,7 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
         log: log
     }};
     
-    // Auto-initialize if config is provided in data attribute
+    // Auto-initialize if config provided in script data attribute
     if (document.currentScript && document.currentScript.dataset.config) {{
         try {{
             const scriptConfig = JSON.parse(document.currentScript.dataset.config);
@@ -1306,14 +1313,14 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
 }})();
 """
     
-    # Convert config to JSON-safe format
+    # Convert config to JSON with proper escaping
     config_dict = config.to_dict()
     config_json = json.dumps(config_dict, indent=2)
     
-    # Generate timestamp
+    # Format timestamp
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # Format JavaScript code
+    # Generate final JavaScript code
     js_code = js_template.format(
         timestamp=timestamp,
         config_json=config_json
@@ -1321,9 +1328,9 @@ def generate_javascript_plugin(config: PluginConfig) -> str:
     
     return js_code
 
-# Example usage
+# Example usage and testing
 if __name__ == "__main__":
-    # Example configuration
+    # Example configuration for testing
     config = PluginConfig(
         api_key="sk_test_1234567890abcdef1234567890abcdef",
         mode=PluginMode.PROTECTION,
@@ -1345,3 +1352,12 @@ if __name__ == "__main__":
     
     print("JavaScript plugin generated: cyberguard_plugin.js")
     print(f"Size: {len(js_code)} bytes")
+    
+    # Test the plugin
+    print("\nPlugin Features:")
+    print("- Real-time threat detection")
+    print("- XSS and SQL injection protection")
+    print("- Bot and DDoS detection")
+    print("- Rate limiting")
+    print("- Configurable security policies")
+    print("- GDPR/CCPA compliant")

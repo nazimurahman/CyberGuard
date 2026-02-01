@@ -1,913 +1,906 @@
-# config/mhc_config.yaml
-# ============================================================================
 # MANIFOLD-CONSTRAINED HYPER-CONNECTIONS (MHC) CONFIGURATION
-# ============================================================================
-# Configuration for the MHC architecture that stabilizes multi-agent reasoning
-# through manifold constraints, preventing signal explosion and reasoning collapse
-# ============================================================================
 
-# ----------------------------------------------------------------------------
+# Purpose: Configuration for MHC architecture that stabilizes multi-agent 
+# reasoning through mathematical constraints to prevent signal explosion and
+# reasoning collapse in cybersecurity threat analysis.
+
 # MHC CORE ARCHITECTURE
-# ----------------------------------------------------------------------------
 mhc_core:
-  # Architecture version
+  # Architecture version for compatibility tracking
   version: "1.0.0"
   
-  # Implementation type
-  implementation: "torch"  # torch, tensorflow, numpy
+  # Framework implementation choice
+  implementation: "torch"  # Options: torch, tensorflow, jax
   
-  # Precision settings
-  precision: "float32"  # float16, float32, bfloat16
+  # Numerical precision for computations
+  precision: "float32"  # Options: float16 (faster), float32 (accurate), bfloat16 (TPU optimized)
   
-  # Device configuration
-  device: "cuda"  # cuda, cpu, auto
+  # Hardware device selection
+  device: "cuda" if torch.cuda.is_available() else "cpu"  # Auto-detect in production
   
-  # Parallel processing
+  # Parallel processing configuration
   parallel_processing:
-    enabled: true
-    num_workers: 4
-    backend: "torch"  # torch, ray, dask
+    enabled: true  # Enable parallel computation for speed
+    num_workers: 4  # Number of CPU workers for data loading
+    backend: "torch"  # Options: torch (native), ray (distributed), dask (big data)
 
-# ----------------------------------------------------------------------------
 # MANIFOLD CONFIGURATION
-# ----------------------------------------------------------------------------
 manifold:
-  # Manifold type
-  type: "learned"  # learned, fixed, adaptive
+  # Manifold learning strategy
+  type: "learned"  # Options: learned (adapts to data), fixed (pre-defined), adaptive (self-tuning)
   
-  # Dimensionality
+  # Dimensionality settings for the manifold space
   dimensionality:
-    state_dim: 512
-    latent_dim: 256
-    embedding_dim: 128
+    state_dim: 512  # Dimension of agent state vectors
+    latent_dim: 256  # Compressed representation dimension
+    embedding_dim: 128  # Input embedding dimension
     
-  # Manifold constraints
+  # Mathematical constraints on the manifold structure
   constraints:
-    # Geometric constraints
-    curvature: "non_positive"  # positive, negative, zero, non_positive
+    # Geometric curvature type (affects distance calculations)
+    curvature: "non_positive"  # Options: positive (sphere-like), negative (saddle-like), zero (flat)
+    
+    # Whether to preserve geodesic distances (shortest paths on manifold)
     geodesic_preservation: true
+    
+    # Whether to preserve volume (prevents expansion/contraction)
     volume_preservation: false
     
-    # Topological constraints
-    connectivity: "fully_connected"  # sparse, hierarchical, fully_connected
-    sparsity_level: 0.1  # Only for sparse connectivity
+    # Connection pattern between points
+    connectivity: "fully_connected"  # Options: sparse (efficient), hierarchical (layered)
     
-    # Metric constraints
-    metric: "learned"  # euclidean, hyperbolic, learned
-    distance_function: "cosine"  # euclidean, cosine, mahalanobis
+    # Sparsity level (only used when connectivity=sparse)
+    sparsity_level: 0.1  # 10% connections, reduces computation
     
-  # Manifold learning
+    # Distance metric for manifold
+    metric: "learned"  # Options: euclidean (standard), hyperbolic (tree-like), learned (adaptive)
+    
+    # Specific distance function
+    distance_function: "cosine"  # Options: cosine (angle-based), euclidean, mahalanobis (covariance-aware)
+    
+  # Manifold learning algorithm configuration
   learning:
-    # Learning algorithm
-    algorithm: "autoencoder"  # autoencoder, variational, contrastive
+    # Learning algorithm type
+    algorithm: "autoencoder"  # Options: autoencoder (reconstruction), variational (probabilistic)
     
-    # Training parameters
-    learning_rate: 0.001
-    batch_size: 32
-    epochs: 100
-    early_stopping_patience: 10
+    # Training hyperparameters
+    learning_rate: 0.001  # Step size for gradient updates
+    batch_size: 32  # Number of samples per training batch
+    epochs: 100  # Total training cycles
+    early_stopping_patience: 10  # Stop if no improvement for 10 epochs
     
-    # Regularization
+    # Regularization to prevent overfitting
     regularization:
-      l1_weight: 0.001
-      l2_weight: 0.01
-      manifold_smoothness: 0.1
+      l1_weight: 0.001  # Encourages sparse weights
+      l2_weight: 0.01  # Penalizes large weights
+      manifold_smoothness: 0.1  # Encourages smooth manifold
       
-    # Loss functions
+    # Loss function weights for multi-task learning
     losses:
-      reconstruction: 1.0
-      manifold: 0.5
-      contrastive: 0.3
-      topological: 0.2
+      reconstruction: 1.0  # Input reconstruction accuracy
+      manifold: 0.5  # Manifold structure preservation
+      contrastive: 0.3  # Similar/dissimilar sample separation
+      topological: 0.2  # Preserve topological properties
 
-# ----------------------------------------------------------------------------
 # HYPER-CONNECTION CONFIGURATION
-# ----------------------------------------------------------------------------
 hyper_connections:
-  # Connection types
+  # Types of connections between network components
   types:
-    - "residual"
-    - "attention"
-    - "gating"
-    - "skip"
+    - "residual"  # Skip connections (x + F(x))
+    - "attention"  # Attention-based connections
+    - "gating"  # Gated connections (learn when to pass)
+    - "skip"  # Direct connections
     
-  # Connection strengths
+  # Relative importance of each connection type
   strengths:
-    residual: 0.8
-    attention: 0.6
-    gating: 0.4
-    skip: 0.2
+    residual: 0.8  # 80% residual connections (stability)
+    attention: 0.6  # 60% attention (adaptive focus)
+    gating: 0.4  # 40% gating (selective passing)
+    skip: 0.2  # 20% skip (direct transfer)
     
-  # Connection learning
+  # Connection adaptation during training
   learning:
-    # Adaptive connection strengths
+    # Whether connection strengths can change
     adaptive: true
+    
+    # Learning rate for connection weight updates
     learning_rate: 0.01
+    
+    # Momentum for gradient updates (smooths learning)
     momentum: 0.9
     
-    # Connection pruning
+    # Connection pruning (remove weak connections)
     pruning:
       enabled: true
-      method: "magnitude"  # magnitude, gradient, random
-      threshold: 0.01
-      frequency: 1000  # steps
+      method: "magnitude"  # Remove smallest magnitude connections
+      threshold: 0.01  # Prune weights < 0.01
+      frequency: 1000  # Check every 1000 training steps
       
-    # Connection growing
+    # Connection growing (add new connections)
     growing:
       enabled: true
-      method: "gradient"  # gradient, random, hebbian
-      threshold: 0.1
-      frequency: 1000  # steps
+      method: "gradient"  # Add where gradients are large
+      threshold: 0.1  # Add if gradient > 0.1
+      frequency: 1000  # Check every 1000 steps
       
-  # Connection patterns
+  # Connection patterns between layers
   patterns:
-    # Fully connected
+    # Fully connected pattern (all-to-all)
     fully_connected:
       enabled: true
-      symmetric: true
-      self_connections: true
+      symmetric: true  # Connection A→B implies B→A
+      self_connections: true  # Nodes connect to themselves
       
-    # Hierarchical connections
+    # Hierarchical pattern (tree-like)
     hierarchical:
-      enabled: false
-      levels: 3
-      intra_level: 0.8
-      inter_level: 0.2
+      enabled: false  # Disabled by default
+      levels: 3  # 3 hierarchical levels
+      intra_level: 0.8  # 80% connections within same level
+      inter_level: 0.2  # 20% connections between levels
       
-    # Modular connections
+    # Modular pattern (clustered)
     modular:
       enabled: false
-      modules: 4
-      intra_module: 0.9
-      inter_module: 0.1
+      modules: 4  # 4 independent modules
+      intra_module: 0.9  # 90% connections within module
+      inter_module: 0.1  # 10% connections between modules
 
-# ----------------------------------------------------------------------------
-# DOUBLY-STOCHASTIC NORMALIZATION
-# ----------------------------------------------------------------------------
+# DOUBLY-STOCHASTIC NORMALIZATIO
 doubly_stochastic:
-  # Normalization method
-  method: "sinkhorn_knopp"  # sinkhorn_knopp, iterative, closed_form
+  # Normalization method for attention/connection matrices
+  method: "sinkhorn_knopp"  # Options: sinkhorn_knopp (optimal transport), iterative
   
-  # Sinkhorn-Knopp parameters
+  # Sinkhorn-Knopp algorithm parameters
   sinkhorn:
-    iterations: 50
-    epsilon: 1e-8
-    temperature: 1.0
+    iterations: 50  # Number of normalization iterations
+    epsilon: 1e-8  # Small constant for numerical stability
+    temperature: 1.0  # Controls entropy (higher = more uniform)
     
-    # Convergence criteria
+    # Convergence checking
     convergence:
-      threshold: 1e-6
-      check_frequency: 10
-      max_iterations: 1000
+      threshold: 1e-6  # Stop when change < 1e-6
+      check_frequency: 10  # Check every 10 iterations
+      max_iterations: 1000  # Never exceed 1000 iterations
       
-    # Numerical stability
+    # Numerical stability measures
     stability:
-      log_domain: true
-      scaling: true
-      clamping: true
-      clamp_value: 1e-10
+      log_domain: true  # Perform calculations in log space (prevents underflow)
+      scaling: true  # Scale rows/columns to prevent overflow
+      clamping: true  # Clamp extreme values
+      clamp_value: 1e-10  # Minimum allowed value
       
-  # Alternative methods
-  alternatives:
-    iterative:
-      enabled: false
-      iterations: 100
-      learning_rate: 0.1
-      
-    closed_form:
-      enabled: false
-      regularization: 0.01
-      
-  # Properties to enforce
+  # Properties that must be satisfied
   properties:
-    row_stochastic: true
-    column_stochastic: true
-    non_negative: true
-    symmetric: false
+    row_stochastic: true  # Each row sums to 1
+    column_stochastic: true  # Each column sums to 1
+    non_negative: true  # All entries ≥ 0
+    symmetric: false  # Matrix need not be symmetric
     
-  # Regularization
+  # Regularization to control matrix properties
   regularization:
-    entropy: 0.1  # For smoother distributions
-    sparsity: 0.01  # For sparser connections
+    entropy: 0.1  # Encourages uniform distributions
+    sparsity: 0.01  # Encourages sparse connections
 
-# ----------------------------------------------------------------------------
 # CONVEX STATE MIXING
-# ----------------------------------------------------------------------------
 convex_mixing:
-  # Mixing strategy
-  strategy: "weighted_average"  # weighted_average, attention, gated
+  # Strategy for combining agent states
+  strategy: "weighted_average"  # Options: weighted_average, attention, gated
   
-  # Weight computation
+  # How to compute mixing weights
   weights:
-    method: "learned"  # learned, attention, similarity
-    normalization: "softmax"  # softmax, sparsemax, sigmoid
+    method: "learned"  # Options: learned (neural network), attention, similarity
     
-    # Attention-based weights
+    # Normalization function for weights
+    normalization: "softmax"  # Options: softmax (probabilistic), sparsemax (sparse), sigmoid
+    
+    # Attention-based weight computation
     attention:
-      heads: 8
-      dropout: 0.1
-      scale: true
+      heads: 8  # Number of attention heads
+      dropout: 0.1  # Dropout rate for attention
+      scale: true  # Scale by sqrt(dimension)
       
-    # Similarity-based weights
+    # Similarity-based weight computation
     similarity:
-      metric: "cosine"  # cosine, euclidean, dot
-      temperature: 0.07
+      metric: "cosine"  # Similarity measure
+      temperature: 0.07  # Controls sharpness of distribution
       
-  # Mixing coefficients
+  # Properties of mixing coefficients
   coefficients:
-    # Convex combination (sum to 1)
-    convex: true
-    non_negative: true
-    sum_to_one: true
+    convex: true  # Coefficients sum to 1 (convex combination)
+    non_negative: true  # All coefficients ≥ 0
+    sum_to_one: true  # Enforces convex combination
     
-    # Bounds on coefficients
+    # Numerical bounds on coefficients
     bounds:
-      min: 0.0
-      max: 1.0
-      epsilon: 1e-8
+      min: 0.0  # Minimum coefficient value
+      max: 1.0  # Maximum coefficient value
+      epsilon: 1e-8  # Small constant to avoid division by zero
       
-  # State representation
+  # State representation format
   state_representation:
-    # Representation type
-    type: "vector"  # vector, matrix, tensor
+    type: "vector"  # Options: vector (1D), matrix (2D), tensor (3D+)
     
-    # Dimensionality
+    # Dimensionality specification
     dimensions:
-      batch: "dynamic"
-      agents: "dynamic"
-      features: 512
-      time: "optional"
+      batch: -1  # Dynamic batch size
+      agents: -1  # Dynamic number of agents
+      features: 512  # Fixed feature dimension
       
-    # Normalization
+    # Normalization applied to states
     normalization:
-      layer_norm: true
-      batch_norm: false
-      instance_norm: false
+      layer_norm: true  # Normalize across features per sample
+      batch_norm: false  # Do not normalize across batch
       
-  # Mixing operation
+  # Mixing operation details
   operation:
-    # Linear mixing
-    linear: true
-    bias: true
+    linear: true  # Include linear transformation
+    bias: true  # Include bias term
     
-    # Non-linear mixing
+    # Non-linear activation
     non_linear:
       enabled: true
-      activation: "gelu"  # relu, gelu, tanh, sigmoid
-      dropout: 0.1
+      activation: "gelu"  # Gaussian Error Linear Unit (smooth ReLU)
+      dropout: 0.1  # Randomly drop 10% of activations
       
-    # Residual connection
+    # Residual connection (skip connection)
     residual:
       enabled: true
-      scaling: 0.1
+      scaling: 0.1  # Scale residual by 0.1 (helps stability)
 
-# ----------------------------------------------------------------------------
 # IDENTITY-PRESERVING MAPPINGS
-# ----------------------------------------------------------------------------
 identity_preservation:
-  # Preservation methods
+  # Methods to preserve identity (prevent information loss)
   methods:
-    - "residual_connection"
-    - "layer_norm"
-    - "skip_connection"
-    - "attention_residual"
+    - "residual_connection"  # Add input to output
+    - "layer_norm"  # Normalize activations
+    - "skip_connection"  # Direct connection around layers
+    - "attention_residual"  # Attention with residual
     
-  # Residual connections
+  # Residual connection configuration
   residual:
-    scaling_factor: 0.1
-    learnable_scaling: true
-    conditional_scaling: true
+    scaling_factor: 0.1  # Scale residual contribution
+    learnable_scaling: true  # Let network learn scaling
+    conditional_scaling: true  # Scale based on input
     
-  # Layer normalization
+  # Layer normalization configuration
   layer_norm:
-    epsilon: 1e-5
-    elementwise_affine: true
-    learnable_parameters: true
+    epsilon: 1e-5  # Small constant for numerical stability
+    elementwise_affine: true  # Learnable scale and shift
+    learnable_parameters: true  # Parameters are trainable
     
-  # Skip connections
+  # Skip connection pattern
   skip:
-    frequency: "every_layer"  # every_layer, alternate, custom
-    connection_type: "add"  # add, concatenate, gate
+    frequency: "every_layer"  # Options: every_layer, alternate, custom
+    connection_type: "add"  # Options: add (sum), concatenate, gate
     
-  # Identity loss
+  # Loss function to enforce identity preservation
   loss:
-    enabled: true
-    weight: 0.01
-    type: "mse"  # mse, cosine, l1
+    enabled: true  # Enable identity loss
+    weight: 0.01  # Relative importance in total loss
+    type: "mse"  # Mean Squared Error
     
-    # Target identity
-    target: "input"  # input, previous, learned
+    # What to compare output against
+    target: "input"  # Options: input (original), previous (previous layer)
     
-    # Regularization
-    regularization: 0.001
+    # Regularization term
+    regularization: 0.001  # Weight decay for identity parameters
     
-  # Identity verification
+  # Verification of identity preservation
   verification:
-    enabled: true
-    threshold: 0.9  # Minimum similarity to identity
-    frequency: 100  # steps
+    enabled: true  # Check identity preservation
+    threshold: 0.9  # Minimum similarity to consider preserved
+    frequency: 100  # Check every 100 training steps
     
-    # Metrics
+    # Similarity metrics for verification
     metrics:
-      - "cosine_similarity"
-      - "l2_distance"
-      - "rank_correlation"
+      - "cosine_similarity"  # Angle between vectors
+      - "l2_distance"  # Euclidean distance
+      - "rank_correlation"  # Spearman correlation
 
-# ----------------------------------------------------------------------------
 # NON-EXPANSIVE UPDATES
-# ----------------------------------------------------------------------------
 non_expansive:
-  # Contraction methods
+  # Methods to ensure updates don't explode
   methods:
-    - "lipschitz_constraint"
-    - "gradient_clipping"
-    - "weight_normalization"
-    - "spectral_normalization"
+    - "lipschitz_constraint"  # Bound rate of change
+    - "gradient_clipping"  # Clip gradient norms
+    - "weight_normalization"  # Normalize weight matrices
+    - "spectral_normalization"  # Control largest singular value
     
-  # Lipschitz constraints
+  # Lipschitz continuity constraints
   lipschitz:
-    enabled: true
-    constant: 1.0
-    enforce_strictly: true
+    enabled: true  # Enforce Lipschitz continuity
+    constant: 1.0  # Maximum allowed change (Lipschitz constant)
+    enforce_strictly: true  # Strict enforcement
     
-    # Estimation method
-    estimation: "power_iteration"  # power_iteration, spectral, lipschitz_net
+    # Method to estimate Lipschitz constant
+    estimation: "power_iteration"  # Options: power_iteration, spectral
     
-    # Power iteration
+    # Power iteration parameters
     power_iteration:
-      steps: 1
-      tolerance: 1e-6
+      steps: 1  # Number of power iterations
+      tolerance: 1e-6  # Convergence tolerance
       
-  # Gradient clipping
+  # Gradient clipping to prevent explosion
   gradient_clipping:
     enabled: true
-    method: "norm"  # norm, value, adaptive
+    method: "norm"  # Options: norm (clip gradient norm), value (clip values)
     
-    # Norm clipping
+    # Norm-based clipping
     norm_clipping:
-      max_norm: 1.0
-      norm_type: 2.0
+      max_norm: 1.0  # Maximum gradient norm
+      norm_type: 2.0  # L2 norm (Euclidean)
       
-    # Value clipping
-    value_clipping:
-      min_value: -1.0
-      max_value: 1.0
-      
-  # Weight normalization
+  # Weight normalization methods
   weight_norm:
     enabled: true
-    type: "spectral"  # spectral, frobenius, infinity
+    type: "spectral"  # Options: spectral, frobenius
     
-    # Spectral normalization
+    # Spectral normalization parameters
     spectral_norm:
-      power_iterations: 1
-      eps: 1e-12
+      power_iterations: 1  # Number of iterations for SVD approximation
+      eps: 1e-12  # Small constant for numerical stability
       
-  # Stability monitoring
+  # Monitor stability during training
   stability_monitoring:
     enabled: true
-    metrics:
-      - "gradient_norm"
-      - "weight_norm"
-      - "activation_norm"
-      - "condition_number"
-      
-    # Alert thresholds
-    alerts:
-      gradient_explosion: 100.0
-      gradient_vanishing: 1e-6
-      weight_explosion: 10.0
-      
-  # Stability guarantees
-  guarantees:
-    # Theoretical guarantees
-    theoretical: true
-    proof_sketch: "Based on contraction mapping theorem"
     
-    # Empirical validation
-    empirical:
-      enabled: true
-      test_cases: 1000
-      max_iterations: 10000
+    # Metrics to track
+    metrics:
+      - "gradient_norm"  # Size of gradients
+      - "weight_norm"  # Size of weights
+      - "activation_norm"  # Size of activations
+      - "condition_number"  # Numerical stability of matrices
+      
+    # Thresholds for warnings
+    alerts:
+      gradient_explosion: 100.0  # Warn if gradient norm > 100
+      gradient_vanishing: 1e-6  # Warn if gradient norm < 1e-6
+      weight_explosion: 10.0  # Warn if weight norm > 10
 
-# ----------------------------------------------------------------------------
 # SIGNAL BOUNDING
-# ----------------------------------------------------------------------------
 signal_bounding:
-  # Bounding methods
+  # Methods to bound signal magnitudes
   methods:
-    - "norm_clipping"
-    - "value_clipping"
-    - "saturation"
-    - "normalization"
+    - "norm_clipping"  # Clip vector norms
+    - "value_clipping"  # Clip individual values
+    - "saturation"  # Apply saturation function
+    - "normalization"  # Normalize statistics
     
   # Norm-based bounding
   norm_bounding:
     enabled: true
-    max_norm: 1.0
-    norm_type: 2.0  # 1, 2, inf
+    max_norm: 1.0  # Maximum allowed vector norm
+    norm_type: 2.0  # L2 norm
     
-    # Adaptive bounding
-    adaptive: true
-    learning_rate: 0.01
-    momentum: 0.9
+    # Adaptive adjustment of bounds
+    adaptive: true  # Adjust bounds during training
+    learning_rate: 0.01  # Rate of bound adjustment
     
-  # Value-based bounding
+  # Value-based bounding (per-element)
   value_bounding:
     enabled: true
-    min_value: -1.0
-    max_value: 1.0
+    min_value: -1.0  # Minimum allowed value
+    max_value: 1.0  # Maximum allowed value
     
-    # Per-channel bounds
-    per_channel: true
-    learnable_bounds: true
+    # Channel-specific bounds
+    per_channel: true  # Different bounds per channel
+    learnable_bounds: true  # Learn bounds from data
     
-  # Saturation functions
+  # Saturation functions (smooth clipping)
   saturation:
     enabled: true
-    function: "tanh"  # tanh, sigmoid, hard_tanh, softsign
+    function: "tanh"  # Options: tanh (smooth), sigmoid, hard_tanh
     
-    # Tanh parameters
+    # Tanh-specific parameters
     tanh:
-      scale: 1.0
-      learnable_scale: true
+      scale: 1.0  # Scaling factor
+      learnable_scale: true  # Learn optimal scaling
       
   # Normalization methods
   normalization:
     enabled: true
+    
+    # Available normalization types
     methods:
-      - "batch_norm"
-      - "layer_norm"
-      - "instance_norm"
-      - "group_norm"
+      - "batch_norm"  # Normalize across batch
+      - "layer_norm"  # Normalize across features
+      - "instance_norm"  # Normalize per instance
       
-    # Batch normalization
+    # Batch normalization parameters
     batch_norm:
-      momentum: 0.1
-      eps: 1e-5
-      affine: true
+      momentum: 0.1  # Exponential moving average decay
+      eps: 1e-5  # Numerical stability constant
+      affine: true  # Learnable scale and shift
       
-  # Signal monitoring
+  # Monitor signal statistics
   monitoring:
     enabled: true
+    
+    # Statistics to track
     metrics:
-      - "signal_mean"
-      - "signal_std"
-      - "signal_range"
-      - "signal_entropy"
+      - "signal_mean"  # Average value
+      - "signal_std"  # Standard deviation
+      - "signal_range"  # Min-max range
+      - "signal_entropy"  # Information content
       
-    # Histogram tracking
+    # Track distribution histograms
     histograms:
       enabled: true
-      bins: 100
-      range: [-3, 3]
+      bins: 100  # Number of histogram bins
+      range: [-3, 3]  # Value range for histogram
       
-    # Alerting
+    # Alert conditions
     alerts:
-      signal_explosion: "std > 10.0"
-      signal_collapse: "std < 0.01"
-      signal_bias: "|mean| > 1.0"
+      signal_explosion: "std > 10.0"  # Alert if standard deviation > 10
+      signal_collapse: "std < 0.01"  # Alert if standard deviation < 0.01
+      signal_bias: "abs(mean) > 1.0"  # Alert if mean magnitude > 1
 
-# ----------------------------------------------------------------------------
 # AGENT COORDINATION VIA MHC
-# ----------------------------------------------------------------------------
 agent_coordination:
-  # Coordination protocol
-  protocol: "mhc_based"  # mhc_based, voting, consensus, hierarchical
+  # Protocol for agent communication
+  protocol: "mhc_based"  # Options: mhc_based (our method), voting, consensus
   
-  # Message passing
+  # Message passing between agents
   message_passing:
-    enabled: true
-    rounds: 3
-    aggregation: "mean"  # mean, max, attention, learned
+    enabled: true  # Enable inter-agent communication
+    rounds: 3  # Number of communication rounds
+    aggregation: "mean"  # How to combine messages
     
-    # Message types
+    # Types of messages exchanged
     message_types:
-      - "state_update"
-      - "confidence_score"
-      - "attention_weights"
-      - "gradient_information"
+      - "state_update"  # Current state information
+      - "confidence_score"  # Confidence in analysis
+      - "attention_weights"  # What to pay attention to
+      - "gradient_information"  # Learning signals
       
-    # Message compression
+    # Compress messages to save bandwidth
     compression:
       enabled: true
-      method: "autoencoder"  # autoencoder, pca, random_projection
-      compression_ratio: 0.5
+      method: "autoencoder"  # Neural network compression
+      compression_ratio: 0.5  # Compress to 50% size
       
-  # Attention mechanism
+  # Attention mechanism for coordination
   attention:
-    enabled: true
-    type: "multi_head"  # multi_head, gqa, linear
-    heads: 8
-    dropout: 0.1
+    enabled: true  # Use attention for coordination
+    type: "multi_head"  # Options: multi_head, gqa (grouped query), linear
     
-    # Query, Key, Value projections
+    # Attention architecture
+    heads: 8  # Number of attention heads
+    dropout: 0.1  # Dropout rate
+    
+    # Projection dimensions
     projections:
-      q_dim: 64
-      k_dim: 64
-      v_dim: 64
-      output_dim: 512
+      q_dim: 64  # Query dimension per head
+      k_dim: 64  # Key dimension per head
+      v_dim: 64  # Value dimension per head
+      output_dim: 512  # Final output dimension
       
-    # Attention computation
+    # Attention computation details
     computation:
-      scale: true
-      causal: false
-      softmax_temperature: 1.0
+      scale: true  # Scale by sqrt(dimension)
+      causal: false  # Not causal (agents can attend to all)
+      softmax_temperature: 1.0  # Temperature for softmax
       
-  # Consensus building
+  # Consensus building among agents
   consensus:
-    enabled: true
-    method: "weighted_average"  # weighted_average, majority_vote, bayesian
+    enabled: true  # Build consensus on decisions
+    method: "weighted_average"  # How to combine agent opinions
     
-    # Weight computation
+    # How to compute agent weights
     weights:
-      based_on: "confidence"  # confidence, accuracy, similarity
-      normalization: "softmax"
-      temperature: 1.0
+      based_on: "confidence"  # Options: confidence, accuracy, similarity
+      normalization: "softmax"  # Convert to probabilities
+      temperature: 1.0  # Controls sharpness
       
-    # Convergence criteria
+    # When to stop consensus building
     convergence:
-      threshold: 0.01
-      max_iterations: 10
-      check_frequency: 1
+      threshold: 0.01  # Stop when changes < 0.01
+      max_iterations: 10  # Maximum consensus rounds
+      check_frequency: 1  # Check convergence every round
 
-# ----------------------------------------------------------------------------
 # RESIDUAL COORDINATION
-# ----------------------------------------------------------------------------
 residual_coordination:
-  # Residual computation
+  # Architecture for residual coordination
   computation:
-    input_dim: 512
-    hidden_dim: 1024
-    output_dim: 512
-    num_layers: 2
+    input_dim: 512  # Input dimension
+    hidden_dim: 1024  # Hidden layer dimension
+    output_dim: 512  # Output dimension
+    num_layers: 2  # Number of layers
     
-  # Residual blocks
+  # Types of residual blocks
   blocks:
-    - type: "linear"
-      activation: "gelu"
-      dropout: 0.1
-      normalization: "layer_norm"
+    - type: "linear"  # Linear transformation block
+      activation: "gelu"  # Activation function
+      dropout: 0.1  # Dropout rate
+      normalization: "layer_norm"  # Normalization type
       
-    - type: "attention"
-      heads: 8
-      dropout: 0.1
-      residual: true
+    - type: "attention"  # Attention block
+      heads: 8  # Attention heads
+      dropout: 0.1  # Dropout rate
+      residual: true  # Include residual connection
       
-  # Skip connections
+  # Skip connections for gradient flow
   skip_connections:
-    enabled: true
-    pattern: "dense"  # dense, residual, dense
-    scaling: "learned"  # fixed, learned, conditional
+    enabled: true  # Enable skip connections
+    pattern: "dense"  # Connection pattern
+    scaling: "learned"  # How to scale skip connections
     
-  # Gradient flow
+  # Ensure gradients flow properly
   gradient_flow:
-    # Gradient preservation
-    preservation: true
+    preservation: true  # Preserve gradient information
+    
+    # Methods to preserve gradients
     methods:
-      - "residual_connections"
-      - "layer_norm"
-      - "gradient_checkpointing"
+      - "residual_connections"  # Skip connections
+      - "layer_norm"  # Normalization
+      - "gradient_checkpointing"  # Memory-efficient gradients
       
-    # Gradient monitoring
+    # Monitor gradient statistics
     monitoring:
       enabled: true
       metrics:
-        - "gradient_norm"
-        - "gradient_std"
-        - "gradient_mean"
+        - "gradient_norm"  # Gradient magnitude
+        - "gradient_std"  # Gradient variability
+        - "gradient_mean"  # Average gradient
         
-  # State propagation
+  # How states propagate through network
   state_propagation:
-    # Propagation rules
-    rules: "learned"  # fixed, learned, attention_based
+    rules: "learned"  # How states transform
     
-    # Learned propagation
+    # Learned propagation network
     learned:
-      network_type: "transformer"  # transformer, mlp, rnn
-      num_layers: 3
-      hidden_dim: 512
+      network_type: "transformer"  # Options: transformer, mlp, rnn
+      num_layers: 3  # Number of layers
+      hidden_dim: 512  # Hidden dimension
       
-    # Fixed propagation
+    # Fixed propagation matrix
     fixed:
-      matrix: "doubly_stochastic"
-      sparsity: 0.1
+      matrix: "doubly_stochastic"  # Type of fixed matrix
+      sparsity: 0.1  # Sparsity level
 
-# ----------------------------------------------------------------------------
 # PERFORMANCE OPTIMIZATION
-# ----------------------------------------------------------------------------
 performance:
   # Computational optimizations
   computational:
-    # Mixed precision
-    mixed_precision: true
-    precision: "float16"  # float16, bfloat16
+    # Use mixed precision for speed
+    mixed_precision: true  # Combine float16 and float32
+    precision: "float16"  # Primary precision
     
-    # Gradient checkpointing
+    # Save memory by recomputing gradients
     gradient_checkpointing: true
-    checkpoint_every: 2
+    checkpoint_every: 2  # Checkpoint every 2 layers
     
-    # Memory optimization
+    # Memory optimization level
     memory:
       enable_optimization: true
-      optimization_level: "O2"  # O0, O1, O2, O3
+      optimization_level: "O2"  # Balance of speed vs memory
       
-  # Parallel processing
+  # Parallel processing strategies
   parallel:
-    # Data parallelism
+    # Split data across devices
     data_parallel: true
-    num_devices: "auto"
+    num_devices: "auto"  # Auto-detect available devices
     
-    # Model parallelism
-    model_parallel: false
-    pipeline_parallel: false
-    tensor_parallel: false
+    # Split model across devices (for large models)
+    model_parallel: false  # Not needed for our model size
     
-    # Distributed training
+    # Distributed training (multi-node)
     distributed:
-      enabled: false
-      backend: "nccl"  # nccl, gloo, mpi
-      init_method: "env://"
+      enabled: false  # Single node by default
+      backend: "nccl"  # NVIDIA Collective Communications Library
       
-  # Caching strategies
+  # Caching strategies for performance
   caching:
-    # Attention caching
-    attention_cache: true
-    cache_size: 1000
+    attention_cache: true  # Cache attention computations
+    cache_size: 1000  # Maximum cache entries
     
-    # State caching
-    state_cache: true
-    cache_ttl: 3600  # seconds
+    state_cache: true  # Cache agent states
+    cache_ttl: 3600  # Cache time-to-live (1 hour)
     
-    # Result caching
-    result_cache: true
-    cache_key: "hash(input)"
+    result_cache: true  # Cache final results
+    cache_key: "md5_hash"  # Use MD5 hash of input as cache key
     
-  # Batch processing
+  # Batch processing configuration
   batching:
-    enabled: true
-    batch_size: 32
-    dynamic_batching: true
-    max_batch_size: 128
+    enabled: true  # Process in batches
+    batch_size: 32  # Default batch size
+    dynamic_batching: true  # Adjust batch size dynamically
+    max_batch_size: 128  # Maximum batch size
     
-    # Padding and masking
+    # Handle variable-length sequences
     padding:
-      enabled: true
-      value: 0
-      side: "right"  # left, right
+      enabled: true  # Pad sequences to same length
+      value: 0  # Padding value
+      side: "right"  # Pad on right side
       
-    # Bucketing
+    # Group similar-length sequences
     bucketing:
       enabled: true
-      bucket_boundaries: [32, 64, 128, 256]
+      bucket_boundaries: [32, 64, 128, 256]  # Sequence length boundaries
       
-  # Latency optimization
+  # Reduce inference latency
   latency:
-    # Asynchronous processing
-    async_processing: true
-    queue_size: 1000
+    async_processing: true  # Process asynchronously
+    queue_size: 1000  # Maximum queue size
     
-    # Prefetching
-    prefetch: true
-    prefetch_factor: 2
+    prefetch: true  # Preload next batch
+    prefetch_factor: 2  # Prefetch 2 batches ahead
     
-    # Early stopping
+    # Stop early if confident
     early_stop:
       enabled: true
-      confidence_threshold: 0.95
-      max_depth: 3
+      confidence_threshold: 0.95  # Stop if confidence > 95%
+      max_depth: 3  # Maximum early stopping depth
 
-# ----------------------------------------------------------------------------
 # MONITORING & DIAGNOSTICS
-# ----------------------------------------------------------------------------
 monitoring:
-  # Metrics collection
+  # Collect performance metrics
   metrics:
     enabled: true
-    collection_interval: 60  # seconds
+    collection_interval: 60  # Collect every 60 seconds
     
-    # MHC-specific metrics
+    # MHC-specific metrics to track
     mhc_metrics:
-      - "manifold_curvature"
-      - "connection_strength"
-      - "doubly_stochastic_error"
-      - "identity_preservation_error"
-      - "non_expansive_violation"
-      - "signal_bound_violation"
+      - "manifold_curvature"  # Curvature of learned manifold
+      - "connection_strength"  # Strength of connections
+      - "doubly_stochastic_error"  # Error in normalization
+      - "identity_preservation_error"  # How well identity preserved
+      - "non_expansive_violation"  # Violations of non-expansive property
+      - "signal_bound_violation"  # Signal bounding violations
       
-    # Performance metrics
+    # System performance metrics
     performance_metrics:
-      - "inference_time"
-      - "memory_usage"
-      - "cpu_usage"
-      - "gpu_usage"
-      - "batch_processing_time"
+      - "inference_time"  # Time per inference
+      - "memory_usage"  # Memory consumption
+      - "cpu_usage"  # CPU utilization
+      - "gpu_usage"  # GPU utilization
+      - "batch_processing_time"  # Time per batch
       
-  # Visualization
+  # Visualization tools
   visualization:
     enabled: true
+    
+    # Supported visualization backends
     tools:
-      - "tensorboard"
-      - "wandb"
-      - "mlflow"
+      - "tensorboard"  # TensorBoard for PyTorch
+      - "wandb"  # Weights & Biases for experiments
+      - "mlflow"  # MLflow for tracking
       
     # What to visualize
     visualizations:
-      - "manifold_projection"
-      - "connection_graph"
-      - "attention_heatmaps"
-      - "gradient_flow"
-      - "signal_distribution"
+      - "manifold_projection"  # 2D/3D projection of manifold
+      - "connection_graph"  # Graph of connections
+      - "attention_heatmaps"  # Heatmaps of attention weights
+      - "gradient_flow"  # Flow of gradients through network
+      - "signal_distribution"  # Distribution of signals
       
-  # Debugging
+  # Debugging capabilities
   debugging:
     enabled: true
-    log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+    log_level: "INFO"  # Options: DEBUG (detailed), INFO (normal), WARNING, ERROR
     
-    # Debug checks
+    # Automatic checks during runtime
     checks:
-      - "nan_detection"
-      - "inf_detection"
-      - "gradient_check"
-      - "parameter_check"
+      - "nan_detection"  # Detect NaN values
+      - "inf_detection"  # Detect infinite values
+      - "gradient_check"  # Check gradient validity
+      - "parameter_check"  # Check parameter values
       
-    # Assertions
+    # Assertions for correctness
     assertions:
       enabled: true
-      check_frequency: 100  # steps
+      check_frequency: 100  # Check every 100 training steps
       
-      # MHC assertions
+      # MHC-specific assertions
       mhc_assertions:
-        - "doubly_stochastic"
-        - "non_negative"
-        - "identity_preservation"
-        - "signal_bounded"
+        - "doubly_stochastic"  # Verify doubly-stochastic property
+        - "non_negative"  # Verify non-negative values
+        - "identity_preservation"  # Verify identity preservation
+        - "signal_bounded"  # Verify signals are bounded
         
-  # Health checks
+  # System health monitoring
   health_checks:
     enabled: true
-    interval: 300  # seconds
+    interval: 300  # Check every 5 minutes
     
-    # Check types
+    # Types of health checks
     checks:
-      - "memory_leak"
-      - "deadlock"
-      - "resource_exhaustion"
-      - "performance_degradation"
+      - "memory_leak"  # Check for memory leaks
+      - "deadlock"  # Check for deadlocks
+      - "resource_exhaustion"  # Check resource usage
+      - "performance_degradation"  # Check for slowdowns
       
-    # Auto-remediation
+    # Automatic recovery actions
     auto_remediation:
       enabled: true
+      
+      # Available recovery actions
       actions:
-        - "restart_process"
-        - "clear_cache"
-        - "reduce_load"
-        - "switch_to_backup"
+        - "restart_process"  # Restart the process
+        - "clear_cache"  # Clear memory cache
+        - "reduce_load"  # Reduce processing load
+        - "switch_to_backup"  # Switch to backup system
 
-# ----------------------------------------------------------------------------
 # TRAINING CONFIGURATION
-# ----------------------------------------------------------------------------
 training:
-  # Training data
+  # Training data configuration
   data:
-    # Dataset configuration
+    # Available datasets
     datasets:
       - name: "manifold_learning"
         path: "./data/manifold/"
-        split: [0.7, 0.15, 0.15]  # train, val, test
+        split: [0.7, 0.15, 0.15]  # 70% train, 15% validation, 15% test
         
       - name: "coordination_examples"
         path: "./data/coordination/"
-        split: [0.8, 0.1, 0.1]
+        split: [0.8, 0.1, 0.1]  # 80% train, 10% validation, 10% test
         
-    # Data augmentation
+    # Data augmentation techniques
     augmentation:
-      enabled: true
+      enabled: true  # Enable data augmentation
+      
+      # Augmentation methods
       methods:
-        - "noise_injection"
-        - "random_projection"
-        - "mixup"
-        - "cutmix"
+        - "noise_injection"  # Add random noise
+        - "random_projection"  # Random linear projection
+        - "mixup"  # Mix samples
+        - "cutmix"  # Cut and mix parts of samples
         
-  # Training loop
+  # Training loop configuration
   loop:
-    # Optimizer
+    # Optimization algorithm
     optimizer:
-      type: "adamw"
-      learning_rate: 0.001
-      weight_decay: 0.01
-      betas: [0.9, 0.999]
-      eps: 1e-8
+      type: "adamw"  # Adam with weight decay
+      learning_rate: 0.001  # Initial learning rate
+      weight_decay: 0.01  # L2 regularization
+      betas: [0.9, 0.999]  # Momentum parameters
+      eps: 1e-8  # Numerical stability
       
-    # Scheduler
+    # Learning rate scheduling
     scheduler:
-      type: "cosine"
-      warmup_steps: 1000
-      total_steps: 100000
-      min_lr: 1e-6
+      type: "cosine"  # Cosine annealing
+      warmup_steps: 1000  # Linear warmup for first 1000 steps
+      total_steps: 100000  # Total training steps
+      min_lr: 1e-6  # Minimum learning rate
       
-    # Loss functions
+    # Loss function configuration
     losses:
-      reconstruction: 1.0
-      manifold: 0.5
-      coordination: 0.3
-      regularization: 0.1
+      reconstruction: 1.0  # Weight for reconstruction loss
+      manifold: 0.5  # Weight for manifold loss
+      coordination: 0.3  # Weight for coordination loss
+      regularization: 0.1  # Weight for regularization loss
       
-  # Validation
+  # Validation configuration
   validation:
-    enabled: true
-    frequency: 1000  # steps
+    enabled: true  # Enable validation
+    frequency: 1000  # Validate every 1000 training steps
     
     # Validation metrics
     metrics:
-      - "reconstruction_error"
-      - "manifold_quality"
-      - "coordination_efficiency"
-      - "stability_score"
+      - "reconstruction_error"  # Input reconstruction error
+      - "manifold_quality"  # Quality of learned manifold
+      - "coordination_efficiency"  # Efficiency of agent coordination
+      - "stability_score"  # Stability of the system
       
-    # Early stopping
+    # Early stopping criteria
     early_stopping:
-      enabled: true
-      patience: 10
-      min_delta: 0.001
+      enabled: true  # Stop training if no improvement
+      patience: 10  # Wait 10 validations without improvement
+      min_delta: 0.001  # Minimum improvement threshold
       
-  # Checkpointing
+  # Model checkpointing
   checkpointing:
-    enabled: true
-    frequency: 5000  # steps
-    save_best: true
+    enabled: true  # Save model checkpoints
+    frequency: 5000  # Save every 5000 steps
+    save_best: true  # Always keep best model
     
     # Checkpoint format
-    format: "torch"  # torch, onnx, safetensors
+    format: "torch"  # PyTorch format
     
-    # Compression
+    # Compress checkpoints to save space
     compression: true
-    algorithm: "gzip"
+    algorithm: "gzip"  # GZIP compression
 
-# ----------------------------------------------------------------------------
 # DEPLOYMENT CONFIGURATION
-# ----------------------------------------------------------------------------
 deployment:
-  # Model formats
+  # Model formats for deployment
   formats:
-    inference: "torchscript"  # torchscript, onnx, tensorrt
-    serving: "torchserve"  # torchserve, triton, custom
+    inference: "torchscript"  # Optimized for inference
+    serving: "torchserve"  # Production serving
     
   # Serving configuration
   serving:
-    # TorchServe
+    # TorchServe configuration
     torchserve:
-      model_store: "./models/"
-      inference_address: "0.0.0.0:8080"
-      management_address: "0.0.0.0:8081"
+      model_store: "./models/"  # Directory for models
+      inference_address: "0.0.0.0:8080"  # Inference endpoint
+      management_address: "0.0.0.0:8081"  # Management endpoint
       
-    # Triton Inference Server
+    # NVIDIA Triton configuration
     triton:
-      model_repository: "./models/"
-      http_port: 8000
-      grpc_port: 8001
-      metrics_port: 8002
+      model_repository: "./models/"  # Model directory
+      http_port: 8000  # HTTP port
+      grpc_port: 8001  # gRPC port
+      metrics_port: 8002  # Metrics port
       
   # Scaling configuration
   scaling:
-    # Horizontal scaling
+    # Horizontal scaling (add more instances)
     horizontal:
-      enabled: true
-      min_replicas: 1
-      max_replicas: 10
+      enabled: true  # Enable horizontal scaling
+      min_replicas: 1  # Minimum instances
+      max_replicas: 10  # Maximum instances
       
-      # Auto-scaling
+      # Auto-scaling based on metrics
       auto_scaling:
         enabled: true
-        target_cpu_utilization: 70
-        target_memory_utilization: 80
+        target_cpu_utilization: 70  # Target 70% CPU usage
+        target_memory_utilization: 80  # Target 80% memory usage
         
-    # Vertical scaling
+    # Vertical scaling (increase resources per instance)
     vertical:
-      enabled: false
+      enabled: false  # Disabled by default
       resources:
-        cpu: "2"
-        memory: "4Gi"
-        gpu: "1"
+        cpu: "2"  # CPU cores
+        memory: "4Gi"  # Memory
+        gpu: "1"  # GPU count
         
   # Monitoring endpoints
   endpoints:
-    health: "/health"
-    metrics: "/metrics"
-    ready: "/ready"
-    live: "/live"
+    health: "/health"  # Health check endpoint
+    metrics: "/metrics"  # Metrics endpoint
+    ready: "/ready"  # Readiness probe
+    live: "/live"  # Liveness probe
     
-  # Security
+  # Security configuration
   security:
+    # Authentication for API access
     authentication:
-      enabled: true
-      method: "jwt"  # jwt, api_key, mTLS
+      enabled: true  # Require authentication
+      method: "jwt"  # JSON Web Tokens
       
+    # Data encryption
     encryption:
-      enabled: true
-      tls: true
-      https_only: true
+      enabled: true  # Enable encryption
+      tls: true  # Use TLS/SSL
+      https_only: true  # Require HTTPS
 
-# ============================================================================
-# END OF MHC CONFIGURATION
-# ============================================================================
+# VALIDATION RULES
+validation:
+  # Configuration validation rules
+  rules:
+    - name: "dimension_consistency"
+      condition: "manifold.dimensionality.state_dim >= manifold.dimensionality.latent_dim"
+      message: "State dimension must be ≥ latent dimension"
+      
+    - name: "learning_rate_range"
+      condition: "0 < training.loop.optimizer.learning_rate < 1"
+      message: "Learning rate must be between 0 and 1"
+      
+    - name: "batch_size_positive"
+      condition: "training.data.batch_size > 0"
+      message: "Batch size must be positive"
+      
+    - name: "valid_precision"
+      condition: "mhc_core.precision in ['float16', 'float32', 'bfloat16']"
+      message: "Precision must be float16, float32, or bfloat16"
+      
+    - name: "valid_device"
+      condition: "mhc_core.device in ['cpu', 'cuda', 'mps']"
+      message: "Device must be cpu, cuda, or mps"
+      
+  # Dependencies between configurations
+  dependencies:
+    - when: "mhc_core.precision == 'float16'"
+      require: "performance.computational.mixed_precision == true"
+      message: "float16 requires mixed precision"
+      
+    - when: "deployment.scaling.horizontal.enabled == true"
+      require: "deployment.serving.torchserve != null"
+      message: "Horizontal scaling requires serving configuration"
+      
+  # Configuration version compatibility
+  compatibility:
+    min_version: "1.0.0"
+    max_version: "2.0.0"
+    breaking_changes: []

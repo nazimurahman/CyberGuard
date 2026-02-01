@@ -1,9 +1,4 @@
-#!/bin/bash
-# scripts/deploy_cyberguard.sh
-
-# ============================================================================
 # CYBERGUARD DEPLOYMENT SCRIPT
-# ============================================================================
 # This script handles deployment of CyberGuard in various environments:
 # - Development (local)
 # - Staging (test environment)
@@ -15,38 +10,40 @@
 # - Database migrations
 # - Security hardening
 # - Rollback capability
-# ============================================================================
 
-set -e  # Exit immediately on error
-set -u  # Treat unset variables as error
+# Exit immediately if any command fails
+set -e
+# Treat unset variables as errors
+set -u
 
-# Color codes
+# Color codes for terminal output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m'  # No Color
+NC='\033[0m'  # No Color - reset to default
 
-# Configuration
+# Configuration variables
 DEPLOYMENT_DIR="/opt/cyberguard"
 BACKUP_DIR="/opt/cyberguard_backups"
 LOG_DIR="/var/log/cyberguard"
 CONFIG_DIR="/etc/cyberguard"
 VENV_PATH="$DEPLOYMENT_DIR/venv"
 
-# Deployment environments
+# Deployment environments mapping
 declare -A ENVIRONMENTS=(
     ["dev"]="Development"
     ["staging"]="Staging"
     ["prod"]="Production"
 )
 
-# Logging function
+# Logging function to output messages with timestamp and log level
 log() {
-    local level=$1
-    local message=$2
+    local level="$1"
+    local message="$2"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     
+    # Color code output based on log level
     case $level in
         "INFO")
             echo -e "${BLUE}[$timestamp] [INFO]${NC} $message"
@@ -62,11 +59,11 @@ log() {
             ;;
     esac
     
-    # Also log to file
+    # Append log to file
     echo "[$timestamp] [$level] $message" >> "$LOG_DIR/deploy.log"
 }
 
-# Print usage information
+# Display script usage information
 print_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
@@ -90,17 +87,17 @@ print_usage() {
 
 # Validate command line arguments
 validate_arguments() {
-    local environment=$1
-    local mode=$2
+    local environment="$1"
+    local mode="$2"
     
-    # Validate environment
+    # Check if environment is valid
     if [[ ! "${!ENVIRONMENTS[@]}" =~ $environment ]]; then
         log "ERROR" "Invalid environment: $environment"
         log "ERROR" "Valid environments: ${!ENVIRONMENTS[*]}"
         exit 1
     fi
     
-    # Validate deployment mode
+    # Check if deployment mode is valid
     if [[ ! "$mode" =~ ^(docker|systemd|manual)$ ]]; then
         log "ERROR" "Invalid deployment mode: $mode"
         log "ERROR" "Valid modes: docker, systemd, manual"
@@ -120,7 +117,7 @@ check_deployment_requirements() {
         exit 1
     fi
     
-    # Check required commands
+    # Check required commands are available
     local required_commands=("git" "python3" "pip3")
     
     for cmd in "${required_commands[@]}"; do
@@ -137,6 +134,7 @@ check_deployment_requirements() {
             exit 1
         fi
         
+        # Check Docker daemon is running
         if ! docker info &> /dev/null; then
             log "ERROR" "Docker daemon is not running"
             exit 1
@@ -169,6 +167,7 @@ create_deployment_directories() {
         "$BACKUP_DIR/databases"
     )
     
+    # Create each directory if it doesn't exist
     for dir in "${directories[@]}"; do
         if [ ! -d "$dir" ]; then
             mkdir -p "$dir"
@@ -177,7 +176,7 @@ create_deployment_directories() {
         fi
     done
     
-    # Set ownership for web deployment
+    # Set ownership for web deployment in production
     if [ "$DEPLOYMENT_ENVIRONMENT" = "prod" ]; then
         if id "cyberguard" &>/dev/null; then
             chown -R cyberguard:cyberguard "$DEPLOYMENT_DIR"
@@ -211,6 +210,7 @@ backup_current_deployment() {
         "$CONFIG_DIR"
     )
     
+    # Copy each backup item
     for item in "${backup_items[@]}"; do
         if [ -d "$item" ]; then
             cp -r "$item" "$backup_path/"
@@ -233,8 +233,8 @@ Backup ID: $timestamp
 Items backed up: ${backup_items[*]}
 EOF
     
-    # Cleanup old backups (keep last 10)
-    find "$BACKUP_DIR" -name "deployment_*" -type d | sort -r | tail -n +11 | xargs rm -rf
+    # Cleanup old backups (keep only last 10)
+    find "$BACKUP_DIR" -name "deployment_*" -type d | sort -r | tail -n +11 | xargs rm -rf 2>/dev/null || true
     
     log "SUCCESS" "Backup created: $backup_path"
 }
@@ -247,7 +247,7 @@ update_repository() {
     if [ -d "$DEPLOYMENT_DIR/.git" ]; then
         log "INFO" "Repository exists, updating..."
         
-        cd "$DEPLOYMENT_DIR"
+        cd "$DEPLOYMENT_DIR" || exit 1
         
         # Stash any local changes
         if git status --porcelain | grep -q "."; then
@@ -261,24 +261,33 @@ update_repository() {
         # Checkout specific version if specified
         if [ -n "$DEPLOYMENT_VERSION" ] && [ "$DEPLOYMENT_VERSION" != "latest" ]; then
             log "INFO" "Checking out version: $DEPLOYMENT_VERSION"
-            git checkout "$DEPLOYMENT_VERSION"
+            git checkout "$DEPLOYMENT_VERSION" || {
+                log "ERROR" "Failed to checkout version: $DEPLOYMENT_VERSION"
+                exit 1
+            }
         fi
         
     else
         log "INFO" "Cloning repository..."
         
         # Clone repository
-        git clone https://github.com/your-org/cyberguard.git "$DEPLOYMENT_DIR"
+        git clone https://github.com/your-org/cyberguard.git "$DEPLOYMENT_DIR" || {
+            log "ERROR" "Failed to clone repository"
+            exit 1
+        }
         
         # Checkout specific version if specified
         if [ -n "$DEPLOYMENT_VERSION" ] && [ "$DEPLOYMENT_VERSION" != "latest" ]; then
-            cd "$DEPLOYMENT_DIR"
-            git checkout "$DEPLOYMENT_VERSION"
+            cd "$DEPLOYMENT_DIR" || exit 1
+            git checkout "$DEPLOYMENT_VERSION" || {
+                log "ERROR" "Failed to checkout version: $DEPLOYMENT_VERSION"
+                exit 1
+            }
         fi
     fi
     
     # Get current commit hash
-    cd "$DEPLOYMENT_DIR"
+    cd "$DEPLOYMENT_DIR" || exit 1
     CURRENT_COMMIT=$(git rev-parse --short HEAD)
     log "INFO" "Current commit: $CURRENT_COMMIT"
     
@@ -289,36 +298,51 @@ update_repository() {
 setup_python_environment() {
     log "INFO" "Setting up Python environment..."
     
-    cd "$DEPLOYMENT_DIR"
+    cd "$DEPLOYMENT_DIR" || exit 1
     
     # Check if virtual environment exists
     if [ ! -d "$VENV_PATH" ]; then
         log "INFO" "Creating virtual environment..."
-        python3 -m venv "$VENV_PATH"
+        python3 -m venv "$VENV_PATH" || {
+            log "ERROR" "Failed to create virtual environment"
+            exit 1
+        }
     fi
     
     # Activate virtual environment
-    source "$VENV_PATH/bin/activate"
+    source "$VENV_PATH/bin/activate" || {
+        log "ERROR" "Failed to activate virtual environment"
+        exit 1
+    }
     
     # Upgrade pip
-    pip install --upgrade pip
+    pip install --upgrade pip || {
+        log "ERROR" "Failed to upgrade pip"
+        exit 1
+    }
     
     # Install dependencies
     log "INFO" "Installing dependencies..."
     
     # Install base requirements
     if [ -f "requirements.txt" ]; then
-        pip install -r requirements.txt
+        pip install -r requirements.txt || {
+            log "ERROR" "Failed to install base requirements"
+            exit 1
+        }
     fi
     
     # Install environment-specific requirements
     local env_requirements="requirements-$DEPLOYMENT_ENVIRONMENT.txt"
     if [ -f "$env_requirements" ]; then
-        pip install -r "$env_requirements"
+        pip install -r "$env_requirements" || {
+            log "ERROR" "Failed to install environment-specific requirements"
+            exit 1
+        }
     fi
     
     # Verify installation
-    if python -c "import torch, fastapi, pydantic"; then
+    if python -c "import torch, fastapi, pydantic" 2>/dev/null; then
         log "SUCCESS" "Python environment setup complete"
     else
         log "ERROR" "Failed to verify Python packages"
@@ -330,14 +354,17 @@ setup_python_environment() {
 apply_environment_configuration() {
     log "INFO" "Applying $DEPLOYMENT_ENVIRONMENT configuration..."
     
-    cd "$DEPLOYMENT_DIR"
+    cd "$DEPLOYMENT_DIR" || exit 1
     
     # Source environment-specific configuration
     local config_file="config/deploy_${DEPLOYMENT_ENVIRONMENT}.sh"
     
     if [ -f "$config_file" ]; then
         log "INFO" "Loading environment configuration: $config_file"
-        source "$config_file"
+        # shellcheck source=/dev/null
+        source "$config_file" || {
+            log "WARNING" "Failed to source configuration file: $config_file"
+        }
     else
         log "WARNING" "No environment-specific configuration found: $config_file"
     fi
@@ -345,12 +372,16 @@ apply_environment_configuration() {
     # Update configuration files
     if [ -f "config/enterprise_config.yaml" ]; then
         # Update configuration based on environment
-        sed -i "s/environment:.*/environment: \"$DEPLOYMENT_ENVIRONMENT\"/" config/enterprise_config.yaml
+        sed -i.bak "s/environment:.*/environment: \"$DEPLOYMENT_ENVIRONMENT\"/" "config/enterprise_config.yaml"
         
+        # Apply production-specific settings
         if [ "$DEPLOYMENT_ENVIRONMENT" = "prod" ]; then
-            sed -i "s/auth_required:.*/auth_required: true/" config/enterprise_config.yaml
-            sed -i "s/ssl_enabled:.*/ssl_enabled: true/" config/enterprise_config.yaml
-            sed -i "s/log_level:.*/log_level: \"WARNING\"/" config/enterprise_config.yaml
+            sed -i.bak "s/auth_required:.*/auth_required: true/" "config/enterprise_config.yaml"
+            sed -i.bak "s/ssl_enabled:.*/ssl_enabled: true/" "config/enterprise_config.yaml"
+            sed -i.bak "s/log_level:.*/log_level: \"WARNING\"/" "config/enterprise_config.yaml"
+            
+            # Clean up backup files
+            rm -f config/enterprise_config.yaml.bak
         fi
     fi
     
@@ -360,8 +391,16 @@ apply_environment_configuration() {
         cp .env.example .env
         
         # Generate secure secrets
-        sed -i "s/SECRET_KEY=.*/SECRET_KEY=$(openssl rand -hex 32)/" .env
-        sed -i "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$(openssl rand -hex 32)/" .env
+        if command -v openssl &> /dev/null; then
+            sed -i.bak "s/SECRET_KEY=.*/SECRET_KEY=$(openssl rand -hex 32)/" .env
+            sed -i.bak "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$(openssl rand -hex 32)/" .env
+            rm -f .env.bak
+        else
+            log "WARNING" "openssl not found, using less secure random generation"
+            sed -i.bak "s/SECRET_KEY=.*/SECRET_KEY=$(head -c 32 /dev/urandom | base64)/" .env
+            sed -i.bak "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$(head -c 32 /dev/urandom | base64)/" .env
+            rm -f .env.bak
+        fi
     fi
     
     log "SUCCESS" "Configuration applied for $DEPLOYMENT_ENVIRONMENT"
@@ -371,8 +410,8 @@ apply_environment_configuration() {
 run_database_migrations() {
     log "INFO" "Running database migrations..."
     
-    cd "$DEPLOYMENT_DIR"
-    source "$VENV_PATH/bin/activate"
+    cd "$DEPLOYMENT_DIR" || exit 1
+    source "$VENV_PATH/bin/activate" || exit 1
     
     # Check if migration script exists
     if [ -f "scripts/migrate_database.py" ]; then
@@ -393,41 +432,53 @@ run_database_migrations() {
 deploy_with_docker() {
     log "INFO" "Deploying with Docker..."
     
-    cd "$DEPLOYMENT_DIR"
+    cd "$DEPLOYMENT_DIR" || exit 1
     
     # Check if Docker Compose file exists
-    if [ ! -f "docker-compose.yml" ] && [ ! -f "docker-compose.yaml" ]; then
-        log "ERROR" "Docker Compose file not found"
-        exit 1
+    local compose_file="docker-compose.yml"
+    if [ ! -f "$compose_file" ]; then
+        compose_file="docker-compose.yaml"
+        if [ ! -f "$compose_file" ]; then
+            log "ERROR" "Docker Compose file not found"
+            exit 1
+        fi
     fi
     
     # Build Docker images
     log "INFO" "Building Docker images..."
     
     # Build with environment tag
-    docker-compose build --build-arg ENVIRONMENT="$DEPLOYMENT_ENVIRONMENT"
+    docker-compose -f "$compose_file" build --build-arg ENVIRONMENT="$DEPLOYMENT_ENVIRONMENT" || {
+        log "ERROR" "Failed to build Docker images"
+        exit 1
+    }
     
     # Stop existing containers
     log "INFO" "Stopping existing containers..."
-    docker-compose down || true
+    docker-compose -f "$compose_file" down || {
+        log "WARNING" "Failed to stop existing containers"
+    }
     
     # Start new containers
     log "INFO" "Starting containers..."
-    docker-compose up -d
+    docker-compose -f "$compose_file" up -d || {
+        log "ERROR" "Failed to start containers"
+        exit 1
+    }
     
     # Wait for services to be ready
     log "INFO" "Waiting for services to be ready..."
     sleep 30
     
     # Check container status
-    if docker-compose ps | grep -q "Up"; then
+    if docker-compose -f "$compose_file" ps | grep -q "Up"; then
         log "SUCCESS" "Docker deployment successful"
         
         # Show container status
-        docker-compose ps
+        docker-compose -f "$compose_file" ps
     else
         log "ERROR" "Docker deployment failed"
-        docker-compose logs
+        docker-compose -f "$compose_file" logs
         exit 1
     fi
 }
@@ -476,20 +527,38 @@ EOF
     
     # Create system user if it doesn't exist
     if ! id "cyberguard" &>/dev/null; then
-        useradd -r -s /bin/false cyberguard
+        useradd -r -s /bin/false cyberguard || {
+            log "ERROR" "Failed to create system user"
+            exit 1
+        }
         log "INFO" "Created system user: cyberguard"
     fi
     
     # Set permissions
-    chown -R cyberguard:cyberguard "$DEPLOYMENT_DIR"
-    chown -R cyberguard:cyberguard "$LOG_DIR"
+    chown -R cyberguard:cyberguard "$DEPLOYMENT_DIR" || {
+        log "ERROR" "Failed to set directory ownership"
+        exit 1
+    }
+    chown -R cyberguard:cyberguard "$LOG_DIR" || {
+        log "ERROR" "Failed to set log directory ownership"
+        exit 1
+    }
     
     # Reload systemd
-    systemctl daemon-reload
+    systemctl daemon-reload || {
+        log "ERROR" "Failed to reload systemd"
+        exit 1
+    }
     
     # Enable and start service
-    systemctl enable cyberguard.service
-    systemctl restart cyberguard.service
+    systemctl enable cyberguard.service || {
+        log "ERROR" "Failed to enable cyberguard service"
+        exit 1
+    }
+    systemctl restart cyberguard.service || {
+        log "ERROR" "Failed to restart cyberguard service"
+        exit 1
+    }
     
     # Check service status
     if systemctl is-active --quiet cyberguard.service; then
@@ -508,13 +577,15 @@ EOF
 deploy_manually() {
     log "INFO" "Deploying manually (development mode)..."
     
-    cd "$DEPLOYMENT_DIR"
-    source "$VENV_PATH/bin/activate"
+    cd "$DEPLOYMENT_DIR" || exit 1
+    source "$VENV_PATH/bin/activate" || exit 1
     
     # Check if already running
     if pgrep -f "main.py" > /dev/null; then
         log "WARNING" "CyberGuard is already running, stopping..."
-        pkill -f "main.py"
+        pkill -f "main.py" || {
+            log "WARNING" "Failed to kill existing processes"
+        }
         sleep 2
     fi
     
@@ -555,16 +626,16 @@ verify_deployment() {
     local api_url="http://localhost:8000/health"
     local dashboard_url="http://localhost:8080"
     
-    for i in $(seq 1 $max_retries); do
+    for i in $(seq 1 "$max_retries"); do
         log "INFO" "Verification attempt $i/$max_retries..."
         
         # Check API health
-        if curl -s -f "$api_url" > /dev/null; then
+        if curl -s -f "$api_url" > /dev/null 2>&1; then
             log "SUCCESS" "API is responding"
             
             # Check dashboard if applicable
             if [ "$DEPLOYMENT_MODE" != "docker" ] || [ "$DEPLOYMENT_ENVIRONMENT" != "prod" ]; then
-                if curl -s -f "$dashboard_url" > /dev/null; then
+                if curl -s -f "$dashboard_url" > /dev/null 2>&1; then
                     log "SUCCESS" "Dashboard is responding"
                     return 0
                 else
@@ -577,7 +648,7 @@ verify_deployment() {
             log "WARNING" "API not responding yet"
         fi
         
-        sleep $retry_delay
+        sleep "$retry_delay"
     done
     
     log "ERROR" "Deployment verification failed after $max_retries attempts"
@@ -589,7 +660,8 @@ perform_rollback() {
     log "INFO" "Performing rollback..."
     
     # Find latest backup
-    local latest_backup=$(find "$BACKUP_DIR" -name "deployment_*" -type d | sort -r | head -1)
+    local latest_backup
+    latest_backup=$(find "$BACKUP_DIR" -name "deployment_*" -type d | sort -r | head -1)
     
     if [ -z "$latest_backup" ]; then
         log "ERROR" "No backups found for rollback"
@@ -601,13 +673,20 @@ perform_rollback() {
     # Stop current deployment
     case $DEPLOYMENT_MODE in
         "docker")
-            docker-compose down || true
+            cd "$DEPLOYMENT_DIR" || exit 1
+            docker-compose down || {
+                log "WARNING" "Failed to stop Docker containers"
+            }
             ;;
         "systemd")
-            systemctl stop cyberguard.service || true
+            systemctl stop cyberguard.service || {
+                log "WARNING" "Failed to stop systemd service"
+            }
             ;;
         "manual")
-            pkill -f "main.py" || true
+            pkill -f "main.py" 2>/dev/null || {
+                log "WARNING" "No processes found to kill"
+            }
             ;;
     esac
     
@@ -652,12 +731,9 @@ cleanup() {
     log "INFO" "Cleaning up temporary files..."
     
     # Remove temporary Python files
-    find "$DEPLOYMENT_DIR" -name "*.pyc" -delete
-    find "$DEPLOYMENT_DIR" -name "__pycache__" -type d -delete
-    find "$DEPLOYMENT_DIR" -name ".pytest_cache" -type d -delete
-    
-    # Clear Python cache
-    python -m py_compile "$DEPLOYMENT_DIR" 2>/dev/null || true
+    find "$DEPLOYMENT_DIR" -name "*.pyc" -delete 2>/dev/null || true
+    find "$DEPLOYMENT_DIR" -name "__pycache__" -type d -delete 2>/dev/null || true
+    find "$DEPLOYMENT_DIR" -name ".pytest_cache" -type d -delete 2>/dev/null || true
     
     log "INFO" "Cleanup completed"
 }
@@ -675,7 +751,7 @@ main_deployment() {
         exit 0
     fi
     
-    # Execute deployment steps
+    # Execute deployment steps in sequence
     check_deployment_requirements
     create_deployment_directories
     backup_current_deployment
@@ -684,7 +760,7 @@ main_deployment() {
     apply_environment_configuration
     run_database_migrations
     
-    # Choose deployment method
+    # Choose deployment method based on mode
     case $DEPLOYMENT_MODE in
         "docker")
             deploy_with_docker
@@ -697,12 +773,12 @@ main_deployment() {
             ;;
     esac
     
-    # Verify deployment
+    # Verify deployment was successful
     if verify_deployment; then
         cleanup
         log "SUCCESS" "🎉 CyberGuard deployment completed successfully!"
         
-        # Display deployment info
+        # Display deployment summary
         echo ""
         echo "╔══════════════════════════════════════════════════════╗"
         echo "║               DEPLOYMENT SUMMARY                     ║"
@@ -781,14 +857,21 @@ parse_arguments() {
     # Load configuration file if specified
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         log "INFO" "Loading configuration from: $CONFIG_FILE"
-        source "$CONFIG_FILE"
+        # shellcheck source=/dev/null
+        source "$CONFIG_FILE" || {
+            log "ERROR" "Failed to load configuration file"
+            exit 1
+        }
     fi
 }
 
-# Main execution
+# Main execution function
 main() {
     # Create log directory if it doesn't exist
-    mkdir -p "$LOG_DIR"
+    mkdir -p "$LOG_DIR" || {
+        echo "Failed to create log directory: $LOG_DIR"
+        exit 1
+    }
     
     # Parse command line arguments
     parse_arguments "$@"
@@ -797,5 +880,5 @@ main() {
     main_deployment
 }
 
-# Run main function
+# Run main function with all arguments
 main "$@"

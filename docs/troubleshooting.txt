@@ -1,0 +1,576 @@
+==============================================
+CYBERGUARD TROUBLESHOOTING GUIDE
+==============================================
+
+This document provides solutions for common issues encountered while
+using the CyberGuard Web Security AI System. Follow these steps to
+diagnose and resolve problems.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. SYSTEM STARTUP ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "ModuleNotFoundError" during startup
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Python cannot find required modules
+ROOT CAUSE: Missing dependencies or incorrect Python path
+
+SOLUTIONS:
+1. Verify virtual environment is activated:
+   ○ Linux/macOS: source venv/bin/activate
+   ○ Windows: venv\Scripts\activate
+   
+2. Install all dependencies:
+   $ pip install -r requirements.txt --upgrade
+   
+3. Check Python path includes src directory:
+   $ python -c "import sys; print(sys.path)"
+   Add src to path if missing: sys.path.append('src')
+
+⚠️ PROBLEM: "Port already in use" error
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Port 8080 or 8000 is occupied
+ROOT CAUSE: Another service using required ports
+
+SOLUTIONS:
+1. Find process using the port:
+   $ lsof -i :8080  # Linux/macOS
+   $ netstat -ano | findstr :8080  # Windows
+   
+2. Kill the process or change CyberGuard ports:
+   ○ Edit config/enterprise_config.yaml
+   ○ Change dashboard_port and api_port values
+   
+3. Start CyberGuard on different ports:
+   $ python main.py --mode dashboard --port 9090
+
+⚠️ PROBLEM: "CUDA out of memory" error
+─────────────────────────────────────────────────────────────
+DESCRIPTION: GPU memory insufficient for GQA transformer
+ROOT CAUSE: Large model or insufficient GPU memory
+
+SOLUTIONS:
+1. Reduce batch size in config:
+   ○ Set training.batch_size: 16 (default is 32)
+   ○ Set inference.batch_size: 1
+   
+2. Enable gradient checkpointing:
+   ○ In gqa_transformer.py, set gradient_checkpointing=True
+   
+3. Use CPU mode (slower but works):
+   $ export CUDA_VISIBLE_DEVICES=""  # Disable GPU
+   Or set device="cpu" in model initialization
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. AGENT COORDINATION ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Agent reasoning collapse" or inconsistent decisions
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Agents produce contradictory or unstable results
+ROOT CAUSE: mHC (Manifold-Constrained Hyper-Connections) instability
+
+SOLUTIONS:
+1. Adjust mHC temperature parameter:
+   ○ Increase temperature for more exploration
+   ○ Decrease temperature for more exploitation
+   ○ Config location: config/mhc_config.yaml
+   
+2. Check agent confidence thresholds:
+   $ python -c "from src.agents.agent_orchestrator import AgentOrchestrator; print(orchestrator.get_system_status())"
+   
+3. Enable debug logging for mHC:
+   ○ Set log_level: DEBUG in config
+   ○ Check logs/agent/coordination.log
+
+⚠️ PROBLEM: "High coordination time" (>1 second)
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Agent coordination takes too long
+ROOT CAUSE: Too many agents or complex analysis
+
+SOLUTIONS:
+1. Reduce number of active agents:
+   ○ Comment out non-essential agents in main.py
+   ○ Use agent filtering based on threat level
+   
+2. Optimize agent analysis functions:
+   ○ Check for redundant computations
+   ○ Implement caching for repeated analyses
+   
+3. Enable agent parallelism:
+   ○ Set max_workers in agent_orchestrator.py
+   ○ Use ThreadPoolExecutor for concurrent processing
+
+⚠️ PROBLEM: "Agent memory leak" - increasing memory usage
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Memory usage grows over time
+ROOT CAUSE: Agents not clearing memory buffers
+
+SOLUTIONS:
+1. Enable automatic memory cleanup:
+   ○ Set agent.memory_size: 100 (reduces from 1000)
+   ○ Enable periodic garbage collection
+   
+2. Monitor agent memory usage:
+   $ python scripts/monitor_memory.py --agent all
+   
+3. Implement memory limits per agent:
+   ○ Add max_memory_mb parameter to BaseAgent
+   ○ Enforce memory limits in analyze() method
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. WEB SCANNING ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Connection timeout" during website scanning
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Scanner cannot connect to target website
+ROOT CAUSE: Network issues or website blocking
+
+SOLUTIONS:
+1. Increase timeout settings:
+   ○ security.scan_timeout: 60 (increase from 30)
+   ○ security.request_timeout: 30 (increase from 10)
+   
+2. Use different User-Agent:
+   ○ Modify security.user_agent in config
+   ○ Rotate between multiple User-Agents
+   
+3. Implement retry logic:
+   ○ Add retry mechanism in scanner.py
+   ○ Use exponential backoff for retries
+
+⚠️ PROBLEM: "SSL certificate verification failed"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Cannot verify website SSL certificate
+ROOT CAUSE: Self-signed certs or expired certificates
+
+SOLUTIONS:
+1. Disable SSL verification (not recommended for production):
+   $ export CVE_SCAN_INSECURE=1
+   
+2. Add custom CA certificates:
+   ○ Place certs in data/certificates/
+   ○ Set REQUESTS_CA_BUNDLE environment variable
+   
+3. Implement certificate pinning:
+   ○ Use certifi package for certificate management
+   ○ Add known-good certificates to trust store
+
+⚠️ PROBLEM: "Rate limiting" or "IP blocked"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Target website blocks scanning attempts
+ROOT CAUSE: Aggressive scanning triggers protection
+
+SOLUTIONS:
+1. Implement rate limiting:
+   ○ Add delay between requests: time.sleep(2)
+   ○ Respect robots.txt directives
+   
+2. Use distributed scanning:
+   ○ Rotate between multiple IP addresses
+   ○ Use proxy servers for scanning
+   
+3. Reduce scan intensity:
+   ○ Set max_scan_depth: 1 (reduces from 3)
+   ○ Limit concurrent requests to target
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. GQA TRANSFORMER ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Flash attention not available" warning
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Flash attention optimization disabled
+ROOT CAUSE: PyTorch version or hardware incompatibility
+
+SOLUTIONS:
+1. Upgrade PyTorch:
+   $ pip install torch==2.1.0 --upgrade
+   
+2. Check CUDA compatibility:
+   $ python -c "import torch; print(torch.cuda.is_available())"
+   
+3. Fallback to standard attention:
+   ○ Set gqa.use_flash_attention: false in config
+   ○ System will use scaled_dot_product_attention
+
+⚠️ PROBLEM: "Rotary embedding dimension mismatch"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: RoPE dimensions don't match model dimensions
+ROOT CAUSE: Incorrect configuration of d_model or n_heads
+
+SOLUTIONS:
+1. Verify configuration consistency:
+   ○ d_model must be divisible by n_heads
+   ○ Example: d_model: 512, n_heads: 8 (512/8=64)
+   
+2. Check RoPE initialization:
+   ○ In RotaryPositionalEmbedding.__init__
+   ○ Ensure dim parameter matches head dimension
+   
+3. Reinitialize model with correct parameters:
+   $ python scripts/rebuild_model.py --d_model 512 --n_heads 8
+
+⚠️ PROBLEM: "Training instability" - loss NaN or exploding
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Model training becomes unstable
+ROOT CAUSE: Learning rate too high or gradient explosion
+
+SOLUTIONS:
+1. Enable gradient clipping:
+   ○ Set gradient_clip_norm: 1.0 in training config
+   ○ Add torch.nn.utils.clip_grad_norm_
+   
+2. Reduce learning rate:
+   ○ training.learning_rate: 0.0001 (reduce from 0.001)
+   ○ Use learning rate scheduler
+   
+3. Add gradient checking:
+   ○ Enable anomaly detection: torch.autograd.set_detect_anomaly(True)
+   ○ Monitor gradient norms during training
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. DASHBOARD AND API ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Dashboard not loading" or blank page
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Web dashboard fails to load
+ROOT CAUSE: Frontend assets missing or server error
+
+SOLUTIONS:
+1. Check server logs:
+   $ tail -f logs/dashboard.log
+   
+2. Verify static file paths:
+   ○ Check ui/frontend/ directory exists
+   ○ Verify assets are compiled
+   
+3. Restart dashboard with debug:
+   $ python main.py --mode dashboard --debug
+   Or set debug=True in SecurityDashboard.start()
+
+⚠️ PROBLEM: "API authentication failed"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: API requests rejected with 401 Unauthorized
+ROOT CAUSE: Invalid tokens or expired sessions
+
+SOLUTIONS:
+1. Generate new API token:
+   $ python scripts/generate_token.py --user admin
+   
+2. Check token expiration:
+   ○ Default token lifetime: 24 hours
+   ○ Regenerate tokens periodically
+   
+3. Verify authentication headers:
+   ○ Header: Authorization: Bearer <token>
+   ○ Check token in Authorization header
+
+⚠️ PROBLEM: "WebSocket connection failed"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Real-time updates not working
+ROOT CAUSE: WebSocket server not running or firewall
+
+SOLUTIONS:
+1. Check WebSocket server status:
+   $ netstat -tlnp | grep :8001
+   
+2. Enable WebSocket in config:
+   ○ api.websocket_enabled: true
+   ○ api.websocket_port: 8001
+   
+3. Test WebSocket connection:
+   $ python scripts/test_websocket.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. PERFORMANCE ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Slow scanning speed"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Website scans take too long (>30 seconds)
+ROOT CAUSE: Too many endpoints or complex analysis
+
+SOLUTIONS:
+1. Limit scan depth and breadth:
+   ○ max_scan_depth: 2 (reduces from 3)
+   ○ max_endpoints_per_page: 50
+   
+2. Enable parallel scanning:
+   ○ scanner.max_workers: 4 (increases parallelism)
+   ○ Use asyncio for concurrent requests
+   
+3. Implement scanning cache:
+   ○ Cache scan results for 1 hour
+   ○ Skip recently scanned websites
+
+⚠️ PROBLEM: "High memory usage" during batch processing
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Memory spikes during batch analysis
+ROOT CAUSE: Large batch sizes or memory leaks
+
+SOLUTIONS:
+1. Implement batch processing with limits:
+   ○ Process websites in chunks of 10
+   ○ Clear memory between batches
+   
+2. Use memory-mapped files for large datasets:
+   ○ Store scan results in SQLite/PostgreSQL
+   ○ Use incremental processing
+   
+3. Monitor memory usage:
+   $ python scripts/memory_monitor.py --interval 5
+
+⚠️ PROBLEM: "CPU utilization 100%" continuously
+─────────────────────────────────────────────────────────────
+DESCRIPTION: System CPU constantly at maximum
+ROOT CAUSE: Infinite loops or unoptimized code
+
+SOLUTIONS:
+1. Profile CPU usage:
+   $ python -m cProfile -o profile.stats main.py --mode scan
+   $ snakeviz profile.stats
+   
+2. Identify hot spots:
+   ○ Use py-spy for real-time profiling
+   ○ Check for tight loops in agent analysis
+   
+3. Implement CPU throttling:
+   ○ Set process nice value
+   ○ Limit parallel workers
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. SECURITY ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Sensitive data exposure" in logs
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Passwords or tokens visible in logs
+ROOT CAUSE: Improper logging of sensitive data
+
+SOLUTIONS:
+1. Enable log redaction:
+   ○ Use utils.logging_utils.SensitiveDataFilter
+   ○ Automatically redact passwords, tokens, keys
+   
+2. Review log configuration:
+   ○ Set log_level: INFO (not DEBUG for production)
+   ○ Enable log encryption
+   
+3. Implement audit log separation:
+   ○ Store security logs separately
+   ○ Restrict access to audit logs
+
+⚠️ PROBLEM: "Unauthorized access attempts"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Multiple failed login attempts
+ROOT CAUSE: Brute force attack or misconfiguration
+
+SOLUTIONS:
+1. Enable rate limiting:
+   ○ api.rate_limit: "10/minute" per IP
+   ○ Implement exponential backoff
+   
+2. Set up intrusion detection:
+   ○ Monitor failed authentication
+   ○ Block suspicious IPs
+   
+3. Enable multi-factor authentication:
+   ○ Require 2FA for admin access
+   ○ Use time-based one-time passwords
+
+⚠️ PROBLEM: "Model poisoning" or adversarial attacks
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Attackers trying to corrupt AI models
+ROOT CAUSE: Unvalidated training data or inputs
+
+SOLUTIONS:
+1. Implement input validation:
+   ○ Validate all scanner inputs
+   ○ Sanitize user-provided data
+   
+2. Use adversarial training:
+   ○ Train models with adversarial examples
+   ○ Regularize models for robustness
+   
+3. Monitor model performance:
+   ○ Track accuracy degradation
+   ○ Implement model versioning
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. DATABASE AND STORAGE ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Database connection failed"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Cannot connect to database
+ROOT CAUSE: Database down or credentials invalid
+
+SOLUTIONS:
+1. Check database status:
+   $ sudo systemctl status postgresql  # PostgreSQL
+   $ redis-cli ping  # Redis
+   
+2. Verify connection settings:
+   ○ Check DATABASE_URL environment variable
+   ○ Verify username/password
+   
+3. Test database connection:
+   $ python scripts/test_database.py
+
+⚠️ PROBLEM: "Disk space full" error
+─────────────────────────────────────────────────────────────
+DESCRIPTION: No space left on device
+ROOT CAUSE: Logs or scan results consuming space
+
+SOLUTIONS:
+1. Implement log rotation:
+   ○ Use RotatingFileHandler for logs
+   ○ Set max log size: 100MB
+   
+2. Clean up old scan results:
+   $ python scripts/cleanup_old_scans.py --days 30
+   
+3. Monitor disk usage:
+   $ python scripts/disk_monitor.py --threshold 80
+
+⚠️ PROBLEM: "Database performance degradation"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Slow database queries
+ROOT CAUSE: Missing indexes or large tables
+
+SOLUTIONS:
+1. Add database indexes:
+   ○ Index frequently queried columns
+   ○ Use composite indexes for common queries
+   
+2. Implement query optimization:
+   ○ Use EXPLAIN ANALYZE for slow queries
+   ○ Add query caching
+   
+3. Partition large tables:
+   ○ Partition by date for time-series data
+   ○ Use table partitioning for scan results
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. NETWORKING ISSUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "Cannot download threat intelligence feeds"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Failed to update threat databases
+ROOT CAUSE: Network issues or feed sources down
+
+SOLUTIONS:
+1. Use backup feed sources:
+   ○ Configure multiple CVE feed URLs
+   ○ Implement fallback mechanisms
+   
+2. Cache feed data locally:
+   ○ Store feeds for 24 hours
+   ○ Use last known good data if update fails
+   
+3. Schedule feed updates:
+   ○ Update during off-peak hours
+   ○ Implement incremental updates
+
+⚠️ PROBLEM: "Reverse proxy configuration issues"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Nginx/Apache not forwarding requests correctly
+ROOT CAUSE: Incorrect proxy settings or SSL termination
+
+SOLUTIONS:
+1. Check reverse proxy configuration:
+   ○ Verify proxy_pass settings
+   ○ Check for correct headers
+   
+2. Test direct access bypassing proxy:
+   ○ Access CyberGuard directly on port
+   ○ Compare with proxy access
+   
+3. Review SSL/TLS configuration:
+   ○ Check certificate chain
+   ○ Verify TLS protocols and ciphers
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. MONITORING AND ALERTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ PROBLEM: "No alerts for critical threats"
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Critical vulnerabilities not triggering alerts
+ROOT CAUSE: Alert thresholds too high or misconfiguration
+
+SOLUTIONS:
+1. Check alert configuration:
+   ○ Review alert_rules.yaml
+   ○ Verify notification channels
+   
+2. Test alert system:
+   $ python scripts/test_alerts.py --level critical
+   
+3. Monitor alert logs:
+   $ tail -f logs/alerts.log
+
+⚠️ PROBLEM: "Alert fatigue" - too many false positives
+─────────────────────────────────────────────────────────────
+DESCRIPTION: Excessive alerts causing important ones to be ignored
+ROOT CAUSE: Alert thresholds too low or poor tuning
+
+SOLUTIONS:
+1. Adjust alert thresholds:
+   ○ Increase minimum confidence for alerts
+   ○ Require multiple corroborating agents
+   
+2. Implement alert deduplication:
+   ○ Group similar alerts
+   ○ Suppress repeated alerts for same issue
+   
+3. Use alert prioritization:
+   ○ Critical > High > Medium > Low
+   ○ Business impact scoring
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK REFERENCE COMMANDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Check system health
+$ python scripts/health_check.py
+
+# View recent errors
+$ grep -i "error\|exception" logs/cyberguard.log | tail -20
+
+# Test agent coordination
+$ python scripts/test_agents.py --url https://example.com
+
+# Check database connectivity
+$ python -c "from src.utils.database import test_connection; test_connection()"
+
+# Monitor resource usage
+$ python scripts/resource_monitor.py --interval 10
+
+# Clear cache and temporary files
+$ python scripts/cleanup.py --all
+
+# Generate diagnostic report
+$ python scripts/diagnostic_report.py --output report.html
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTACT AND SUPPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For additional support:
+1. Check documentation: docs/ directory
+2. Review GitHub issues: https://github.com/your-org/cyberguard/issues
+3. Contact security team: security@your-org.com
+
+Emergency contact for critical security issues:
+Phone: +1-XXX-XXX-XXXX (24/7)
+Email: cert@your-org.com
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DOCUMENT VERSION: 1.0.0
+LAST UPDATED: 2024-01-15
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

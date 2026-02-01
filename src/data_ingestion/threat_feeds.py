@@ -61,12 +61,22 @@ import logging
 from pathlib import Path
 import json
 import csv
+import re  # Added missing import
+import ipaddress  # Added missing import
+import threading  # Added missing import
 
-# Local imports
-from .secure_loader import SecureDataLoader, DataValidationError
-from .hash_validator import HashValidator, HashAlgorithm
-from .quarantine_pipeline import QuarantineManager
-from ..utils.logging_utils import audit_log
+# Local imports - Fixed import paths
+try:
+    from .secure_loader import SecureDataLoader, DataValidationError
+    from .hash_validator import HashValidator, HashAlgorithm
+    from .quarantine_pipeline import QuarantineManager
+    from ..utils.logging_utils import audit_log
+except ImportError:
+    # Fallback for standalone testing
+    from secure_loader import SecureDataLoader, DataValidationError
+    from hash_validator import HashValidator, HashAlgorithm
+    from quarantine_pipeline import QuarantineManager
+    from utils.logging_utils import audit_log
 
 # Custom exceptions
 class ThreatFeedError(Exception):
@@ -174,7 +184,7 @@ class ThreatIndicator:
         result['severity'] = self.severity.value
         result['threat_type'] = self.threat_type
         
-        # Convert dates
+        # Convert dates to ISO format strings
         if self.first_seen:
             result['first_seen'] = self.first_seen.isoformat()
         if self.last_seen:
@@ -182,7 +192,7 @@ class ThreatIndicator:
         if self.expires_at:
             result['expires_at'] = self.expires_at.isoformat()
         
-        # Convert set to list
+        # Convert set to list for JSON serialization
         result['tags'] = list(self.tags)
         
         return result
@@ -190,23 +200,26 @@ class ThreatIndicator:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ThreatIndicator':
         """Create ThreatIndicator from dictionary"""
+        # Create a copy to avoid modifying original
+        data_copy = data.copy()
+        
         # Convert string enums back to Enum objects
-        data['indicator_type'] = IndicatorType(data['indicator_type'])
-        data['severity'] = ThreatSeverity(data['severity'])
+        data_copy['indicator_type'] = IndicatorType(data_copy['indicator_type'])
+        data_copy['severity'] = ThreatSeverity(data_copy['severity'])
         
-        # Convert dates
-        if data.get('first_seen'):
-            data['first_seen'] = datetime.fromisoformat(data['first_seen'])
-        if data.get('last_seen'):
-            data['last_seen'] = datetime.fromisoformat(data['last_seen'])
-        if data.get('expires_at'):
-            data['expires_at'] = datetime.fromisoformat(data['expires_at'])
+        # Convert ISO format strings back to datetime objects
+        if data_copy.get('first_seen'):
+            data_copy['first_seen'] = datetime.fromisoformat(data_copy['first_seen'].replace('Z', '+00:00'))
+        if data_copy.get('last_seen'):
+            data_copy['last_seen'] = datetime.fromisoformat(data_copy['last_seen'].replace('Z', '+00:00'))
+        if data_copy.get('expires_at'):
+            data_copy['expires_at'] = datetime.fromisoformat(data_copy['expires_at'].replace('Z', '+00:00'))
         
-        # Convert list to set
-        if 'tags' in data:
-            data['tags'] = set(data['tags'])
+        # Convert list back to set
+        if 'tags' in data_copy:
+            data_copy['tags'] = set(data_copy['tags'])
         
-        return cls(**data)
+        return cls(**data_copy)
     
     @property
     def is_active(self) -> bool:
@@ -320,7 +333,7 @@ class ThreatFeed:
         result['feed_type'] = self.feed_type.value
         result['format'] = self.format.value
         
-        # Convert dates
+        # Convert dates to ISO format strings
         if self.last_update:
             result['last_update'] = self.last_update.isoformat()
         if self.last_successful_update:
@@ -359,7 +372,7 @@ class ThreatFeed:
             self.indicators_count = indicators_count
             self.update_count += 1
             
-            # Update average update time (moving average)
+            # Update average update time (exponential moving average)
             if self.avg_update_time == 0:
                 self.avg_update_time = duration
             else:
@@ -412,18 +425,20 @@ class FeedParser:
             FeedUpdateError: If parsing fails
         """
         try:
+            # Get appropriate parser function for feed format
             parser_func = self.parsers.get(feed.format)
             if not parser_func:
                 raise FeedConfigurationError(
                     f"No parser available for format: {feed.format}"
                 )
             
+            # Parse data using the selected parser
             indicators = parser_func(data, feed)
             
             # Apply feed-specific transformations
             indicators = self._apply_feed_transformations(indicators, feed)
             
-            # Validate parsed indicators
+            # Validate parsed indicators, filter out invalid ones
             indicators = [i for i in indicators if self._validate_indicator(i)]
             
             self.logger.info(
@@ -440,12 +455,15 @@ class FeedParser:
         indicators = []
         
         try:
+            # Decode bytes to string
             csv_text = data.decode('utf-8')
+            # Create CSV reader
             reader = csv.DictReader(csv_text.splitlines())
             
             # Get column mappings from parser config
             column_map = feed.parser_config.get('column_map', {})
             
+            # Process each row
             for row in reader:
                 try:
                     indicator = self._parse_csv_row(row, column_map, feed)
@@ -500,7 +518,7 @@ class FeedParser:
         except ValueError:
             confidence = 0.5
         
-        # Create indicator
+        # Create indicator object
         indicator = ThreatIndicator(
             indicator=indicator_value.strip(),
             indicator_type=indicator_type,
@@ -526,7 +544,7 @@ class FeedParser:
             for ref in references_str.split(','):
                 indicator.references.append(ref.strip())
         
-        # Calculate score
+        # Calculate threat score
         indicator.score = indicator.calculate_score()
         
         return indicator
@@ -534,6 +552,7 @@ class FeedParser:
     def _parse_json(self, data: bytes, feed: ThreatFeed) -> List[ThreatIndicator]:
         """Parse JSON format feed"""
         try:
+            # Decode and parse JSON
             json_data = json.loads(data.decode('utf-8'))
             indicators = []
             
@@ -601,7 +620,7 @@ class FeedParser:
                 except ValueError:
                     confidence = 0.5
             
-            # Create indicator
+            # Create indicator object
             indicator = ThreatIndicator(
                 indicator=str(indicator_value),
                 indicator_type=indicator_type,
@@ -631,7 +650,7 @@ class FeedParser:
             
             indicator.references.extend(references)
             
-            # Calculate score
+            # Calculate threat score
             indicator.score = indicator.calculate_score()
             
             return indicator
@@ -645,16 +664,20 @@ class FeedParser:
         indicators = []
         
         try:
+            # Decode bytes to text
             text = data.decode('utf-8')
             
+            # Process each line
             for line in text.splitlines():
                 line = line.strip()
+                # Skip empty lines and comments
                 if not line or line.startswith('#'):
                     continue
                 
-                # Simple TXT format: indicator only
-                indicator_value = line.split()[0]  # Take first word
+                # Simple TXT format: indicator only (take first word)
+                indicator_value = line.split()[0]
                 
+                # Create basic indicator
                 indicator = ThreatIndicator(
                     indicator=indicator_value,
                     indicator_type=self._detect_indicator_type(indicator_value, feed.feed_type),
@@ -665,6 +688,7 @@ class FeedParser:
                     source_reliability=feed.priority / 10.0,
                 )
                 
+                # Calculate threat score
                 indicator.score = indicator.calculate_score()
                 indicators.append(indicator)
             
@@ -679,6 +703,7 @@ class FeedParser:
         # This is a simplified implementation
         
         try:
+            # Parse JSON (STIX is JSON-based)
             stix_data = json.loads(data.decode('utf-8'))
             indicators = []
             
@@ -688,6 +713,7 @@ class FeedParser:
             else:
                 objects = [stix_data]
             
+            # Parse each STIX object
             for obj in objects:
                 indicator = self._parse_stix_object(obj, feed)
                 if indicator:
@@ -711,33 +737,31 @@ class FeedParser:
             
             pattern = obj.get('pattern', '')
             
-            # Extract indicator from pattern (simplified)
+            # Extract indicator from STIX pattern (simplified)
             indicator_value = None
+            indicator_type = None
             
+            # Check for different STIX pattern types
             if 'file:hashes' in pattern:
                 # File hash indicator
-                import re
                 match = re.search(r"file:hashes\..*='([^']+)'", pattern)
                 if match:
                     indicator_value = match.group(1)
                     indicator_type = IndicatorType.FILE_HASH
             elif 'ipv4-addr:value' in pattern:
                 # IP address indicator
-                import re
                 match = re.search(r"ipv4-addr:value='([^']+)'", pattern)
                 if match:
                     indicator_value = match.group(1)
                     indicator_type = IndicatorType.IP_ADDRESS
             elif 'domain-name:value' in pattern:
                 # Domain indicator
-                import re
                 match = re.search(r"domain-name:value='([^']+)'", pattern)
                 if match:
                     indicator_value = match.group(1)
                     indicator_type = IndicatorType.DOMAIN
             elif 'url:value' in pattern:
                 # URL indicator
-                import re
                 match = re.search(r"url:value='([^']+)'", pattern)
                 if match:
                     indicator_value = match.group(1)
@@ -750,7 +774,7 @@ class FeedParser:
             created = self._parse_timestamp(obj.get('created'))
             modified = self._parse_timestamp(obj.get('modified'))
             
-            # Parse labels (as tags)
+            # Parse labels (use as tags)
             tags = set()
             for label in obj.get('labels', []):
                 tags.add(label.lower())
@@ -771,6 +795,7 @@ class FeedParser:
                 details={'stix_id': obj.get('id')}
             )
             
+            # Calculate threat score
             indicator.score = indicator.calculate_score()
             
             return indicator
@@ -782,6 +807,7 @@ class FeedParser:
     def _parse_misp(self, data: bytes, feed: ThreatFeed) -> List[ThreatIndicator]:
         """Parse MISP format (simplified implementation)"""
         try:
+            # Parse JSON (MISP uses JSON format)
             misp_data = json.loads(data.decode('utf-8'))
             indicators = []
             
@@ -790,6 +816,7 @@ class FeedParser:
                 event = misp_data['Event']
                 attributes = event.get('Attribute', [])
                 
+                # Parse each attribute
                 for attr in attributes:
                     indicator = self._parse_misp_attribute(attr, feed, event)
                     if indicator:
@@ -829,11 +856,11 @@ class FeedParser:
             misp_type = attr.get('type', '')
             indicator_type = type_mapping.get(misp_type)
             
+            # If type not in mapping, try to detect from value
             if not indicator_type:
-                # Try to detect from value
                 indicator_type = self._detect_indicator_type(indicator_value, feed.feed_type)
             
-            # Parse timestamps
+            # Parse timestamp
             timestamp = self._parse_timestamp(attr.get('timestamp'))
             
             # Parse tags
@@ -843,7 +870,7 @@ class FeedParser:
                 if tag_name:
                     tags.add(tag_name.lower())
             
-            # Get event info
+            # Get event information
             event_info = event.get('info', 'MISP Event')
             event_id = event.get('id', '')
             
@@ -867,6 +894,7 @@ class FeedParser:
                 }
             )
             
+            # Calculate threat score
             indicator.score = indicator.calculate_score()
             
             return indicator
@@ -887,7 +915,7 @@ class FeedParser:
             # Update indicator based on feed configuration
             indicator.source = feed.name
             
-            # Apply any feed-specific tags
+            # Apply feed-specific tags
             feed_tags = feed.parser_config.get('tags', [])
             for tag in feed_tags:
                 indicator.add_tag(tag)
@@ -920,8 +948,7 @@ class FeedParser:
                 return False
         
         elif indicator.indicator_type == IndicatorType.IP_ADDRESS:
-            # Basic IP validation
-            import ipaddress
+            # Basic IP validation using ipaddress module
             try:
                 ipaddress.ip_address(indicator.indicator)
             except ValueError:
@@ -968,7 +995,7 @@ class FeedParser:
                 return IndicatorType.FILE_HASH
         
         elif feed_type == FeedType.IP_REPUTATION:
-            import ipaddress
+            # Try to parse as IP address
             try:
                 ipaddress.ip_address(value)
                 return IndicatorType.IP_ADDRESS
@@ -976,20 +1003,26 @@ class FeedParser:
                 pass
         
         elif feed_type == FeedType.DOMAIN_BLACKLIST:
+            # Basic domain check
             if '.' in value and ' ' not in value:
                 return IndicatorType.DOMAIN
         
         elif feed_type == FeedType.PHISHING_URL:
+            # URL check
             if value.startswith(('http://', 'https://')):
                 return IndicatorType.URL
         
-        # Fallback: Try to detect from value pattern
-        import re
+        # Fallback: Try to detect from value pattern using regex
         
-        # IP address pattern
+        # IP address pattern (IPv4)
         ip_pattern = r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$'
         if re.match(ip_pattern, value):
-            return IndicatorType.IP_ADDRESS
+            # Additional validation for valid octets
+            try:
+                ipaddress.IPv4Address(value)
+                return IndicatorType.IP_ADDRESS
+            except ValueError:
+                pass
         
         # Hash patterns
         hash_patterns = {
@@ -1012,6 +1045,11 @@ class FeedParser:
         if re.match(domain_pattern, value):
             return IndicatorType.DOMAIN
         
+        # Email pattern (basic)
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if re.match(email_pattern, value):
+            return IndicatorType.EMAIL
+        
         # Default to CUSTOM if can't detect
         return IndicatorType.CUSTOM
     
@@ -1022,22 +1060,23 @@ class FeedParser:
             return None
         
         try:
-            # Try ISO format
+            # Try ISO format string
             if isinstance(timestamp, str):
-                # Remove timezone info for simplicity
+                # Remove timezone info for simplicity, handle Z suffix
                 timestamp = timestamp.replace('Z', '+00:00')
                 return datetime.fromisoformat(timestamp)
             
-            # Try Unix timestamp
+            # Try Unix timestamp (integer or float)
             elif isinstance(timestamp, (int, float)):
                 return datetime.fromtimestamp(timestamp)
             
-            # Already datetime
+            # Already a datetime object
             elif isinstance(timestamp, datetime):
                 return timestamp
             
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            # Log and return None if parsing fails
+            logging.getLogger(__name__).debug(f"Failed to parse timestamp {timestamp}: {e}")
         
         return None
     
@@ -1046,7 +1085,8 @@ class FeedParser:
         """Parse severity string to ThreatSeverity enum"""
         severity_str = severity_str.lower()
         
-        if severity_str in ['critical', 'crit', '4']:
+        # Map various severity strings to enum values
+        if severity_str in ['critical', 'crit', '4', '5']:
             return ThreatSeverity.CRITICAL
         elif severity_str in ['high', '3']:
             return ThreatSeverity.HIGH
@@ -1094,7 +1134,10 @@ class ThreatFeedManager:
             enable_persistence: Whether to save indicators to disk
             max_indicators: Maximum number of indicators to keep in memory
         """
+        # Setup logging
         self.logger = logging.getLogger(__name__)
+        
+        # Initialize components
         self.loader = SecureDataLoader(
             user_agent="CyberGuard-ThreatFeeds/1.0",
             timeout_seconds=30,
@@ -1103,36 +1146,40 @@ class ThreatFeedManager:
         self.parser = FeedParser()
         self.quarantine = QuarantineManager()
         
-        # Setup storage
+        # Setup storage directory
         if storage_dir:
             self.storage_dir = Path(storage_dir)
         else:
             self.storage_dir = Path("./cache/threat_feeds")
         
+        # Create storage directory if it doesn't exist
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
-        # Security: Set restrictive permissions
+        # Security: Set restrictive permissions on storage directory
         try:
             self.storage_dir.chmod(0o700)
         except Exception as e:
             self.logger.warning(f"Failed to set storage directory permissions: {e}")
         
+        # Configuration
         self.enable_persistence = enable_persistence
         self.max_indicators = max_indicators
         
-        # Feed registry
+        # Feed registry (name -> ThreatFeed)
         self.feeds: Dict[str, ThreatFeed] = {}
         
-        # Indicator storage
-        self.indicators: Dict[str, ThreatIndicator] = {}  # indicator -> object
+        # Indicator storage (indicator value -> ThreatIndicator object)
+        self.indicators: Dict[str, ThreatIndicator] = {}
+        
+        # Search indices for faster querying
         self.indices: Dict[str, Dict[str, Set[str]]] = {
-            'by_type': {},      # indicator_type -> set(indicator)
-            'by_source': {},    # source -> set(indicator)
-            'by_tag': {},       # tag -> set(indicator)
-            'by_severity': {},  # severity -> set(indicator)
+            'by_type': {},      # indicator_type -> set(indicator values)
+            'by_source': {},    # source name -> set(indicator values)
+            'by_tag': {},       # tag -> set(indicator values)
+            'by_severity': {},  # severity -> set(indicator values)
         }
         
-        # Statistics
+        # Statistics tracking
         self.stats = {
             'total_indicators': 0,
             'active_indicators': 0,
@@ -1148,6 +1195,7 @@ class ThreatFeedManager:
         # Register built-in feeds
         self._register_builtin_feeds()
         
+        # Log initialization
         audit_log(
             action="threat_feed_manager_init",
             resource="ThreatFeedManager",
@@ -1188,6 +1236,7 @@ class ThreatFeedManager:
             ),
         ]
         
+        # Add each built-in feed
         for feed in builtin_feeds:
             self.add_feed(feed)
     
@@ -1201,10 +1250,11 @@ class ThreatFeedManager:
         Raises:
             FeedConfigurationError: If feed configuration is invalid
         """
-        # Validate feed
+        # Validate feed configuration
         if not feed.name or not feed.url:
             raise FeedConfigurationError("Feed must have name and URL")
         
+        # Check if feed already exists
         if feed.name in self.feeds:
             self.logger.warning(f"Feed {feed.name} already exists, replacing")
         
@@ -1213,6 +1263,7 @@ class ThreatFeedManager:
         
         self.logger.info(f"Added feed: {feed.name} ({feed.feed_type.value})")
         
+        # Log the action
         audit_log(
             action="feed_added",
             resource=feed.name,
@@ -1236,6 +1287,7 @@ class ThreatFeedManager:
             del self.feeds[feed_name]
             self.logger.info(f"Removed feed: {feed_name}")
             
+            # Log the removal
             audit_log(
                 action="feed_removed",
                 resource=feed_name,
@@ -1257,6 +1309,7 @@ class ThreatFeedManager:
         Raises:
             FeedUpdateError: If update fails
         """
+        # Check if feed exists
         if feed_name not in self.feeds:
             raise FeedConfigurationError(f"Feed not found: {feed_name}")
         
@@ -1276,7 +1329,7 @@ class ThreatFeedManager:
         start_time = datetime.now()
         
         try:
-            # Download feed data
+            # Download feed data using secure loader
             data = self.loader.load_url(
                 feed.url,
                 expected_content_type=self._get_expected_content_type(feed.format),
@@ -1290,17 +1343,17 @@ class ThreatFeedManager:
                         f"Hash verification failed for feed {feed_name}"
                     )
             
-            # Parse indicators
+            # Parse indicators from feed data
             indicators = self.parser.parse(data, feed)
             
-            # Check minimum indicators
+            # Check minimum indicators threshold
             if len(indicators) < feed.min_update_size:
                 self.logger.warning(
                     f"Feed {feed_name} returned only {len(indicators)} indicators "
                     f"(minimum: {feed.min_update_size})"
                 )
             
-            # Add indicators
+            # Add indicators to storage
             added_count = self._add_indicators(indicators)
             
             # Update feed statistics
@@ -1311,6 +1364,7 @@ class ThreatFeedManager:
             if self.enable_persistence:
                 self._persist_indicators()
             
+            # Prepare success result
             result = {
                 'status': 'success',
                 'feed': feed_name,
@@ -1325,6 +1379,7 @@ class ThreatFeedManager:
                 f"({duration:.2f}s)"
             )
             
+            # Log successful update
             audit_log(
                 action="feed_update",
                 resource=feed_name,
@@ -1342,6 +1397,7 @@ class ThreatFeedManager:
             error_msg = f"Failed to update feed {feed_name}: {e}"
             self.logger.error(error_msg)
             
+            # Log failed update
             audit_log(
                 action="feed_update",
                 resource=feed_name,
@@ -1384,6 +1440,7 @@ class ThreatFeedManager:
         """
         self.logger.info(f"Updating all feeds (force: {force})")
         
+        # Initialize results structure
         results = {
             'timestamp': datetime.now().isoformat(),
             'total_feeds': len(self.feeds),
@@ -1394,11 +1451,13 @@ class ThreatFeedManager:
             'feeds': {},
         }
         
+        # Update each feed
         for feed_name in self.feeds:
             try:
                 feed_result = self.update_feed(feed_name, force)
                 results['feeds'][feed_name] = feed_result
                 
+                # Categorize result
                 if feed_result['status'] == 'success':
                     results['updated'] += 1
                     results['total_indicators_added'] += feed_result['indicators_added']
@@ -1408,6 +1467,7 @@ class ThreatFeedManager:
                     results['failed'] += 1
                     
             except Exception as e:
+                # Handle update failure
                 results['feeds'][feed_name] = {
                     'status': 'error',
                     'error': str(e),
@@ -1424,6 +1484,7 @@ class ThreatFeedManager:
             f"{results['total_indicators_added']} indicators added"
         )
         
+        # Log overall update result
         audit_log(
             action="all_feeds_update",
             resource="ThreatFeedManager",
@@ -1445,6 +1506,7 @@ class ThreatFeedManager:
         """
         self.logger.info(f"Async updating all feeds (force: {force})")
         
+        # Initialize results structure
         results = {
             'timestamp': datetime.now().isoformat(),
             'total_feeds': len(self.feeds),
@@ -1455,18 +1517,19 @@ class ThreatFeedManager:
             'feeds': {},
         }
         
-        # Create tasks for all feeds
+        # Create async tasks for all feeds
         tasks = []
         for feed_name in self.feeds:
             task = self.update_feed_async(feed_name, force)
             tasks.append((feed_name, task))
         
-        # Wait for all tasks
+        # Wait for all tasks to complete
         for feed_name, task in tasks:
             try:
                 feed_result = await task
                 results['feeds'][feed_name] = feed_result
                 
+                # Categorize result
                 if feed_result['status'] == 'success':
                     results['updated'] += 1
                     results['total_indicators_added'] += feed_result['indicators_added']
@@ -1476,6 +1539,7 @@ class ThreatFeedManager:
                     results['failed'] += 1
                     
             except Exception as e:
+                # Handle task failure
                 results['feeds'][feed_name] = {
                     'status': 'error',
                     'error': str(e),
@@ -1535,14 +1599,14 @@ class ThreatFeedManager:
             
             # Check if we're at capacity
             if len(self.indicators) >= self.max_indicators:
-                # Remove oldest indicators (by last_seen)
-                self._cleanup_old_indicators(1000)  # Remove 1000 oldest
+                # Remove oldest indicators to free up space
+                self._cleanup_old_indicators(1000)
             
             # Add to storage
             self.indicators[indicator.indicator] = indicator
             added_count += 1
             
-            # Update indices
+            # Update search indices
             self._update_indices(indicator)
         
         # Update statistics
@@ -1733,7 +1797,7 @@ class ThreatFeedManager:
             
             results.append(indicator_obj)
         
-        # Sort by score (highest first) and limit
+        # Sort by score (highest first) and apply limit
         results.sort(key=lambda x: x.score, reverse=True)
         results = results[:limit]
         
@@ -1756,7 +1820,7 @@ class ThreatFeedManager:
         if indicator in self.indicators:
             indicator_obj = self.indicators[indicator]
             
-            # Update last_seen
+            # Update last_seen timestamp
             indicator_obj.update_seen()
             
             # Check if expired
@@ -1781,7 +1845,7 @@ class ThreatFeedManager:
                 'avg_update_time': feed.avg_update_time,
             }
         
-        # Calculate indicator statistics
+        # Calculate indicator statistics by type
         type_counts = {}
         severity_counts = {}
         source_counts = {}
@@ -1811,6 +1875,7 @@ class ThreatFeedManager:
             reverse=True
         )[:10]
         
+        # Return comprehensive statistics
         return {
             'indicators': {
                 'total': self.stats['total_indicators'],
@@ -1877,7 +1942,7 @@ class ThreatFeedManager:
             with open(persist_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # Parse indicators
+            # Parse indicators from stored data
             indicators = []
             for indicator_dict in data.get('indicators', []):
                 try:
@@ -1887,7 +1952,7 @@ class ThreatFeedManager:
                     self.logger.warning(f"Failed to parse persisted indicator: {e}")
                     continue
             
-            # Add indicators
+            # Add indicators to storage
             added = self._add_indicators(indicators)
             
             self.logger.info(f"Loaded {added} indicators from persistence")
@@ -1963,6 +2028,7 @@ class ThreatFeedManager:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 
+                # Write each indicator as a row
                 for indicator in self.indicators.values():
                     row = {
                         'indicator': indicator.indicator,
@@ -1989,7 +2055,7 @@ class ThreatFeedManager:
         else:
             raise ValueError(f"Unsupported export format: {format}")
         
-        # Set restrictive permissions
+        # Set restrictive permissions on output file
         output_path.chmod(0o600)
         
         self.logger.info(f"Exported {len(self.indicators)} indicators to {output_path}")
@@ -2011,10 +2077,11 @@ def create_feed_manager(
     Returns:
         Initialized ThreatFeedManager
     """
+    # Create manager instance
     manager = ThreatFeedManager(storage_dir=storage_dir)
     
     if auto_update:
-        # Update feeds in background
+        # Update feeds in background thread
         import threading
         
         def update_background():
@@ -2042,7 +2109,9 @@ def check_threat_indicator(
     Returns:
         ThreatIndicator if found, None otherwise
     """
+    # Create manager if not provided
     if manager is None:
         manager = create_feed_manager(auto_update=False)
     
+    # Check indicator
     return manager.check_indicator(indicator)

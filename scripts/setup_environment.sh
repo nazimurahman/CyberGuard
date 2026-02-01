@@ -1,32 +1,18 @@
-#!/bin/bash
-# scripts/setup_environment.sh
-
-# ============================================================================
 # CYBERGUARD WEB SECURITY AI - ENVIRONMENT SETUP SCRIPT
-# ============================================================================
 # This script sets up the complete development/production environment
 # for the CyberGuard cybersecurity AI system.
-#
-# Features:
-# - Python virtual environment creation
-# - Dependency installation with version validation
-# - Directory structure initialization
-# - Threat intelligence feed download
-# - Database initialization
-# - Security configuration setup
-# ============================================================================
 
-set -e  # Exit immediately if any command fails
-set -u  # Treat unset variables as errors
+# Exit immediately if any command fails and treat unset variables as errors
+set -euo pipefail
 
-# Color codes for better output readability
+# Color codes for formatted output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m'  # No Color
+NC='\033[0m'  # No Color - resets formatting
 
-# Logging functions
+# Logging functions with color-coded output
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -43,49 +29,58 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Print banner
+# Display banner at script start
 print_banner() {
     echo -e "${BLUE}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║           CYBERGUARD ENVIRONMENT SETUP                       ║"
-    echo "║           Web Security AI System                             ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "========================================================"
+    echo "        CYBERGUARD ENVIRONMENT SETUP                   "
+    echo "        Web Security AI System                         "
+    echo "========================================================"
     echo -e "${NC}"
 }
 
-# Check if running as root (not recommended)
+# Check if script is running as root (not recommended for security)
 check_root() {
     if [ "$EUID" -eq 0 ]; then 
         log_warning "Running as root. It's recommended to run as a regular user."
-        read -p "Continue anyway? (y/N): " -n 1 -r
-        echo
+        read -p "Continue anyway? (y/N): " -r
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
         fi
     fi
 }
 
-# Check system requirements
+# Verify system meets minimum requirements
 check_system_requirements() {
     log_info "Checking system requirements..."
     
-    # Check if running on supported OS
+    # Check if OS is Linux or macOS (supported platforms)
     if [[ "$OSTYPE" != "linux-gnu"* ]] && [[ "$OSTYPE" != "darwin"* ]]; then
         log_error "Unsupported operating system: $OSTYPE"
         log_error "CyberGuard requires Linux or macOS"
         exit 1
     fi
     
-    # Check available memory (minimum 4GB recommended)
-    total_memory=$(free -g | awk '/^Mem:/{print $2}')
-    if [ "$total_memory" -lt 4 ]; then
+    # Check available memory (4GB minimum recommended)
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        total_memory=$(free -g | awk '/^Mem:/{print $2}')
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        total_memory=$(sysctl -n hw.memsize | awk '{print int($1/1073741824)}')
+    fi
+    
+    if [[ -n "$total_memory" ]] && [ "$total_memory" -lt 4 ]; then
         log_warning "Low memory detected: ${total_memory}GB"
         log_warning "CyberGuard recommends at least 4GB of RAM for optimal performance"
     fi
     
-    # Check disk space (minimum 10GB free)
-    free_space=$(df -BG . | awk 'NR==2 {print $4}' | sed 's/G//')
-    if [ "$free_space" -lt 10 ]; then
+    # Check available disk space (10GB minimum)
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        free_space=$(df -BG . | awk 'NR==2 {print $4}' | sed 's/G//' | tr -d '[:space:]')
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        free_space=$(df -g . | awk 'NR==2 {print $4}' | tr -d '[:space:]')
+    fi
+    
+    if [[ -n "$free_space" ]] && [ "$free_space" -lt 10 ]; then
         log_warning "Low disk space: ${free_space}GB free"
         log_warning "At least 10GB free space is recommended"
     fi
@@ -93,28 +88,28 @@ check_system_requirements() {
     log_success "System requirements check passed"
 }
 
-# Check Python version and installation
+# Verify Python installation and version
 check_python() {
     log_info "Checking Python installation..."
     
-    # Check if Python 3 is installed
+    # Check if python3 is installed and accessible
     if ! command -v python3 &> /dev/null; then
         log_error "Python 3 is not installed"
         log_error "Please install Python 3.10 or higher"
         exit 1
     fi
     
-    # Get Python version
+    # Extract Python version number
     python_version=$(python3 --version 2>&1 | awk '{print $2}')
     required_version="3.10"
     
-    # Compare versions
+    # Compare versions using sort -V for proper version comparison
     if [ "$(printf '%s\n' "$required_version" "$python_version" | sort -V | head -n1)" != "$required_version" ]; then
         log_error "Python $required_version or higher is required. Found: $python_version"
         exit 1
     fi
     
-    # Check for required Python modules
+    # Verify venv module is available (required for virtual environments)
     if ! python3 -c "import venv" 2>/dev/null; then
         log_error "Python venv module not available"
         log_error "Install python3-venv or equivalent package"
@@ -124,15 +119,14 @@ check_python() {
     log_success "Python $python_version detected (✓)"
 }
 
-# Create virtual environment
+# Create Python virtual environment for dependency isolation
 create_virtualenv() {
     log_info "Creating Python virtual environment..."
     
-    # Check if venv already exists
+    # Check if virtual environment already exists
     if [ -d "venv" ]; then
         log_warning "Virtual environment already exists"
-        read -p "Recreate virtual environment? (y/N): " -n 1 -r
-        echo
+        read -p "Recreate virtual environment? (y/N): " -r
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             log_info "Removing existing virtual environment..."
             rm -rf venv
@@ -142,10 +136,8 @@ create_virtualenv() {
         fi
     fi
     
-    # Create new virtual environment
-    python3 -m venv venv
-    
-    if [ $? -eq 0 ]; then
+    # Create new virtual environment using Python's venv module
+    if python3 -m venv venv; then
         log_success "Virtual environment created successfully"
     else
         log_error "Failed to create virtual environment"
@@ -153,53 +145,55 @@ create_virtualenv() {
     fi
 }
 
-# Activate virtual environment
+# Activate the virtual environment for this shell session
 activate_virtualenv() {
     log_info "Activating virtual environment..."
     
-    # Different activation for different shells
-    if [ -f "venv/bin/activate" ]; then
+    # Source the activation script (path varies by OS)
+    if [[ -f "venv/bin/activate" ]]; then
         source venv/bin/activate
-        
-        # Verify activation
-        if [ -z "${VIRTUAL_ENV:-}" ]; then
-            log_error "Virtual environment activation failed"
-            exit 1
-        fi
-        
-        log_success "Virtual environment activated (✓)"
-        log_info "Python path: $(which python3)"
-        log_info "Pip path: $(which pip3)"
+    elif [[ -f "venv/Scripts/activate" ]]; then
+        source venv/Scripts/activate
     else
         log_error "Virtual environment activation script not found"
         exit 1
     fi
+    
+    # Verify activation by checking VIRTUAL_ENV environment variable
+    if [ -z "${VIRTUAL_ENV:-}" ]; then
+        log_error "Virtual environment activation failed"
+        exit 1
+    fi
+    
+    log_success "Virtual environment activated (✓)"
+    log_info "Python path: $(which python3)"
+    log_info "Pip path: $(which pip3)"
 }
 
-# Upgrade pip and setuptools
+# Upgrade pip and setuptools to latest versions
 upgrade_pip() {
     log_info "Upgrading pip and setuptools..."
     
-    # Upgrade pip
+    # Upgrade pip package manager
     pip3 install --upgrade pip --no-cache-dir
     
-    # Upgrade setuptools and wheel
+    # Upgrade setuptools for package installation and wheel for binary packages
     pip3 install --upgrade setuptools wheel --no-cache-dir
     
     log_success "Pip and setuptools upgraded (✓)"
 }
 
-# Install dependencies
+# Install Python dependencies from requirements file
 install_dependencies() {
     log_info "Installing dependencies from requirements.txt..."
     
-    # Check if requirements file exists
+    # Verify requirements file exists
     if [ ! -f "requirements.txt" ]; then
         log_error "requirements.txt not found"
         exit 1
     fi
     
-    # Install dependencies
+    # Install all packages listed in requirements.txt
     pip3 install -r requirements.txt --no-cache-dir
     
     if [ $? -eq 0 ]; then
@@ -209,7 +203,7 @@ install_dependencies() {
         exit 1
     fi
     
-    # Verify critical packages
+    # Verify critical security packages are installed correctly
     log_info "Verifying critical packages..."
     
     critical_packages=("torch" "fastapi" "requests" "beautifulsoup4" "pydantic")
@@ -224,19 +218,19 @@ install_dependencies() {
     done
 }
 
-# Create directory structure
+# Create organized directory structure for the application
 create_directory_structure() {
     log_info "Creating directory structure..."
     
-    # Main directories
+    # Define all required directories
     directories=(
-        # Log directories
+        # Logging directories for different types of logs
         "logs/security"
         "logs/agent"
         "logs/audit"
         "logs/system"
         
-        # Data directories
+        # Data storage directories
         "data/threat_feeds"
         "data/cve_database"
         "data/attack_patterns"
@@ -244,7 +238,7 @@ create_directory_structure() {
         "data/cache"
         "data/embeddings"
         
-        # Model directories
+        # Model storage directories
         "models/trained"
         "models/checkpoints"
         "models/pretrained"
@@ -253,7 +247,7 @@ create_directory_structure() {
         "config/backups"
         "config/templates"
         
-        # Test directories
+        # Testing directories
         "tests/data"
         "tests/results"
         
@@ -267,59 +261,68 @@ create_directory_structure() {
         "tmp/exports"
     )
     
-    # Create each directory
+    # Create each directory with proper error handling
     for dir in "${directories[@]}"; do
         if [ ! -d "$dir" ]; then
-            mkdir -p "$dir"
-            log_success "  Created: $dir"
+            if mkdir -p "$dir"; then
+                log_success "  Created: $dir"
+            else
+                log_error "  Failed to create: $dir"
+                exit 1
+            fi
         else
             log_info "  Exists: $dir"
         fi
     done
     
-    # Set appropriate permissions (where needed)
-    chmod 750 "logs/"
-    chmod 750 "data/quarantined/"
-    chmod 700 "tmp/"
+    # Set secure permissions for sensitive directories
+    if [[ -d "logs/" ]]; then
+        chmod 750 "logs/" 2>/dev/null || true
+    fi
+    if [[ -d "data/quarantined/" ]]; then
+        chmod 750 "data/quarantined/" 2>/dev/null || true
+    fi
+    if [[ -d "tmp/" ]]; then
+        chmod 700 "tmp/" 2>/dev/null || true
+    fi
     
     log_success "Directory structure created (✓)"
 }
 
-# Download threat intelligence feeds
+# Download threat intelligence feeds from various sources
 download_threat_feeds() {
     log_info "Downloading threat intelligence feeds..."
     
-    # Create threat feed directory if it doesn't exist
+    # Create directory if it doesn't exist
     mkdir -p data/threat_feeds
     
-    # Threat feed URLs (publicly available security feeds)
-    declare -A threat_feeds=(
-        ["mitre_cve"]="https://cve.mitre.org/data/downloads/allitems.csv"
-        ["exploit_db"]="https://raw.githubusercontent.com/vulnersCom/vulners-whitelist/master/exploitdb.csv"
-        ["feodo_tracker"]="https://feodotracker.abuse.ch/downloads/ipblocklist.csv"
-        ["ssl_blacklist"]="https://sslbl.abuse.ch/blacklist/sslblacklist.csv"
-        ["malware_domain_list"]="https://www.malwaredomainlist.com/hostslist/hosts.txt"
-        ["openphish"]="https://openphish.com/feed.txt"
-        ["cybercrime_tracker"]="https://cybercrime-tracker.net/all.php"
-        ["botvrij"]="https://www.botvrij.eu/data/ioclist.high"
-    )
+    # Define threat feed URLs (public security intelligence sources)
+    declare -A threat_feeds
+    threat_feeds["mitre_cve"]="https://cve.mitre.org/data/downloads/allitems.csv"
+    threat_feeds["exploit_db"]="https://raw.githubusercontent.com/vulnersCom/vulners-whitelist/master/exploitdb.csv"
+    threat_feeds["feodo_tracker"]="https://feodotracker.abuse.ch/downloads/ipblocklist.csv"
+    threat_feeds["ssl_blacklist"]="https://sslbl.abuse.ch/blacklist/sslblacklist.csv"
+    threat_feeds["malware_domain_list"]="https://www.malwaredomainlist.com/hostslist/hosts.txt"
+    threat_feeds["openphish"]="https://openphish.com/feed.txt"
+    threat_feeds["cybercrime_tracker"]="https://cybercrime-tracker.net/all.php"
+    threat_feeds["botvrij"]="https://www.botvrij.eu/data/ioclist.high"
     
-    # Download each feed with error handling
+    # Download each feed with error handling and retry logic
     for feed_name in "${!threat_feeds[@]}"; do
         url="${threat_feeds[$feed_name]}"
         output_file="data/threat_feeds/${feed_name}_$(date +%Y%m%d).csv"
         
         log_info "  Downloading: $feed_name"
         
-        # Use curl with timeout and retry logic
-        if curl -s --max-time 30 --retry 3 --retry-delay 5 -o "$output_file" "$url"; then
+        # Use curl with timeout, retries, and progress display
+        if curl -s --max-time 30 --retry 3 --retry-delay 5 -f -o "$output_file" "$url"; then
             # Check if file was actually downloaded (not empty or error page)
             if [ -s "$output_file" ]; then
                 file_size=$(wc -c < "$output_file" | awk '{print $1}')
                 log_success "    Downloaded: $feed_name ($((file_size/1024)) KB)"
                 
-                # Create symbolic link to latest version
-                ln -sf "$output_file" "data/threat_feeds/${feed_name}_latest.csv"
+                # Create symbolic link to latest version for easy access
+                ln -sf "$output_file" "data/threat_feeds/${feed_name}_latest.csv" 2>/dev/null || true
             else
                 log_warning "    Empty file downloaded for: $feed_name"
                 rm -f "$output_file"
@@ -328,22 +331,21 @@ download_threat_feeds() {
             log_warning "    Failed to download: $feed_name"
         fi
         
-        # Small delay to avoid overwhelming servers
+        # Small delay to avoid overwhelming remote servers
         sleep 1
     done
     
     log_success "Threat intelligence feeds downloaded (✓)"
 }
 
-# Initialize database
+# Initialize application database
 initialize_database() {
     log_info "Initializing database..."
     
-    # Check if initialization script exists
+    # Check if custom initialization script exists
     if [ -f "scripts/init_database.py" ]; then
         log_info "  Running database initialization script..."
         
-        # Run with error handling
         if python3 scripts/init_database.py; then
             log_success "  Database initialized successfully (✓)"
         else
@@ -354,11 +356,12 @@ initialize_database() {
         log_warning "  Database initialization script not found"
         log_info "  Creating basic database structure..."
         
-        # Create basic SQLite database structure
+        # Create basic SQLite database with default schema
         sqlite_file="data/cyberguard.db"
         
         if [ ! -f "$sqlite_file" ]; then
-            cat > /tmp/create_db.sql << EOF
+            # Create SQL schema for basic tables
+            cat > /tmp/create_db.sql << 'EOF'
 -- CyberGuard Database Schema
 CREATE TABLE IF NOT EXISTS scan_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -393,12 +396,15 @@ CREATE INDEX idx_threat_type ON threats_detected(threat_type);
 CREATE INDEX idx_agent_activity ON agent_activity(agent_id, timestamp);
 EOF
             
+            # Check if sqlite3 is installed and execute schema
             if command -v sqlite3 &> /dev/null; then
                 sqlite3 "$sqlite_file" < /tmp/create_db.sql
                 log_success "  Basic database created: $sqlite_file"
             else
                 log_warning "  sqlite3 not found, skipping database creation"
             fi
+        else
+            log_info "  Database already exists: $sqlite_file"
         fi
     fi
 }
@@ -407,12 +413,12 @@ EOF
 generate_default_configs() {
     log_info "Generating default configuration files..."
     
-    # Check if config directory exists
+    # Create config directory if it doesn't exist
     if [ ! -d "config" ]; then
         mkdir -p config
     fi
     
-    # Generate enterprise configuration if it doesn't exist
+    # Generate enterprise configuration file
     if [ ! -f "config/enterprise_config.yaml" ]; then
         cat > config/enterprise_config.yaml << 'EOF'
 # CyberGuard Enterprise Configuration
@@ -458,9 +464,11 @@ logging:
   backup_count: 5
 EOF
         log_success "  Created: config/enterprise_config.yaml"
+    else
+        log_info "  Configuration already exists: config/enterprise_config.yaml"
     fi
     
-    # Generate environment file template
+    # Generate environment variables template
     if [ ! -f ".env.example" ]; then
         cat > .env.example << 'EOF'
 # CyberGuard Environment Variables
@@ -499,24 +507,29 @@ EOF
         log_success "  Created: .env.example"
     fi
     
-    # Copy example to .env if it doesn't exist
+    # Create actual .env file from template if it doesn't exist
     if [ ! -f ".env" ]; then
-        cp .env.example .env
-        log_warning "  Created .env from template. Please update with your configuration."
+        if cp .env.example .env; then
+            log_warning "  Created .env from template. Please update with your configuration."
+        else
+            log_error "  Failed to create .env file"
+        fi
+    else
+        log_info "  .env file already exists"
     fi
 }
 
-# Run basic tests
+# Run basic system tests to verify installation
 run_basic_tests() {
     log_info "Running basic system tests..."
     
-    # Check if pytest is installed
+    # Install pytest if not available
     if ! command -v pytest &> /dev/null; then
         log_warning "pytest not found, installing..."
         pip3 install pytest pytest-asyncio pytest-cov
     fi
     
-    # Run a simple test to verify installation
+    # Create a test script to verify system functionality
     cat > /tmp/test_cyberguard.py << 'EOF'
 #!/usr/bin/env python3
 """Basic CyberGuard system test"""
@@ -587,7 +600,7 @@ if __name__ == "__main__":
         sys.exit(1)
 EOF
     
-    # Run the test
+    # Execute the test script
     if python3 /tmp/test_cyberguard.py; then
         log_success "Basic tests passed (✓)"
     else
@@ -596,41 +609,41 @@ EOF
     fi
 }
 
-# Display completion message
+# Display completion message with next steps
 display_completion() {
     echo -e "${GREEN}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║           SETUP COMPLETE!                                    ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "========================================================"
+    echo "           SETUP COMPLETE!                              "
+    echo "========================================================"
     echo -e "${NC}"
     
     echo ""
-    echo "🚀 CyberGuard is ready to use!"
+    echo " CyberGuard is ready to use!"
     echo ""
-    echo "📋 Available commands:"
+    echo " Available commands:"
     echo "  source venv/bin/activate              # Activate virtual environment"
     echo "  python main.py --mode interactive     # Interactive console mode"
     echo "  python main.py --mode dashboard       # Start web dashboard"
     echo "  python main.py --mode api             # Start REST API"
     echo "  python scripts/run_security_scan.py   # Run security scan"
     echo ""
-    echo "🌐 Dashboard: http://localhost:8080"
-    echo "🔧 API Docs: http://localhost:8000/docs"
+    echo " Dashboard: http://localhost:8080"
+    echo " API Docs: http://localhost:8000/docs"
     echo ""
-    echo "📁 Important directories:"
+    echo " Important directories:"
     echo "  config/          - Configuration files"
     echo "  logs/            - Log files"
     echo "  data/            - Data and threat feeds"
     echo "  models/          - Trained models"
     echo ""
-    echo "⚠️  Next steps:"
+    echo "  Next steps:"
     echo "  1. Review config/enterprise_config.yaml"
     echo "  2. Update .env with your API keys (if needed)"
     echo "  3. Run: python scripts/update_threat_feeds.sh (to update feeds)"
     echo ""
 }
 
-# Main execution flow
+# Main execution flow - orchestrates all setup steps
 main() {
     print_banner
     check_root
@@ -648,7 +661,7 @@ main() {
     display_completion
 }
 
-# Run main function with error handling
+# Execute main function with error handling
 if main; then
     exit 0
 else

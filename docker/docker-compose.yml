@@ -1,105 +1,126 @@
 # docker/docker-compose.yml
+# Docker Compose configuration for CyberGuard security platform
+# Defines all services needed for a complete production deployment
+
 version: '3.8'
+# Using version 3.8 which provides the most features while maintaining compatibility
+# Version 3.8 supports: resource limits, health checks, secrets, and more
 
-# ==============================================================================
-# CYBERGUARD DOCKER COMPOSE - FULL PRODUCTION STACK
-# ==============================================================================
-
-# Services definition - each service is a container in the stack
+# Services section: defines all containers that make up the application stack
 services:
-  # Main CyberGuard application
+  # Main CyberGuard application service
   cyberguard:
+    # Build configuration: tells Docker how to build the application image
     build:
-      context: ..  # Build from project root
-      dockerfile: docker/Dockerfile
-      args:
-        - APP_ENV=${APP_ENV:-production}
-        - GIT_COMMIT=${GIT_COMMIT:-unknown}
-    container_name: cyberguard-app
-    hostname: cyberguard
-    restart: unless-stopped  # Auto-restart on failure
-    # Port mapping: host_port:container_port
+      context: ..  # Build context is one directory up from docker/ folder
+      dockerfile: docker/Dockerfile  # Path to Dockerfile relative to context
+      args:  # Build arguments passed to Dockerfile
+        - APP_ENV=${APP_ENV:-production}  # Application environment, defaults to production
+        - GIT_COMMIT=${GIT_COMMIT:-unknown}  # Git commit hash for version tracking
+    container_name: cyberguard-app  # Fixed name for easier reference
+    hostname: cyberguard  # Internal hostname within Docker network
+    restart: unless-stopped  # Auto-restart policy: restart unless manually stopped
+    
+    # Port mappings: expose container ports to host machine
     ports:
-      - "8080:8080"  # Dashboard
-      - "8000:8000"  # REST API
-    # Environment variables
+      - "8080:8080"  # Map host port 8080 to container port 8080 (dashboard)
+      - "8000:8000"  # Map host port 8000 to container port 8000 (REST API)
+    
+    # Environment variables passed to container
     environment:
-      - APP_ENV=${APP_ENV:-production}
+      - APP_ENV=${APP_ENV:-production}  # Application runtime environment
+      # Database connection string using service name 'postgres' (internal DNS)
       - DATABASE_URL=postgresql://cyberguard:${DB_PASSWORD:-cyberguard123}@postgres:5432/cyberguard_db
-      - REDIS_URL=redis://redis:6379/0
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
-      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-in-production}
-      - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
-      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}
-      - SHODAN_API_KEY=${SHODAN_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    # Volume mounts for persistent data
+      - REDIS_URL=redis://redis:6379/0  # Redis connection URL
+      - ELASTICSEARCH_URL=http://elasticsearch:9200  # Elasticsearch endpoint
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}  # Django/Flask secret key
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-this-in-production}  # Data encryption key
+      - JWT_SECRET=${JWT_SECRET:-change-this-in-production}  # JWT token signing secret
+      - OPENAI_API_KEY=${OPENAI_API_KEY}  # OpenAI API key for AI features
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}  # VirusTotal API key
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}  # AbuseIPDB API key
+      - SHODAN_API_KEY=${SHODAN_API_KEY}  # Shodan API key
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}  # Application log level
+    
+    # Volume mounts: persistent storage for application data
     volumes:
-      - cyberguard_logs:/app/logs
-      - cyberguard_data:/app/data
-      - cyberguard_models:/app/models
-      - ./config:/app/config:ro  # Read-only config
-    # Resource limits (prevents resource exhaustion)
+      - cyberguard_logs:/app/logs  # Named volume for application logs
+      - cyberguard_data:/app/data  # Named volume for application data
+      - cyberguard_models:/app/models  # Named volume for ML models
+      - ./config:/app/config:ro  # Bind mount for config files (read-only)
+    
+    # Resource limits to prevent container from consuming all host resources
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '2'  # Maximum 2 CPU cores
+          memory: 4G  # Maximum 4GB RAM
         reservations:
-          cpus: '0.5'
-          memory: 1G
-    # Health check configuration
+          cpus: '0.5'  # Guaranteed 0.5 CPU cores
+          memory: 1G  # Guaranteed 1GB RAM
+    
+    # Health check: Docker will monitor container health
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=2)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    # Dependencies - start these services first
+      interval: 30s  # Check every 30 seconds
+      timeout: 10s  # Timeout after 10 seconds
+      retries: 3  # Mark unhealthy after 3 consecutive failures
+      start_period: 40s  # Wait 40 seconds before starting health checks
+    
+    # Service dependencies: ensures dependent services start first
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_healthy  # Wait until PostgreSQL health check passes
       redis:
-        condition: service_healthy
+        condition: service_healthy  # Wait until Redis health check passes
       elasticsearch:
-        condition: service_healthy
-    # Security options
+        condition: service_healthy  # Wait until Elasticsearch health check passes
+    
+    # Security options: restrict container privileges
     security_opt:
-      - no-new-privileges:true
-    # Network configuration
+      - no-new-privileges:true  # Prevent privilege escalation
+    
+    # Network configuration: attach to custom network
     networks:
       - cyberguard-network
+    
     # Logging configuration
     logging:
-      driver: "json-file"
+      driver: "json-file"  # Use JSON log format
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "10m"  # Rotate logs at 10MB
+        max-file: "3"  # Keep 3 rotated log files
 
-  # PostgreSQL database for storing scan results, configurations, etc.
+  # PostgreSQL database service
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15-alpine  # Use PostgreSQL 15 on Alpine Linux (small image)
     container_name: cyberguard-postgres
     restart: unless-stopped
+    
+    # PostgreSQL configuration
     environment:
-      - POSTGRES_DB=cyberguard_db
-      - POSTGRES_USER=cyberguard
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-cyberguard123}
-      - POSTGRES_INITDB_ARGS=--encoding=UTF-8
+      - POSTGRES_DB=cyberguard_db  # Default database name
+      - POSTGRES_USER=cyberguard  # Database username
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-cyberguard123}  # Database password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8  # Database encoding
+    
+    # Persistent storage for database files
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data  # Named volume for database data
+      # Initialize database with schema on first run
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    
+    # Health check for PostgreSQL
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cyberguard -d cyberguard_db"]
+      test: ["CMD-SHELL", "pg_isready -U cyberguard -d cyberguard_db"]  # Check if database is ready
       interval: 10s
       timeout: 5s
       retries: 5
+    
     networks:
       - cyberguard-network
-    # Resource limits
+    
+    # Resource limits for PostgreSQL
     deploy:
       resources:
         limits:
@@ -107,45 +128,62 @@ services:
         reservations:
           memory: 512M
 
-  # Redis for caching, session storage, and message queue
+  # Redis service for caching and messaging
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine  # Redis 7 on Alpine Linux
     container_name: cyberguard-redis
     restart: unless-stopped
+    
+    # Redis server command with persistence and password
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    
+    # Persistent storage for Redis data
     volumes:
       - redis_data:/data
+    
+    # Health check for Redis
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]  # Test Redis connectivity
       interval: 10s
       timeout: 5s
       retries: 5
+    
     networks:
       - cyberguard-network
 
-  # Elasticsearch for log aggregation and threat intelligence search
+  # Elasticsearch service for log aggregation and search
   elasticsearch:
-    image: elasticsearch:8.10.0
+    image: elasticsearch:8.10.0  # Specific version for compatibility
     container_name: cyberguard-elasticsearch
     restart: unless-stopped
+    
+    # Elasticsearch configuration
     environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
-      - bootstrap.memory_lock=true
+      - discovery.type=single-node  # Single node deployment (no cluster)
+      - xpack.security.enabled=false  # Disable security for development
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"  # JVM heap size settings
+      - bootstrap.memory_lock=true  # Lock memory to prevent swapping
+    
+    # Increase memory lock limits for Elasticsearch
     ulimits:
       memlock:
-        soft: -1
-        hard: -1
+        soft: -1  # Unlimited soft limit
+        hard: -1  # Unlimited hard limit
+    
+    # Persistent storage for Elasticsearch indices
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
+    
+    # Health check for Elasticsearch
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]  # Check cluster health
       interval: 30s
       timeout: 10s
       retries: 5
+    
     networks:
       - cyberguard-network
+    
     # Resource limits for Elasticsearch
     deploy:
       resources:
@@ -154,169 +192,222 @@ services:
         reservations:
           memory: 1G
 
-  # Nginx as reverse proxy and load balancer
+  # Nginx reverse proxy service
   nginx:
-    image: nginx:1.24-alpine
+    image: nginx:1.24-alpine  # Nginx 1.24 on Alpine Linux
     container_name: cyberguard-nginx
     restart: unless-stopped
+    
+    # Port mappings for HTTP and HTTPS
     ports:
-      - "80:80"
-      - "443:443"
+      - "80:80"   # HTTP traffic
+      - "443:443" # HTTPS traffic (requires SSL certificates)
+    
+    # Configuration files and SSL certificates
     volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
-      - ./docker/nginx/logs:/var/log/nginx
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Main nginx config
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro  # Site configurations
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro  # SSL certificates
+      - ./docker/nginx/logs:/var/log/nginx  # Nginx access/error logs
+    
+    # Depend on main application
     depends_on:
       - cyberguard
+    
     networks:
       - cyberguard-network
-    # Health check
+    
+    # Health check: test nginx configuration
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
+      test: ["CMD", "nginx", "-t"]  # Test configuration syntax
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Prometheus for metrics collection
+  # Prometheus metrics collection service
   prometheus:
-    image: prom/prometheus:v2.45.0
+    image: prom/prometheus:v2.45.0  # Specific version for stability
     container_name: cyberguard-prometheus
     restart: unless-stopped
+    
+    # Configuration and data persistence
     volumes:
-      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro  # Config file
+      - prometheus_data:/prometheus  # Metrics storage
+    
+    # Prometheus command line arguments
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=30d'
+      - '--config.file=/etc/prometheus/prometheus.yml'  # Config file location
+      - '--storage.tsdb.path=/prometheus'  # Data storage path
+      - '--web.console.libraries=/etc/prometheus/console_libraries'  # Web UI libraries
+      - '--web.console.templates=/etc/prometheus/consoles'  # Web UI templates
+      - '--storage.tsdb.retention.time=30d'  # Keep metrics for 30 days
+    
+    # Expose Prometheus web UI
     ports:
       - "9090:9090"
+    
     networks:
       - cyberguard-network
 
-  # Grafana for metrics visualization
+  # Grafana metrics visualization service
   grafana:
-    image: grafana/grafana:10.0.0
+    image: grafana/grafana:10.0.0  # Grafana 10.0.0
     container_name: cyberguard-grafana
     restart: unless-stopped
+    
+    # Grafana configuration
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}  # Admin password
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel  # Additional plugin
+    
+    # Persistent storage and provisioning
     volumes:
-      - grafana_data:/var/lib/grafana
-      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - grafana_data:/var/lib/grafana  # Grafana database and dashboards
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro  # Auto-load dashboards
+      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro  # Auto-configure datasources
+    
+    # Expose Grafana web UI
     ports:
       - "3000:3000"
+    
+    # Depend on Prometheus for metrics
     depends_on:
       - prometheus
+    
     networks:
       - cyberguard-network
 
-  # Jaeger for distributed tracing
+  # Jaeger distributed tracing service
   jaeger:
-    image: jaegertracing/all-in-one:1.48
+    image: jaegertracing/all-in-one:1.48  # All-in-one Jaeger distribution
     container_name: cyberguard-jaeger
     restart: unless-stopped
+    
+    # Enable OpenTelemetry protocol
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+    
+    # Port mappings for Jaeger UI and APIs
     ports:
-      - "16686:16686"  # UI
-      - "4317:4317"    # OTLP gRPC
-      - "4318:4318"    # OTLP HTTP
+      - "16686:16686"  # Web UI
+      - "4317:4317"    # OTLP gRPC endpoint
+      - "4318:4318"    # OTLP HTTP endpoint
+    
     networks:
       - cyberguard-network
 
-  # MinIO for object storage (threat feeds, models, etc.)
+  # MinIO object storage service
   minio:
-    image: minio/minio:RELEASE.2023-08-23T10-07-06Z
+    image: minio/minio:RELEASE.2023-08-23T10-07-06Z  # Specific MinIO release
     container_name: cyberguard-minio
     restart: unless-stopped
+    
+    # MinIO server command with console
     command: server /data --console-address ":9001"
+    
+    # MinIO credentials
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin123}
+    
+    # Persistent storage for objects
     volumes:
       - minio_data:/data
+    
+    # Expose MinIO API and console
     ports:
-      - "9000:9000"  # API
-      - "9001:9001"  # Console
+      - "9000:9000"  # S3-compatible API
+      - "9001:9001"  # Web management console
+    
+    # Health check for MinIO
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
+    
     networks:
       - cyberguard-network
 
   # Watchtower for automatic container updates
   watchtower:
-    image: containrrr/watchtower:latest
+    image: containrrr/watchtower:latest  # Watchtower for auto-updates
     container_name: cyberguard-watchtower
     restart: unless-stopped
+    
+    # Mount Docker socket to control containers
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    
+    # Watchtower command: check every 5 minutes and clean up old images
     command: --interval 300 --cleanup
+    
     networks:
       - cyberguard-network
 
-# Networks - defines the virtual network for service communication
+# Network definitions
 networks:
   cyberguard-network:
-    driver: bridge
-    # Enable IPv6 (optional)
-    enable_ipv6: false
-    # Network configuration
+    driver: bridge  # Use bridge network driver
+    enable_ipv6: false  # Disable IPv6 (set to true if needed)
+    
+    # IP address management configuration
     ipam:
       driver: default
       config:
-        - subnet: 172.20.0.0/16
-          gateway: 172.20.0.1
+        - subnet: 172.20.0.0/16  # Private subnet for containers
+          gateway: 172.20.0.1  # Gateway address
 
-# Volumes - persistent data storage definitions
+# Volume definitions for persistent data storage
 volumes:
   postgres_data:
-    driver: local
+    driver: local  # Use local volume driver
     driver_opts:
-      type: none
-      device: ${PWD}/data/postgres
-      o: bind
+      type: none  # Bind mount type
+      device: ${PWD}/data/postgres  # Host directory path
+      o: bind  # Bind mount option
+  
   redis_data:
     driver: local
     driver_opts:
       type: none
       device: ${PWD}/data/redis
       o: bind
+  
   elasticsearch_data:
     driver: local
     driver_opts:
       type: none
       device: ${PWD}/data/elasticsearch
       o: bind
+  
   cyberguard_logs:
     driver: local
     driver_opts:
       type: none
       device: ${PWD}/logs
       o: bind
+  
   cyberguard_data:
     driver: local
     driver_opts:
       type: none
       device: ${PWD}/data
       o: bind
+  
   cyberguard_models:
     driver: local
     driver_opts:
       type: none
       device: ${PWD}/models
       o: bind
+  
   prometheus_data:
-    driver: local
+    driver: local  # Anonymous volume managed by Docker
+  
   grafana_data:
     driver: local
+  
   minio_data:
     driver: local

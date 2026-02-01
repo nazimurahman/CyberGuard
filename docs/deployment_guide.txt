@@ -1,0 +1,750 @@
+CYBERGUARD DEPLOYMENT GUIDE
+CyberGuard is a production-grade, enterprise-ready web security AI system that
+combines:
+- Multi-Agent AI architecture with Manifold-Constrained Hyper-Connections (mHC)
+- Grouped Query Attention (GQA) Transformer with Flash Attention and RoPE
+- 10 specialized security agents for comprehensive threat detection
+- Real-time website and API security scanning
+- Explainable AI decisions with compliance guardrails
+
+This guide covers deployment for:
+- Development environments
+- Production web applications
+- Reverse-proxy security layer
+- Website plugin integration
+- Kubernetes clusters
+
+SYSTEM REQUIREMENTS
+Hardware Requirements
+
+Minimum:
+- CPU: 4+ cores (x86_64 or ARM64)
+- RAM: 8GB minimum, 16GB recommended
+- Storage: 50GB SSD with 10k IOPS
+- Network: 100Mbps minimum, 1Gbps recommended
+
+Recommended (Production):
+- CPU: 8+ cores with AVX2 support
+- RAM: 32GB (64GB for large deployments)
+- Storage: 200GB NVMe SSD
+- GPU: Optional, but recommended for GQA inference acceleration
+  - NVIDIA T4 or better with 16GB+ VRAM
+  - CUDA 11.8+ and cuDNN 8.6+
+
+Software Requirements
+- Operating System: Ubuntu 20.04 LTS+, RHEL 8+, or Docker container
+- Python: 3.10 or 3.11 (3.10 recommended for stability)
+- Database: PostgreSQL 14+ or MySQL 8+ (for audit logging)
+- Cache: Redis 6.2+ (for agent coordination state)
+- Vector Database: ChromaDB or Pinecone (for threat intelligence)
+- Web Server: Nginx 1.18+ or Apache 2.4+ (for reverse proxy)
+
+DEPLOYMENT ARCHITECTURE
+Single-Node Deployment
+Simplest deployment for small to medium websites:
+
+    ┌─────────────────────────────────────────────────────┐
+    │                    CyberGuard Node                  │
+    ├─────────────────────────────────────────────────────┤
+    │  ┌─────────┐  ┌─────────┐  ┌───────────────────┐   │
+    │  │   Web   │  │  REST   │  │   Agent Cluster   │   │
+    │  │  UI     │◄─┤   API   │◄─┤   (10 Agents)     │   │
+    │  │  (8080) │  │  (8000) │  │                   │   │
+    │  └─────────┘  └─────────┘  └───────────────────┘   │
+    ├─────────────────────────────────────────────────────┤
+    │                PostgreSQL │ Redis                   │
+    └─────────────────────────────────────────────────────┘
+
+Components:
+- Web UI: Port 8080 (Dashboard, real-time monitoring)
+- REST API: Port 8000 (Programmatic access, webhooks)
+- Agent Cluster: Internal communication via mHC
+- Database: PostgreSQL for audit logs and findings
+- Cache: Redis for session management and agent state
+
+3.2 Multi-Node Deployment (Production)
+--------------------------------------
+For enterprise-scale deployments:
+
+    ┌─────────────────────────────────────────────────────────┐
+    │                   Load Balancer                         │
+    │                   (nginx/haproxy)                       │
+    └──────────┬──────────────────────────────┬───────────────┘
+               │                              │
+    ┌──────────▼──────────┐     ┌────────────▼────────────┐
+    │   CyberGuard API    │     │   CyberGuard Workers    │
+    │   Node (Primary)    │     │   (Agent Processing)    │
+    ├─────────────────────┤     ├─────────────────────────┤
+    │• REST API Gateway   │     │• Threat Detection Agents│
+    │• Authentication     │◄────┤• Traffic Analysis       │
+    │• Rate Limiting      │     │• Bot Detection          │
+    │• Request Routing    │     │• Malware Scanning       │
+    └─────────────────────┘     └─────────────────────────┘
+               │                              │
+    ┌──────────▼──────────────────────────────▼────────────┐
+    │                Shared Infrastructure                 │
+    ├─────────────────────────────────────────────────────┤
+    │• PostgreSQL Cluster (3 nodes)                       │
+    │• Redis Cluster (6 nodes)                            │
+    │• Object Storage (S3/MinIO)                          │
+    │• Message Queue (RabbitMQ/Kafka)                     │
+    └─────────────────────────────────────────────────────┘
+
+4.0 DEPLOYMENT STEPS
+====================
+
+4.1 Step 1: Environment Preparation
+-----------------------------------
+
+1.1 Update system packages:
+    sudo apt update && sudo apt upgrade -y
+
+1.2 Install system dependencies:
+    sudo apt install -y python3.10 python3.10-venv python3.10-dev \
+                        build-essential libpq-dev redis-server \
+                        nginx postgresql postgresql-contrib \
+                        curl wget git
+
+1.3 Configure PostgreSQL:
+    sudo -u postgres psql -c "CREATE DATABASE cyberguard;"
+    sudo -u postgres psql -c "CREATE USER cyberguard WITH PASSWORD 'secure_password';"
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE cyberguard TO cyberguard;"
+
+1.4 Configure Redis:
+    sudo systemctl enable redis-server
+    sudo systemctl start redis-server
+    # Update redis.conf for production:
+    # maxmemory 2gb
+    # maxmemory-policy allkeys-lru
+
+4.2 Step 2: Application Deployment
+-----------------------------------
+
+2.1 Clone repository:
+    git clone https://github.com/your-org/cyberguard.git
+    cd cyberguard
+
+2.2 Create virtual environment:
+    python3.10 -m venv venv
+    source venv/bin/activate
+
+2.3 Install dependencies:
+    pip install --upgrade pip
+    pip install -r requirements.txt
+
+2.4 Configure environment variables:
+    cp .env.example .env
+    # Edit .env with your configuration:
+    # DATABASE_URL=postgresql://cyberguard:password@localhost/cyberguard
+    # REDIS_URL=redis://localhost:6379/0
+    # SECRET_KEY=your-secret-key-here
+    # API_KEY=your-api-key-here
+
+2.5 Initialize database:
+    python scripts/init_database.py
+    python scripts/load_threat_intelligence.py
+
+2.6 Download pre-trained models:
+    python scripts/download_models.py
+
+4.3 Step 3: Service Configuration
+---------------------------------
+
+3.1 Configure systemd service (CyberGuard API):
+    sudo cp deployment/cyberguard-api.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable cyberguard-api
+    sudo systemctl start cyberguard-api
+
+3.2 Configure systemd service (CyberGuard Workers):
+    sudo cp deployment/cyberguard-workers.service /etc/systemd/system/
+    sudo systemctl enable cyberguard-workers
+    sudo systemctl start cyberguard-workers
+
+3.3 Configure Nginx as reverse proxy:
+    sudo cp deployment/nginx/cyberguard.conf /etc/nginx/sites-available/
+    sudo ln -s /etc/nginx/sites-available/cyberguard.conf /etc/nginx/sites-enabled/
+    sudo nginx -t
+    sudo systemctl reload nginx
+
+4.4 Step 4: SSL/TLS Configuration
+---------------------------------
+
+4.1 Using Let's Encrypt (Recommended):
+    sudo apt install certbot python3-certbot-nginx
+    sudo certbot --nginx -d cyberguard.yourdomain.com
+
+4.2 Manual SSL configuration:
+    # Generate self-signed certificate (development only):
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/ssl/private/cyberguard.key \
+        -out /etc/ssl/certs/cyberguard.crt
+
+4.3 Update Nginx configuration for SSL:
+    # Add to nginx config:
+    ssl_certificate /etc/ssl/certs/cyberguard.crt;
+    ssl_certificate_key /etc/ssl/private/cyberguard.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+5.0 DOCKER DEPLOYMENT
+=====================
+
+5.1 Using Docker Compose (Quick Start):
+---------------------------------------
+    docker-compose -f docker/docker-compose.yml up -d
+
+5.2 Docker Compose Configuration:
+---------------------------------
+    version: '3.8'
+    services:
+      postgres:
+        image: postgres:14-alpine
+        environment:
+          POSTGRES_DB: cyberguard
+          POSTGRES_USER: cyberguard
+          POSTGRES_PASSWORD: ${DB_PASSWORD}
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+        networks:
+          - cyberguard-network
+
+      redis:
+        image: redis:7-alpine
+        command: redis-server --appendonly yes
+        volumes:
+          - redis_data:/data
+        networks:
+          - cyberguard-network
+
+      cyberguard-api:
+        build:
+          context: .
+          dockerfile: docker/Dockerfile
+        ports:
+          - "8000:8000"
+        environment:
+          - DATABASE_URL=postgresql://cyberguard:${DB_PASSWORD}@postgres/cyberguard
+          - REDIS_URL=redis://redis:6379/0
+        depends_on:
+          - postgres
+          - redis
+        networks:
+          - cyberguard-network
+
+      cyberguard-ui:
+        build:
+          context: .
+          dockerfile: docker/Dockerfile.ui
+        ports:
+          - "8080:8080"
+        environment:
+          - API_URL=http://cyberguard-api:8000
+        depends_on:
+          - cyberguard-api
+        networks:
+          - cyberguard-network
+
+    volumes:
+      postgres_data:
+      redis_data:
+
+    networks:
+      cyberguard-network:
+        driver: bridge
+
+5.3 Build and Run:
+------------------
+    # Build images:
+    docker-compose -f docker/docker-compose.yml build
+
+    # Run services:
+    docker-compose -f docker/docker-compose.yml up -d
+
+    # View logs:
+    docker-compose -f docker/docker-compose.yml logs -f
+
+    # Scale workers:
+    docker-compose -f docker/docker-compose.yml up -d --scale cyberguard-worker=4
+
+6.0 KUBERNETES DEPLOYMENT
+=========================
+
+6.1 Prerequisites:
+------------------
+- Kubernetes cluster 1.24+
+- Helm 3.8+
+- kubectl configured
+- Ingress controller (nginx-ingress/traefik)
+- StorageClass for persistent volumes
+
+6.2 Using Helm Charts:
+----------------------
+    # Add CyberGuard Helm repository:
+    helm repo add cyberguard https://charts.cyberguard.ai
+    helm repo update
+
+    # Install CyberGuard:
+    helm install cyberguard cyberguard/cyberguard \
+        --namespace cyberguard \
+        --create-namespace \
+        --values kubernetes/values-production.yaml
+
+6.3 Kubernetes Manifests:
+-------------------------
+    # Create namespace:
+    kubectl create namespace cyberguard
+
+    # Apply configurations:
+    kubectl apply -f kubernetes/configmap.yaml -n cyberguard
+    kubectl apply -f kubernetes/secrets.yaml -n cyberguard
+
+    # Deploy database:
+    kubectl apply -f kubernetes/postgres-statefulset.yaml -n cyberguard
+    kubectl apply -f kubernetes/postgres-service.yaml -n cyberguard
+
+    # Deploy Redis:
+    kubectl apply -f kubernetes/redis-statefulset.yaml -n cyberguard
+    kubectl apply -f kubernetes/redis-service.yaml -n cyberguard
+
+    # Deploy CyberGuard:
+    kubectl apply -f kubernetes/deployment.yaml -n cyberguard
+    kubectl apply -f kubernetes/service.yaml -n cyberguard
+    kubectl apply -f kubernetes/ingress.yaml -n cyberguard
+
+    # Deploy Horizontal Pod Autoscaler:
+    kubectl apply -f kubernetes/hpa.yaml -n cyberguard
+
+6.4 Monitoring and Logging:
+---------------------------
+    # Enable Prometheus metrics:
+    helm install prometheus prometheus-community/prometheus \
+        --namespace monitoring
+
+    # Enable Grafana dashboards:
+    helm install grafana grafana/grafana \
+        --namespace monitoring
+
+    # Configure log aggregation:
+    kubectl apply -f kubernetes/fluentd-daemonset.yaml
+
+7.0 INTEGRATION MODES
+=====================
+
+7.1 Website Plugin Mode:
+------------------------
+For integrating directly into websites:
+
+    1. Add JavaScript snippet to your website:
+        <script src="https://cyberguard.yourdomain.com/plugin.js"></script>
+        <script>
+            CyberGuard.init({
+                apiKey: 'your-api-key',
+                mode: 'monitoring',
+                realtime: true,
+                blockMalicious: true
+            });
+        </script>
+
+    2. Configuration options:
+        - monitoring: Passive monitoring only
+        - protection: Active blocking of threats
+        - learning: AI training mode (no blocking)
+        - compliance: GDPR/HIPAA compliance checks
+
+7.2 Reverse Proxy Mode:
+-----------------------
+For protecting existing web applications:
+
+    # Nginx configuration:
+    location / {
+        proxy_pass http://your-application:3000;
+        proxy_set_header Host $host;
+        
+        # CyberGuard security layer
+        auth_request /cyberguard-auth;
+        error_page 401 = @cyberguard_block;
+    }
+
+    location /cyberguard-auth {
+        internal;
+        proxy_pass http://cyberguard-api:8000/api/v1/validate;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+    }
+
+    location @cyberguard_block {
+        return 403 "Access blocked by CyberGuard Security";
+    }
+
+7.3 API Middleware Mode:
+------------------------
+For microservices and API protection:
+
+    # FastAPI middleware example:
+    from fastapi import FastAPI, Request
+    from cyberguard_sdk import CyberGuardClient
+
+    app = FastAPI()
+    cyberguard = CyberGuardClient(api_key="your-api-key")
+
+    @app.middleware("http")
+    async def security_middleware(request: Request, call_next):
+        # Analyze request with CyberGuard
+        security_check = await cyberguard.analyze_request(request)
+        
+        if security_check["threat_level"] > 0.7:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Request blocked by security policy"}
+            )
+        
+        response = await call_next(request)
+        return response
+
+8.0 CONFIGURATION REFERENCE
+===========================
+
+8.1 Core Configuration (config/enterprise_config.yaml):
+------------------------------------------------------
+    system:
+      name: "CyberGuard Web Security AI System"
+      environment: "production"  # production/staging/development
+      log_level: "INFO"         # DEBUG/INFO/WARNING/ERROR
+    
+    dashboard:
+      port: 8080
+      host: "0.0.0.0"
+      auth_required: true       # Enable authentication
+      session_timeout: 3600     # Session timeout in seconds
+    
+    api:
+      port: 8000
+      rate_limit: "100/minute"  # Requests per minute per IP
+      cors_origins: ["https://yourdomain.com"]
+    
+    security:
+      max_scan_depth: 3         # Maximum recursive scan depth
+      scan_timeout: 30          # Maximum scan time in seconds
+      block_threshold: 0.7      # Threat level to block (0.0-1.0)
+      challenge_threshold: 0.4  # Threat level to challenge
+    
+    mhc:
+      state_dim: 512            # Manifold state dimension
+      temperature: 1.0          # mHC temperature parameter
+      sinkhorn_iterations: 50   # Sinkhorn-Knopp iterations
+    
+    gqa:
+      d_model: 512              # Transformer dimension
+      n_heads: 8                # Number of attention heads
+      n_groups: 2               # Number of KV head groups
+      use_flash_attention: true # Enable Flash Attention
+
+8.2 Agent Configuration (config/agent_config.yaml):
+--------------------------------------------------
+    agents:
+      threat_detection:
+        enabled: true
+        confidence_threshold: 0.6
+        check_xss: true
+        check_sqli: true
+        check_csrf: true
+        max_findings: 20
+    
+      traffic_anomaly:
+        enabled: true
+        window_size: 100        # Requests in analysis window
+        anomaly_threshold: 3.0  # Z-score threshold for anomalies
+        learning_period: 1000   # Requests to establish baseline
+    
+      bot_detection:
+        enabled: true
+        rate_limit: "100/minute"
+        bot_signatures: "config/bot_signatures.json"
+        challenge_suspicious: true
+    
+      malware:
+        enabled: true
+        yara_rules: "config/yara_rules.yar"
+        heuristic_analysis: true
+        sandbox_enabled: false  # Enable for suspicious files
+    
+    orchestration:
+      coordination_mode: "mhc"   # mhc/voting/sequential
+      timeout_seconds: 30
+      max_retries: 3
+      fallback_strategy: "allow" # allow/block/challenge
+
+9.0 MONITORING AND MAINTENANCE
+==============================
+
+9.1 Health Checks:
+------------------
+    # API Health Check:
+    curl -f http://localhost:8000/health
+    
+    # Dashboard Health Check:
+    curl -f http://localhost:8080/health
+    
+    # Database Health Check:
+    pg_isready -h localhost -p 5432 -U cyberguard
+    
+    # Redis Health Check:
+    redis-cli ping
+
+9.2 Performance Monitoring:
+---------------------------
+    # CPU/Memory Usage:
+    docker stats cyberguard-api cyberguard-workers
+    
+    # Request Metrics:
+    curl http://localhost:8000/metrics
+    
+    # Agent Performance:
+    curl http://localhost:8000/api/v1/agents/status
+    
+    # Threat Detection Rate:
+    curl http://localhost:8000/api/v1/metrics/detection
+
+9.3 Log Management:
+-------------------
+    # View application logs:
+    journalctl -u cyberguard-api -f
+    
+    # View error logs:
+    tail -f logs/cyberguard_error.log
+    
+    # View audit logs:
+    tail -f logs/audit/security.log
+    
+    # Log rotation (logrotate config):
+    /var/log/cyberguard/*.log {
+        daily
+        rotate 30
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 644 cyberguard cyberguard
+    }
+
+9.4 Backup and Recovery:
+------------------------
+    # Database backup:
+    pg_dump -U cyberguard -h localhost cyberguard > backup_$(date +%Y%m%d).sql
+    
+    # Redis backup:
+    redis-cli SAVE
+    cp /var/lib/redis/dump.rdb backup_$(date +%Y%m%d).rdb
+    
+    # Configuration backup:
+    tar -czf config_backup_$(date +%Y%m%d).tar.gz config/
+    
+    # Model backup:
+    tar -czf models_backup_$(date +%Y%m%d).tar.gz models/
+
+10.0 TROUBLESHOOTING
+====================
+
+10.1 Common Issues:
+-------------------
+    Issue: "Database connection failed"
+    Solution: Check PostgreSQL service and connection string
+    
+    Issue: "Redis connection timeout"
+    Solution: Increase Redis timeout, check memory usage
+    
+    Issue: "Agent coordination timeout"
+    Solution: Increase mhc.timeout_seconds, check network latency
+    
+    Issue: "High CPU usage"
+    Solution: Scale workers, enable GQA flash attention
+    
+    Issue: "Memory leak"
+    Solution: Check for unclosed sessions, enable Redis persistence
+
+10.2 Debug Mode:
+----------------
+    # Enable debug logging:
+    export LOG_LEVEL=DEBUG
+    python main.py --debug
+    
+    # Enable profiling:
+    export ENABLE_PROFILING=true
+    python -m cProfile -o profile.stats main.py
+    
+    # Memory profiling:
+    python -m memory_profiler main.py
+
+10.3 Support Channels:
+----------------------
+    - Documentation: https://docs.cyberguard.ai
+    - GitHub Issues: https://github.com/your-org/cyberguard/issues
+    - Security Advisories: security@cyberguard.ai
+    - Community Forum: https://community.cyberguard.ai
+
+11.0 SECURITY HARDENING
+=======================
+
+11.1 Network Security:
+----------------------
+    # Firewall configuration:
+    sudo ufw allow 22/tcp          # SSH
+    sudo ufw allow 443/tcp         # HTTPS
+    sudo ufw allow 8000/tcp        # API (if public)
+    sudo ufw --force enable
+    
+    # SSH hardening:
+    # Disable root login, use key authentication
+    # Change default SSH port
+    
+    # Network isolation:
+    # Use private subnets for database and cache
+    # Implement network policies (Kubernetes)
+
+11.2 Application Security:
+--------------------------
+    # Regular updates:
+    pip list --outdated
+    pip install --upgrade cyberguard
+    
+    # Dependency scanning:
+    pip-audit
+    safety check
+    
+    # Secret management:
+    # Use HashiCorp Vault or AWS Secrets Manager
+    # Never commit secrets to git
+    
+    # API security:
+    # Implement rate limiting
+    # Use API keys with short expiration
+    # Enable request signing
+
+11.3 Compliance:
+----------------
+    # GDPR compliance:
+    # Enable data anonymization
+    # Implement right to be forgotten
+    
+    # HIPAA compliance:
+    # Enable audit logging
+    # Implement data encryption at rest
+    
+    # PCI DSS compliance:
+    # Regular vulnerability scanning
+    # Maintain security policies
+
+12.0 SCALING GUIDE
+==================
+
+12.1 Vertical Scaling:
+----------------------
+    # Increase resources:
+    CPU: 4 cores → 8 cores
+    RAM: 16GB → 32GB
+    Storage: SSD → NVMe
+    
+    # Database optimization:
+    shared_buffers = 4GB
+    effective_cache_size = 12GB
+    max_connections = 200
+
+12.2 Horizontal Scaling:
+------------------------
+    # Add more API nodes:
+    docker-compose up -d --scale cyberguard-api=3
+    
+    # Add more worker nodes:
+    docker-compose up -d --scale cyberguard-worker=5
+    
+    # Database clustering:
+    # Implement PostgreSQL streaming replication
+    # Use Redis Cluster for distributed caching
+    
+    # Load balancing:
+    # Use nginx/haproxy for load balancing
+    # Implement sticky sessions if needed
+
+12.3 Auto-scaling (Kubernetes):
+-------------------------------
+    # Horizontal Pod Autoscaler:
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: cyberguard-api
+    spec:
+      scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: cyberguard-api
+      minReplicas: 2
+      maxReplicas: 10
+      metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+
+13.0 UPGRADE PROCEDURE
+======================
+
+13.1 Minor Version Upgrade:
+---------------------------
+    # Backup current deployment:
+    ./scripts/backup.sh
+    
+    # Pull latest changes:
+    git pull origin main
+    
+    # Update dependencies:
+    pip install -r requirements.txt --upgrade
+    
+    # Run database migrations:
+    alembic upgrade head
+    
+    # Restart services:
+    docker-compose down
+    docker-compose up -d --build
+    
+    # Verify upgrade:
+    curl -f http://localhost:8000/health
+
+13.2 Major Version Upgrade:
+---------------------------
+    # 1. Read release notes and migration guide
+    # 2. Backup everything (database, config, models)
+    # 3. Deploy to staging environment first
+    # 4. Run compatibility tests
+    # 5. Schedule maintenance window
+    # 6. Deploy to production
+    # 7. Monitor for 24 hours
+    # 8. Rollback plan ready
+
+DISASTER RECOVERY
+
+Recovery Procedures:
+    # Database failure:
+    1. Switch to standby database
+    2. Restore from latest backup
+    3. Replay transaction logs
+    
+    # Application failure:
+    1. Redirect traffic to standby region
+    2. Restart failed services
+    3. Check application logs
+    
+    # Complete system failure:
+    1. Activate disaster recovery site
+    2. Restore from backups
+    3. Update DNS records
+
+Backup Schedule:
+    # Database: Hourly incremental, daily full
+    # Configuration: Daily
+    # Models: Weekly
+    # Logs: Daily (retain 30 days)
+    # Audit trails: Real-time replication

@@ -25,6 +25,7 @@ import torch.nn.functional as F
 import math
 from typing import Optional, Tuple, Dict, List, Union
 import warnings
+import time  # Added import for time module
 
 
 class RotaryPositionalEmbedding(nn.Module):
@@ -276,7 +277,6 @@ class FlashGQA(nn.Module):
             # Check for PyTorch 2.0+ Flash Attention
             if hasattr(F, 'scaled_dot_product_attention'):
                 self.flash_available = True
-                self._flash_attention = self._flash_attention_pt2
             else:
                 self.flash_available = False
                 warnings.warn(
@@ -290,7 +290,7 @@ class FlashGQA(nn.Module):
     
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                 mask: Optional[torch.Tensor] = None,
-                kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> torch.Tensor:
+                kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         """
         Forward pass with optional Flash Attention
         
@@ -303,6 +303,7 @@ class FlashGQA(nn.Module):
         
         Returns:
             torch.Tensor: Attention output [batch_size, seq_len_q, d_model]
+            OR Tuple if kv_cache provided: (output, (K, V))
         
         Example:
             >>> q = torch.randn(2, 128, 512)  # [batch, seq_len, d_model]
@@ -341,7 +342,7 @@ class FlashGQA(nn.Module):
         # Each KV group is repeated for its corresponding query heads
         # Shape: [batch, n_heads, seq_len_kv, d_k]
         K_expanded = K_rotated[:, self.group_map]
-        V_expanded = V_rotated[:, self.group_map]
+        V_expanded = V[:, self.group_map]  # Use V directly, not V_rotated
         
         # 4. Compute attention
         if self.flash_available and mask is None:
@@ -737,7 +738,7 @@ class SecurityGQATransformer(nn.Module):
             'threat_detected': threat_detected,
             'top_threat_classes': top_threats.indices,
             'top_threat_probs': top_threats.values,
-            'analysis_timestamp': torch.tensor(time.time() if 'time' in dir() else 0.0)
+            'analysis_timestamp': torch.tensor(time.time())
         }
     
     def get_attention_patterns(self, threat_features: torch.Tensor, 
@@ -757,16 +758,21 @@ class SecurityGQATransformer(nn.Module):
         if layer_idx < 0:
             layer_idx = self.n_layers + layer_idx
         
-        # Forward pass while storing attention
+        # Note: This is a simplified placeholder
+        # In a real implementation, you would need to modify the FlashGQA forward pass
+        # to return attention weights when not using flash attention
+        
+        # Placeholder implementation for demonstration
         batch_size, seq_len = threat_features.shape
+        n_heads = self.layers[layer_idx]['attention'].n_heads
         
-        # We'll need to modify the forward pass to return attention
-        # For simplicity, this is a placeholder implementation
-        # In practice, you'd modify the FlashGQA to return attention weights
+        # Generate random attention patterns (placeholder)
+        attention_patterns = torch.randn(batch_size, n_heads, seq_len, seq_len)
         
-        # Placeholder: return random patterns
-        return torch.randn(batch_size, self.layers[0]['attention'].n_heads, 
-                          seq_len, seq_len)
+        # Normalize to make it a proper attention distribution
+        attention_patterns = F.softmax(attention_patterns, dim=-1)
+        
+        return attention_patterns
     
     def estimate_memory_usage(self, batch_size: int, seq_len: int,
                              dtype: torch.dtype = torch.float16) -> Dict[str, int]:
@@ -811,7 +817,7 @@ def test_gqa_performance():
     """
     Test GQA performance and memory efficiency
     """
-    print("🧪 Testing GQA Transformer...")
+    print("Testing GQA Transformer...")
     
     # Create model
     model = SecurityGQATransformer(
@@ -829,7 +835,6 @@ def test_gqa_performance():
     inputs = torch.randint(0, 10000, (batch_size, seq_len))
     
     # Forward pass
-    import time
     start_time = time.time()
     outputs = model(inputs)
     inference_time = time.time() - start_time
@@ -842,7 +847,7 @@ def test_gqa_performance():
     # Check memory estimates
     memory = model.estimate_memory_usage(batch_size, seq_len)
     
-    print("✅ GQA Transformer tests passed!")
+    print("GQA Transformer tests passed!")
     print(f"   Inference time: {inference_time:.3f}s")
     print(f"   Total memory: {memory['total_memory_mb']:.1f} MB")
     print(f"   KV cache savings: {model.layers[0]['attention'].memory_savings_vs_mha():.1%}")

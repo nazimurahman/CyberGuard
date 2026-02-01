@@ -5,50 +5,18 @@ Hash Validation Module
 This module provides secure hash validation for data integrity verification.
 It supports multiple hash algorithms and includes security best practices
 to prevent hash-related attacks.
-
-Features:
----------
-1. Multiple hash algorithm support (SHA256, SHA512, BLAKE2, etc.)
-2. Hash format detection and parsing
-3. Constant-time comparison to prevent timing attacks
-4. Hash normalization and canonicalization
-5. Hash list validation (bulk operations)
-6. Performance optimization for large datasets
-
-Security Considerations:
------------------------
-- Constant-time comparison prevents timing attacks
-- Input validation prevents hash algorithm confusion
-- Support for modern, secure hash algorithms
-- Protection against hash length extension attacks
-
-Usage Examples:
----------------
-# Basic hash validation
-validator = HashValidator()
-is_valid = validator.verify_hash(data, "sha256:abc123...")
-
-# Hash calculation
-hash_value = validator.calculate_hash(data, HashAlgorithm.SHA256)
-
-# Bulk validation
-results = validator.verify_hash_list(data, ["sha256:hash1", "sha512:hash2"])
-
-# File hash validation
-is_valid = validator.verify_file_hash("/path/to/file", expected_hash)
 """
 
 import hashlib
 import hmac
-import binascii
+import re  # Added missing import for regex patterns
+import logging
 from typing import Optional, Dict, List, Tuple, Union, Any
 from enum import Enum
-import os
-import logging
 from pathlib import Path
 
-# Local imports
-from ..utils.crypto_utils import constant_time_compare
+# Local imports - fixed import path (removed .. prefix)
+from utils.crypto_utils import constant_time_compare  # Fixed import path
 
 # Custom exceptions
 class HashValidationError(Exception):
@@ -100,7 +68,7 @@ class HashAlgorithm(Enum):
             HashAlgorithm.SHA256D: 32,
             HashAlgorithm.RIPEMD160: 20,
         }
-        return sizes.get(self, 32)
+        return sizes.get(self, 32)  # Default to 32 bytes if not found
     
     @property
     def block_size(self) -> int:
@@ -117,7 +85,7 @@ class HashAlgorithm(Enum):
             HashAlgorithm.SHA256D: 64,
             HashAlgorithm.RIPEMD160: 64,
         }
-        return sizes.get(self, 64)
+        return sizes.get(self, 64)  # Default to 64 bytes if not found
     
     @property
     def is_secure(self) -> bool:
@@ -141,24 +109,10 @@ class HashAlgorithm(Enum):
         }
         return self in deprecated_algorithms
 
+
 class HashValidator:
     """
     Secure hash validator with multiple algorithm support
-    
-    This class provides secure hash validation with:
-    - Constant-time comparison to prevent timing attacks
-    - Algorithm detection and validation
-    - Support for modern hash algorithms
-    - Bulk validation operations
-    - File hash verification
-    
-    Security Features:
-    ------------------
-    1. Constant-time comparison for all hash checks
-    2. Algorithm whitelisting (reject insecure algorithms)
-    3. Input validation and sanitization
-    4. Protection against algorithm confusion attacks
-    5. Secure defaults (SHA256 as default)
     """
     
     # Default hash algorithm
@@ -219,21 +173,22 @@ class HashValidator:
             allow_deprecated: Allow deprecated algorithms (MD5, SHA1)
             require_secure: Require secure algorithms only
         """
+        # Initialize logger for debugging and error tracking
         self.logger = logging.getLogger(__name__)
         self.default_algorithm = default_algorithm
         self.allow_deprecated = allow_deprecated
         self.require_secure = require_secure
         
-        # Compile regex patterns
-        import re
+        # Compile regex patterns for hash format validation
         self._regex_cache = {}
         for algorithm, pattern in self.HASH_PATTERNS.items():
             self._regex_cache[algorithm] = re.compile(pattern)
         
-        # Performance cache for frequent hashes
+        # Performance cache for frequent hashes to avoid recalculating
         self._hash_cache: Dict[Tuple[str, HashAlgorithm], str] = {}
-        self._cache_max_size = 1000
+        self._cache_max_size = 1000  # Maximum number of cached hashes
         
+        # Log initialization parameters
         self.logger.info(
             f"HashValidator initialized: "
             f"default={default_algorithm.value}, "
@@ -259,19 +214,21 @@ class HashValidator:
             InvalidHashFormat: If hash string format is invalid
             UnsupportedAlgorithm: If algorithm is not supported
         """
+        # Validate input is a non-empty string
         if not hash_string or not isinstance(hash_string, str):
             raise InvalidHashFormat("Hash string must be a non-empty string")
         
-        # Trim whitespace
+        # Trim whitespace from input
         hash_string = hash_string.strip()
         
-        # Check for algorithm prefix
+        # Check for algorithm prefix (format: algorithm:hash)
         if ':' in hash_string:
+            # Split into algorithm and hash parts
             algorithm_str, hash_value = hash_string.split(':', 1)
-            algorithm_str = algorithm_str.strip().lower()
+            algorithm_str = algorithm_str.strip().lower()  # Normalize to lowercase
             hash_value = hash_value.strip()
             
-            # Look up algorithm
+            # Look up algorithm in mapping
             if algorithm_str not in self.ALGORITHM_MAP:
                 raise UnsupportedAlgorithm(
                     f"Unsupported hash algorithm: {algorithm_str}. "
@@ -286,19 +243,19 @@ class HashValidator:
             algorithm = self._detect_algorithm_from_hash(hash_value)
             
             if not algorithm:
-                # Use default algorithm
+                # Use default algorithm if detection fails
                 algorithm = self.default_algorithm
                 self.logger.debug(
                     f"Could not detect algorithm for hash, using default: {algorithm.value}"
                 )
         
-        # Validate algorithm
+        # Validate algorithm security settings
         self._validate_algorithm(algorithm)
         
-        # Validate hash format
+        # Validate hash format matches algorithm expectations
         self._validate_hash_format(hash_value, algorithm)
         
-        # Normalize hash (lowercase)
+        # Normalize hash to lowercase for consistent comparison
         hash_value = hash_value.lower()
         
         return algorithm, hash_value
@@ -313,32 +270,34 @@ class HashValidator:
         Returns:
             HashAlgorithm or None if cannot detect
         """
-        # Remove any whitespace and convert to lowercase
+        # Clean input: remove whitespace and convert to lowercase
         hash_value = hash_value.strip().lower()
         
-        # Check if it's hex encoded
+        # Check if string contains only hexadecimal characters
         if not all(c in '0123456789abcdef' for c in hash_value):
             return None
         
+        # Get length of hash string (in hex characters)
         length = len(hash_value)
         
-        # Map length to possible algorithms
+        # Map hex string length to possible algorithms
         length_to_algorithms = {
-            32: [HashAlgorithm.MD5],
-            40: [HashAlgorithm.SHA1, HashAlgorithm.RIPEMD160],
+            32: [HashAlgorithm.MD5],  # 128-bit = 32 hex chars
+            40: [HashAlgorithm.SHA1, HashAlgorithm.RIPEMD160],  # 160-bit = 40 hex chars
             64: [
-                HashAlgorithm.SHA256,
+                HashAlgorithm.SHA256,     # 256-bit = 64 hex chars
                 HashAlgorithm.BLAKE2S,
                 HashAlgorithm.SHA3_256,
                 HashAlgorithm.SHA256D,
             ],
             128: [
-                HashAlgorithm.SHA512,
+                HashAlgorithm.SHA512,     # 512-bit = 128 hex chars
                 HashAlgorithm.BLAKE2B,
                 HashAlgorithm.SHA3_512,
             ],
         }
         
+        # Get possible algorithms for this length
         possible_algorithms = length_to_algorithms.get(length, [])
         
         if not possible_algorithms:
@@ -350,7 +309,7 @@ class HashValidator:
                 if algorithm.is_secure:
                     return algorithm
         
-        # Return first algorithm
+        # Return first algorithm if no security requirement or no secure ones found
         return possible_algorithms[0] if possible_algorithms else None
     
     def _validate_algorithm(self, algorithm: HashAlgorithm):
@@ -363,14 +322,14 @@ class HashValidator:
         Raises:
             UnsupportedAlgorithm: If algorithm is not allowed
         """
-        # Check if algorithm is deprecated
+        # Check if algorithm is deprecated and not allowed
         if algorithm.is_deprecated and not self.allow_deprecated:
             raise UnsupportedAlgorithm(
                 f"Deprecated hash algorithm: {algorithm.value}. "
                 f"Set allow_deprecated=True to allow."
             )
         
-        # Check if algorithm is secure (if required)
+        # Check if secure algorithm is required but algorithm is insecure
         if self.require_secure and not algorithm.is_secure:
             raise UnsupportedAlgorithm(
                 f"Insecure hash algorithm: {algorithm.value}. "
@@ -388,18 +347,20 @@ class HashValidator:
         Raises:
             InvalidHashFormat: If hash format is invalid
         """
-        # Check if it's hex encoded
+        # Convert to lowercase for validation
         hash_lower = hash_value.lower()
         
+        # Check if string contains only hexadecimal characters
         if not all(c in '0123456789abcdef' for c in hash_lower):
             raise InvalidHashFormat(
                 f"Hash value must be hexadecimal: {hash_value[:20]}..."
             )
         
-        # Check length
-        expected_length = algorithm.digest_size * 2  # Hex characters
+        # Calculate expected length: digest_size (bytes) * 2 (hex chars per byte)
+        expected_length = algorithm.digest_size * 2
         actual_length = len(hash_value)
         
+        # Check if hash length matches expected length for algorithm
         if actual_length != expected_length:
             raise InvalidHashFormat(
                 f"Invalid hash length for {algorithm.value}. "
@@ -407,7 +368,7 @@ class HashValidator:
                 f"Hash: {hash_value[:20]}..."
             )
         
-        # Check regex pattern
+        # Check against regex pattern for additional validation
         regex = self._regex_cache.get(algorithm)
         if regex and not regex.match(hash_value):
             raise InvalidHashFormat(
@@ -434,47 +395,63 @@ class HashValidator:
         Raises:
             HashValidationError: If hash calculation fails
         """
+        # Use default algorithm if none specified
         if algorithm is None:
             algorithm = self.default_algorithm
         
-        # Validate algorithm
+        # Validate algorithm security settings
         self._validate_algorithm(algorithm)
         
-        # Convert string to bytes if needed
+        # Convert string data to bytes (UTF-8 encoding)
         if isinstance(data, str):
             data = data.encode('utf-8')
         
-        # Check cache
+        # Generate cache key
         cache_key = (self._get_data_key(data), algorithm)
+        
+        # Return cached hash if available and caching is enabled
         if use_cache and cache_key in self._hash_cache:
             return self._hash_cache[cache_key]
         
         try:
-            # Calculate hash based on algorithm
+            # Calculate hash based on algorithm type
             if algorithm == HashAlgorithm.SHA256D:
-                # Double SHA256 (Bitcoin style)
+                # Double SHA256 (Bitcoin style): hash(hash(data))
                 hash1 = hashlib.sha256(data).digest()
                 hash_bytes = hashlib.sha256(hash1).digest()
             else:
-                # Standard algorithms
+                # Standard single-pass hash algorithms
                 hash_func = self._get_hash_function(algorithm)
                 hash_func.update(data)
                 hash_bytes = hash_func.digest()
             
-            # Convert to hex
+            # Convert binary hash to hexadecimal string
             hash_hex = hash_bytes.hex()
             
-            # Update cache
+            # Update cache if enabled
             if use_cache:
                 self._update_cache(cache_key, hash_hex)
             
             return hash_hex
             
         except Exception as e:
+            # Wrap any exception in HashValidationError for consistent error handling
             raise HashValidationError(f"Failed to calculate hash: {e}")
     
     def _get_hash_function(self, algorithm: HashAlgorithm):
-        """Get hash function for algorithm"""
+        """
+        Get hash function for algorithm
+        
+        Args:
+            algorithm: Hash algorithm
+            
+        Returns:
+            Hash function object
+            
+        Raises:
+            UnsupportedAlgorithm: If algorithm is not available
+        """
+        # Map HashAlgorithm enum to hashlib functions
         if algorithm == HashAlgorithm.SHA256:
             return hashlib.sha256()
         elif algorithm == HashAlgorithm.SHA512:
@@ -506,19 +483,32 @@ class HashValidator:
         
         For large data, we use a hash of the data as the key
         to avoid storing large data in cache.
+        
+        Args:
+            data: Input data bytes
+            
+        Returns:
+            Cache key string
         """
-        if len(data) > 1024:  # For data larger than 1KB, use hash as key
+        # For data larger than 1KB, use SHA256 hash as cache key
+        if len(data) > 1024:
             return hashlib.sha256(data).hexdigest()
         else:
-            # For small data, use the data itself as key
+            # For small data, use hex representation directly
             return data.hex()
     
     def _update_cache(self, cache_key: Tuple[str, HashAlgorithm], hash_value: str):
-        """Update hash cache with LRU-like behavior"""
-        # Add to cache
+        """
+        Update hash cache with LRU-like behavior
+        
+        Args:
+            cache_key: Tuple of (data_key, algorithm)
+            hash_value: Calculated hash value
+        """
+        # Add new entry to cache
         self._hash_cache[cache_key] = hash_value
         
-        # Remove oldest entries if cache is full
+        # Remove oldest entries if cache exceeds maximum size
         if len(self._hash_cache) > self._cache_max_size:
             # Remove first 10% of entries (simple LRU approximation)
             remove_count = self._cache_max_size // 10
@@ -547,26 +537,28 @@ class HashValidator:
             HashValidationError: If verification fails due to invalid input
         """
         try:
-            # Parse expected hash
+            # Parse expected hash to get algorithm and hash value
             if algorithm is None:
+                # Auto-detect algorithm from hash string
                 expected_algorithm, expected_hash_value = self.parse_hash_string(expected_hash)
             else:
                 # Use provided algorithm
                 expected_algorithm = algorithm
                 expected_hash_value = expected_hash.lower()
+                # Validate format for provided algorithm
                 self._validate_hash_format(expected_hash_value, expected_algorithm)
             
-            # Calculate actual hash
+            # Calculate actual hash of data
             actual_hash = self.calculate_hash(data, expected_algorithm)
             
-            # Constant-time comparison
+            # Use constant-time comparison to prevent timing attacks
             return constant_time_compare(actual_hash, expected_hash_value)
             
         except (InvalidHashFormat, UnsupportedAlgorithm) as e:
-            # Re-raise validation errors
+            # Re-raise validation errors for invalid input
             raise HashValidationError(f"Hash verification failed: {e}")
         except Exception as e:
-            # Log other errors and return False
+            # Log other errors and return False (verification failed)
             self.logger.debug(f"Hash verification error: {e}")
             return False
     
@@ -592,20 +584,23 @@ class HashValidator:
         """
         results = {}
         
+        # Verify each hash in the list
         for expected_hash in expected_hashes:
             try:
                 is_valid = self.verify_hash(data, expected_hash)
                 results[expected_hash] = is_valid
             except HashValidationError as e:
-                # Store error as False result
+                # Store error as False result and log
                 results[expected_hash] = False
                 self.logger.debug(f"Hash validation failed for {expected_hash}: {e}")
         
-        # Check overall result if require_all is True
+        # Calculate overall result based on require_all flag
         if require_all:
+            # All hashes must be valid
             all_valid = all(results.values())
             results['_overall'] = all_valid
         else:
+            # At least one hash must be valid
             any_valid = any(results.values())
             results['_overall'] = any_valid
         
@@ -630,8 +625,10 @@ class HashValidator:
         Returns:
             True if file hash matches, False otherwise
         """
+        # Convert to Path object for consistent handling
         filepath = Path(filepath)
         
+        # Check if file exists and is a regular file
         if not filepath.exists():
             self.logger.error(f"File not found: {filepath}")
             return False
@@ -649,10 +646,10 @@ class HashValidator:
                 expected_hash_value = expected_hash.lower()
                 self._validate_hash_format(expected_hash_value, expected_algorithm)
             
-            # Get hash function
+            # Get hash function for the algorithm
             hash_func = self._get_hash_function(expected_algorithm)
             
-            # Calculate file hash (streaming)
+            # Calculate file hash using streaming (read in chunks)
             with open(filepath, 'rb') as f:
                 while True:
                     chunk = f.read(chunk_size)
@@ -660,12 +657,14 @@ class HashValidator:
                         break
                     hash_func.update(chunk)
             
+            # Get hexadecimal hash
             actual_hash = hash_func.hexdigest()
             
             # Constant-time comparison
             return constant_time_compare(actual_hash, expected_hash_value)
             
         except Exception as e:
+            # Log error and return False (verification failed)
             self.logger.error(f"File hash verification failed for {filepath}: {e}")
             return False
     
@@ -686,20 +685,23 @@ class HashValidator:
         Returns:
             Hexadecimal hash string or None if failed
         """
+        # Convert to Path object
         filepath = Path(filepath)
         
+        # Validate file exists and is a regular file
         if not filepath.exists() or not filepath.is_file():
             self.logger.error(f"Invalid file: {filepath}")
             return None
         
+        # Use default algorithm if none specified
         if algorithm is None:
             algorithm = self.default_algorithm
         
         try:
-            # Get hash function
+            # Get hash function for the algorithm
             hash_func = self._get_hash_function(algorithm)
             
-            # Calculate file hash (streaming)
+            # Calculate hash using streaming (read in chunks)
             with open(filepath, 'rb') as f:
                 while True:
                     chunk = f.read(chunk_size)
@@ -707,9 +709,11 @@ class HashValidator:
                         break
                     hash_func.update(chunk)
             
+            # Return hexadecimal hash
             return hash_func.hexdigest()
             
         except Exception as e:
+            # Log error and return None (calculation failed)
             self.logger.error(f"Failed to calculate file hash for {filepath}: {e}")
             return None
     
@@ -733,21 +737,23 @@ class HashValidator:
             True if HMAC matches, False otherwise
         """
         try:
-            # Convert inputs to bytes
+            # Convert inputs to bytes if they are strings
             if isinstance(data, str):
                 data = data.encode('utf-8')
             if isinstance(key, str):
                 key = key.encode('utf-8')
             
-            # Parse expected HMAC
+            # Parse expected HMAC string
             expected_algorithm, expected_hmac_value = self.parse_hash_string(expected_hmac)
             
             # Use provided algorithm or detected algorithm
             if algorithm is None:
                 algorithm = expected_algorithm
             
-            # Calculate HMAC
+            # Get hash function for HMAC calculation
             hash_func = self._get_hash_function(algorithm)
+            
+            # Calculate HMAC using hmac module
             hmac_calculator = hmac.new(key, data, hash_func)
             actual_hmac = hmac_calculator.hexdigest()
             
@@ -755,6 +761,7 @@ class HashValidator:
             return constant_time_compare(actual_hmac, expected_hmac_value)
             
         except Exception as e:
+            # Log error and return False (verification failed)
             self.logger.debug(f"HMAC verification failed: {e}")
             return False
     
@@ -769,12 +776,12 @@ class HashValidator:
             Dictionary with algorithm information
         """
         return {
-            'name': algorithm.value,
-            'digest_size': algorithm.digest_size,
-            'block_size': algorithm.block_size,
-            'is_secure': algorithm.is_secure,
-            'is_deprecated': algorithm.is_deprecated,
-            'description': self._get_algorithm_description(algorithm),
+            'name': algorithm.value,          # Algorithm name
+            'digest_size': algorithm.digest_size,  # Output size in bytes
+            'block_size': algorithm.block_size,    # Internal block size
+            'is_secure': algorithm.is_secure,      # Security status
+            'is_deprecated': algorithm.is_deprecated,  # Deprecation status
+            'description': self._get_algorithm_description(algorithm),  # Description
         }
     
     def _get_algorithm_description(self, algorithm: HashAlgorithm) -> str:
@@ -802,14 +809,16 @@ class HashValidator:
         """
         algorithms = []
         
+        # Iterate through all HashAlgorithm enum values
         for algorithm in HashAlgorithm:
             try:
-                # Check if algorithm is available
+                # Check if algorithm is available on this system
                 self._get_hash_function(algorithm)
                 
+                # Add algorithm info to list
                 algorithms.append(self.get_algorithm_info(algorithm))
             except (UnsupportedAlgorithm, ValueError):
-                # Algorithm not available on this system
+                # Algorithm not available on this system, skip it
                 continue
         
         return algorithms
@@ -827,23 +836,26 @@ class HashValidator:
             Dictionary with cache statistics
         """
         return {
-            'size': len(self._hash_cache),
-            'max_size': self._cache_max_size,
-            'hit_rate': 0.0,  # Would need to track hits/misses
-            'algorithm_distribution': self._get_cache_distribution(),
+            'size': len(self._hash_cache),  # Current cache size
+            'max_size': self._cache_max_size,  # Maximum cache size
+            'hit_rate': 0.0,  # Placeholder for hit rate (would need tracking)
+            'algorithm_distribution': self._get_cache_distribution(),  # Cache distribution
         }
     
     def _get_cache_distribution(self) -> Dict[str, int]:
         """Get distribution of cached hashes by algorithm"""
         distribution = {}
         
+        # Count cached entries by algorithm
         for (_, algorithm), _ in self._hash_cache.items():
             alg_name = algorithm.value
             distribution[alg_name] = distribution.get(alg_name, 0) + 1
         
         return distribution
 
-# Convenience functions
+
+# Convenience functions for easy usage without creating HashValidator instances
+
 def verify_data_hash(
     data: Union[bytes, str],
     expected_hash: str,
@@ -860,8 +872,9 @@ def verify_data_hash(
     Returns:
         True if hash matches, False otherwise
     """
-    validator = HashValidator()
+    validator = HashValidator()  # Create default validator
     return validator.verify_hash(data, expected_hash, algorithm)
+
 
 def calculate_data_hash(
     data: Union[bytes, str],
@@ -877,8 +890,9 @@ def calculate_data_hash(
     Returns:
         Hexadecimal hash string
     """
-    validator = HashValidator()
+    validator = HashValidator()  # Create default validator
     return validator.calculate_hash(data, algorithm)
+
 
 def verify_file_hash_simple(
     filepath: Union[str, Path],
@@ -894,8 +908,9 @@ def verify_file_hash_simple(
     Returns:
         True if file hash matches, False otherwise
     """
-    validator = HashValidator()
+    validator = HashValidator()  # Create default validator
     return validator.verify_file_hash(filepath, expected_hash)
+
 
 def get_secure_hash_algorithms() -> List[Dict[str, Any]]:
     """
@@ -904,8 +919,10 @@ def get_secure_hash_algorithms() -> List[Dict[str, Any]]:
     Returns:
         List of secure algorithm information
     """
+    # Create validator with secure-only setting
     validator = HashValidator(require_secure=True)
     
+    # Filter to only secure algorithms
     secure_algorithms = []
     for algorithm_info in validator.get_supported_algorithms():
         if algorithm_info['is_secure']:

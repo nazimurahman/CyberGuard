@@ -61,9 +61,6 @@ class ManifoldConstrainedHyperConnections:
             temperature: Softmax temperature for attention (higher = more uniform)
             epsilon: Small constant for numerical stability
             sinkhorn_iterations: Number of Sinkhorn iterations for normalization
-        
-        Example:
-            >>> mhc = ManifoldConstrainedHyperConnections(n_agents=10, state_dim=512)
         """
         self.n_agents = n_agents
         self.state_dim = state_dim
@@ -97,10 +94,6 @@ class ManifoldConstrainedHyperConnections:
         
         Returns:
             torch.Tensor: Doubly-stochastic attention matrix
-        
-        Example:
-            >>> log_alpha = torch.randn(1, 5, 5)  # Batch of 1, 5 agents
-            >>> normalized = mhc.sinkhorn_knopp_projection(log_alpha)
         """
         batch_size, n, _ = log_alpha.shape
         
@@ -149,11 +142,6 @@ class ManifoldConstrainedHyperConnections:
         
         Returns:
             torch.Tensor: Mixed state vector [batch_size, state_dim]
-        
-        Example:
-            >>> states = [torch.randn(1, 512) for _ in range(5)]
-            >>> attention = torch.softmax(torch.randn(1, 5, 5), dim=-1)
-            >>> mixed_state = mhc.convex_state_mixing(states, attention)
         """
         batch_size = agent_states[0].shape[0]
         
@@ -173,7 +161,6 @@ class ManifoldConstrainedHyperConnections:
         
         # Identity-preserving mapping: retain some of original agent characteristics
         # This prevents over-smoothing and maintains agent diversity
-        # Security benefit: Specialized agents (e.g., XSS expert) retain their expertise
         identity_contribution = stacked_states.mean(dim=1) * self.identity_preserve_factor
         mixed_state = mixed_state * (1 - self.identity_preserve_factor) + identity_contribution
         
@@ -209,11 +196,6 @@ class ManifoldConstrainedHyperConnections:
         
         Returns:
             dict: Coordinated analysis with threat decisions and evidence
-        
-        Example:
-            >>> outputs = [agent.analyze(data) for agent in agents]
-            >>> confidences = torch.tensor([[0.8, 0.9, 0.7]])  # 3 agents
-            >>> result = mhc.residual_coordination(outputs, confidences)
         """
         start_time = time.time()
         
@@ -222,6 +204,7 @@ class ManifoldConstrainedHyperConnections:
         reasoning_states = []
         for output in agent_outputs:
             if 'reasoning_state' in output:
+                # If agent provides reasoning state, use it
                 reasoning_states.append(output['reasoning_state'])
             else:
                 # If agent doesn't provide state, use zeros
@@ -236,14 +219,14 @@ class ManifoldConstrainedHyperConnections:
         # Shape: [batch_size, n_agents, n_agents]
         attention_logits = torch.log(agent_confidences.unsqueeze(1) + self.epsilon)
         attention_logits = attention_logits.repeat(1, self.n_agents, 1)
+        attention_weights = torch.softmax(attention_logits / self.temperature, dim=-1)
         
         # Apply mHC mixing to get coordinated state
         # This combines all agent insights while maintaining stability
-        coordinated_state = self.convex_state_mixing(reasoning_states, attention_logits)
+        coordinated_state = self.convex_state_mixing(reasoning_states, attention_weights)
         
         # Aggregate individual agent decisions with manifold constraints
         # Each agent's decision is weighted by its confidence
-        # But constrained to prevent any single agent from dominating
         aggregated_decisions = []
         agent_weights = agent_confidences / (agent_confidences.sum(dim=1, keepdim=True) + self.epsilon)
         
@@ -263,24 +246,61 @@ class ManifoldConstrainedHyperConnections:
         
         # Combine threat levels and confidences from all agents
         # Using weighted average with mHC constraints
-        threat_levels = torch.stack([d['threat_level'] for d in aggregated_decisions], dim=1)
-        confidences = torch.stack([d['confidence'] for d in aggregated_decisions], dim=1)
+        # Extract threat levels from decisions, handling scalar or tensor values
+        threat_levels_list = []
+        confidences_list = []
+        
+        for d in aggregated_decisions:
+            # Handle scalar or tensor threat_level
+            threat_val = d['threat_level']
+            if isinstance(threat_val, torch.Tensor):
+                threat_levels_list.append(threat_val)
+            else:
+                threat_levels_list.append(torch.tensor([threat_val], device=agent_confidences.device))
+            
+            # Handle scalar or tensor confidence
+            conf_val = d['confidence']
+            if isinstance(conf_val, torch.Tensor):
+                confidences_list.append(conf_val)
+            else:
+                confidences_list.append(torch.tensor([conf_val], device=agent_confidences.device))
+        
+        # Stack the tensors
+        threat_levels = torch.stack(threat_levels_list, dim=1)
+        confidences = torch.stack(confidences_list, dim=1)
         
         # Final threat level: weighted average with attention-based weights
-        final_threat = torch.sum(threat_levels * agent_confidences.unsqueeze(-1), dim=1)
-        final_confidence = torch.sum(confidences * agent_confidences.unsqueeze(-1), dim=1)
+        # Ensure dimensions match for multiplication
+        if threat_levels.dim() == 2 and agent_confidences.dim() == 2:
+            # threat_levels: [batch_size, n_agents]
+            # agent_confidences: [batch_size, n_agents]
+            final_threat = torch.sum(threat_levels * agent_confidences, dim=1, keepdim=True)
+        else:
+            # Handle 1D case
+            final_threat = torch.sum(threat_levels * agent_confidences.unsqueeze(-1), dim=1)
+        
+        if confidences.dim() == 2 and agent_confidences.dim() == 2:
+            final_confidence = torch.sum(confidences * agent_confidences, dim=1, keepdim=True)
+        else:
+            final_confidence = torch.sum(confidences * agent_confidences.unsqueeze(-1), dim=1)
         
         # Collect all evidence from agents (prioritize high-confidence agents)
         all_evidence = []
         for i, output in enumerate(agent_outputs):
             evidence = output.get('decision', {}).get('evidence', [])
-            confidence = agent_confidences[:, i].item() if agent_confidences.numel() > 1 else agent_confidences.item()
+            
+            # Get confidence value for this agent
+            if agent_confidences.numel() > 1:
+                confidence = agent_confidences[:, i].mean().item()
+            else:
+                confidence = agent_confidences.item()
             
             # Weight evidence by agent confidence
             for item in evidence:
-                item['agent_confidence'] = confidence
-                item['agent_id'] = output.get('agent_id', f'agent_{i}')
-            all_evidence.extend(evidence)
+                item_copy = item.copy()  # Avoid modifying original
+                item_copy['agent_confidence'] = confidence
+                item_copy['agent_id'] = output.get('agent_id', f'agent_{i}')
+                all_evidence.append(item_copy)
         
         # Sort evidence by confidence and limit for stability
         all_evidence.sort(key=lambda x: x.get('agent_confidence', 0), reverse=True)
@@ -327,9 +347,18 @@ class ManifoldConstrainedHyperConnections:
         Returns:
             str: Human-readable explanation
         """
-        threat_val = threat_level.item() if threat_level.numel() == 1 else threat_level.mean().item()
-        conf_val = confidence.item() if confidence.numel() == 1 else confidence.mean().item()
+        # Extract scalar values from tensors
+        if threat_level.numel() == 1:
+            threat_val = threat_level.item()
+        else:
+            threat_val = threat_level.mean().item()
         
+        if confidence.numel() == 1:
+            conf_val = confidence.item()
+        else:
+            conf_val = confidence.mean().item()
+        
+        # Determine threat level category
         if threat_val < 0.2:
             return "No significant threats detected. All security checks passed."
         elif threat_val < 0.4:
@@ -341,13 +370,14 @@ class ManifoldConstrainedHyperConnections:
         else:
             level = "critical"
         
-        # Summarize evidence types
+        # Summarize evidence types from top evidence
         evidence_types = set()
         for item in evidence[:3]:  # Top 3 evidence items
             evidence_types.add(item.get('type', 'Unknown'))
         
         evidence_summary = ", ".join(sorted(evidence_types))
         
+        # Build explanation string
         explanation = (
             f"Detected {level} threat level with {conf_val:.1%} confidence. "
             f"Analysis based on evidence including: {evidence_summary}. "
@@ -400,7 +430,9 @@ class MultiHeadMHC(nn.Module):
         self.n_heads = n_heads
         self.head_dim = state_dim // n_heads
         
-        assert state_dim % n_heads == 0, "state_dim must be divisible by n_heads"
+        # Check if state_dim is divisible by n_heads
+        if state_dim % n_heads != 0:
+            raise ValueError(f"state_dim ({state_dim}) must be divisible by n_heads ({n_heads})")
         
         # Create multiple mHC heads
         self.heads = nn.ModuleList([
@@ -478,7 +510,7 @@ def test_mhc_stability():
     3. Identity preservation maintains diversity
     4. Residual coordination handles agent failures
     """
-    print("🧪 Testing mHC stability...")
+    print("Testing mHC stability...")
     
     # Create test scenario
     n_agents = 5
@@ -505,13 +537,41 @@ def test_mhc_stability():
     
     # Verify signal bounding
     signal_norm = torch.norm(mixed, dim=-1)
-    assert torch.all(signal_norm <= mhc.signal_bound + 1e-6), "Signal bounding failed!"
+    if not torch.all(signal_norm <= mhc.signal_bound + 1e-6):
+        raise AssertionError("Signal bounding failed!")
     
     # Verify shape
-    assert mixed.shape == (batch_size, state_dim), "Output shape incorrect!"
+    if mixed.shape != (batch_size, state_dim):
+        raise AssertionError("Output shape incorrect!")
     
-    print("✅ mHC stability tests passed!")
+    print("mHC stability tests passed!")
     print(f"   Signal norm: {signal_norm.mean().item():.3f} (bound: {mhc.signal_bound})")
+    
+    # Test residual_coordination method
+    agent_outputs = []
+    for i in range(n_agents):
+        agent_outputs.append({
+            'reasoning_state': torch.randn(batch_size, state_dim),
+            'decision': {
+                'threat_level': torch.rand(batch_size, 1),
+                'confidence': torch.rand(batch_size, 1),
+                'evidence': [{'type': 'network', 'value': 0.5}]
+            },
+            'agent_id': f'agent_{i}'
+        })
+    
+    agent_confidences = torch.softmax(torch.randn(batch_size, n_agents), dim=-1)
+    
+    result = mhc.residual_coordination(agent_outputs, agent_confidences)
+    
+    # Verify result structure
+    required_keys = ['final_decision', 'coordinated_state', 'agent_contributions', 
+                    'aggregated_decisions', 'metrics']
+    for key in required_keys:
+        if key not in result:
+            raise AssertionError(f"Missing key in result: {key}")
+    
+    print("Residual coordination test passed!")
     
     return True
 

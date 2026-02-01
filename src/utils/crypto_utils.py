@@ -21,6 +21,7 @@ import json
 import hashlib
 import hmac
 import secrets
+import time  # Added missing import for time module
 from typing import Union, Optional, Tuple, Dict, Any, List
 from datetime import datetime, timedelta
 from enum import Enum
@@ -47,6 +48,7 @@ try:
     import nacl.utils
     import nacl.public
     import nacl.signing
+    import nacl.exceptions  # Added missing import for CryptoError
     PYNACL_AVAILABLE = True
 except ImportError:
     PYNACL_AVAILABLE = False
@@ -54,35 +56,35 @@ except ImportError:
 
 class EncryptionAlgorithm(Enum):
     """Supported encryption algorithms."""
-    AES_GCM = "AES-GCM"          # Authenticated encryption (recommended)
+    AES_GCM = "AES-GCM"  # Authenticated encryption (recommended)
     CHACHA20_POLY1305 = "CHACHA20-POLY1305"  # Fast, secure alternative
-    AES_CBC = "AES-CBC"          # Legacy compatibility
+    AES_CBC = "AES-CBC"  # Legacy compatibility
 
 
 class HashAlgorithm(Enum):
     """Supported hash algorithms."""
-    SHA256 = "SHA256"            # Standard secure hash
-    SHA512 = "SHA512"            # Stronger hash
-    BLAKE2B = "BLAKE2B"          # Fast, modern hash
-    SHA3_256 = "SHA3_256"        # SHA-3 family
+    SHA256 = "SHA256"  # Standard secure hash
+    SHA512 = "SHA512"  # Stronger hash
+    BLAKE2B = "BLAKE2B"  # Fast, modern hash
+    SHA3_256 = "SHA3_256"  # SHA-3 family
 
 
 class KeyType(Enum):
     """Key types for asymmetric cryptography."""
-    RSA_2048 = "RSA_2048"        # 2048-bit RSA
-    RSA_4096 = "RSA_4096"        # 4096-bit RSA (more secure)
-    ECDSA_P256 = "ECDSA_P256"    # P-256 curve (NIST)
-    ECDSA_P384 = "ECDSA_P384"    # P-384 curve (more secure)
-    ED25519 = "ED25519"          # Edwards curve (fast, secure)
+    RSA_2048 = "RSA_2048"  # 2048-bit RSA
+    RSA_4096 = "RSA_4096"  # 4096-bit RSA (more secure)
+    ECDSA_P256 = "ECDSA_P256"  # P-256 curve (NIST)
+    ECDSA_P384 = "ECDSA_P384"  # P-384 curve (more secure)
+    ED25519 = "ED25519"  # Edwards curve (fast, secure)
 
 
 @dataclass
 class EncryptionResult:
     """Result of encryption operation."""
-    ciphertext: bytes            # Encrypted data
+    ciphertext: bytes  # Encrypted data
     tag: Optional[bytes] = None  # Authentication tag (GCM/Poly1305)
-    iv: Optional[bytes] = None   # Initialization vector
-    algorithm: str = "AES-GCM"   # Algorithm used
+    iv: Optional[bytes] = None  # Initialization vector
+    algorithm: str = "AES-GCM"  # Algorithm used
     timestamp: Optional[str] = None  # Encryption timestamp
     
     def to_dict(self) -> Dict[str, Any]:
@@ -90,7 +92,7 @@ class EncryptionResult:
         data = asdict(self)
         # Encode binary fields as base64
         for field in ['ciphertext', 'tag', 'iv']:
-            if data[field]:
+            if data[field] is not None:  # Fixed: check if not None instead of truthy
                 data[field] = base64.b64encode(data[field]).decode('utf-8')
         return data
     
@@ -325,7 +327,9 @@ class CryptoManager:
         
         if algorithm == EncryptionAlgorithm.AES_GCM:
             return self._encrypt_aes_gcm(plaintext, context)
-        elif algorithm == EncryptionAlgorithm.CHACHA20_POLY1305 and PYNACL_AVAILABLE:
+        elif algorithm == EncryptionAlgorithm.CHACHA20_POLY1305:
+            if not PYNACL_AVAILABLE:
+                raise ImportError("PyNaCl required for ChaCha20-Poly1305")
             return self._encrypt_chacha20(plaintext, context)
         elif algorithm == EncryptionAlgorithm.AES_CBC:
             return self._encrypt_aes_cbc(plaintext, context)
@@ -357,9 +361,6 @@ class CryptoManager:
     
     def _encrypt_chacha20(self, plaintext: bytes, context: str) -> EncryptionResult:
         """Encrypt using ChaCha20-Poly1305."""
-        if not PYNACL_AVAILABLE:
-            raise ImportError("PyNaCl required for ChaCha20-Poly1305")
-        
         # Derive encryption key
         key = self.derive_key(context, 32)
         
@@ -431,7 +432,9 @@ class CryptoManager:
         
         if algorithm == "AES-GCM":
             return self._decrypt_aes_gcm(encrypted_data, context)
-        elif algorithm == "CHACHA20-POLY1305" and PYNACL_AVAILABLE:
+        elif algorithm == "CHACHA20-POLY1305":
+            if not PYNACL_AVAILABLE:
+                raise ImportError("PyNaCl required for ChaCha20-Poly1305")
             return self._decrypt_chacha20(encrypted_data, context)
         elif algorithm == "AES-CBC":
             return self._decrypt_aes_cbc(encrypted_data, context)
@@ -457,9 +460,6 @@ class CryptoManager:
     
     def _decrypt_chacha20(self, encrypted: EncryptionResult, context: str) -> bytes:
         """Decrypt ChaCha20-Poly1305 encrypted data."""
-        if not PYNACL_AVAILABLE:
-            raise ImportError("PyNaCl required for ChaCha20-Poly1305")
-        
         if not encrypted.iv:
             raise ValueError("Missing nonce for ChaCha20-Poly1305")
         
@@ -509,7 +509,11 @@ class CryptoManager:
         Returns:
             Base64-encoded JSON string
         """
-        result = self.encrypt(plaintext, **kwargs)
+        # Extract algorithm from kwargs if provided
+        algorithm = kwargs.pop('algorithm', EncryptionAlgorithm.AES_GCM)
+        context = kwargs.pop('context', 'default')
+        
+        result = self.encrypt(plaintext, algorithm=algorithm, context=context)
         result_dict = result.to_dict()
         return base64.b64encode(json.dumps(result_dict).encode()).decode()
     
@@ -524,9 +528,12 @@ class CryptoManager:
         Returns:
             Decrypted string
         """
+        # Extract context from kwargs if provided
+        context = kwargs.pop('context', 'default')
+        
         # Decode base64 and parse JSON
         encrypted_dict = json.loads(base64.b64decode(encrypted_str).decode())
-        plaintext_bytes = self.decrypt(encrypted_dict, **kwargs)
+        plaintext_bytes = self.decrypt(encrypted_dict, context=context)
         return plaintext_bytes.decode('utf-8')
     
     def generate_hmac(self, data: Union[str, bytes], 
@@ -619,7 +626,10 @@ class KeyManager:
             
             private_key = ec.generate_private_key(curve)
         
-        elif key_type == KeyType.ED25519 and PYNACL_AVAILABLE:
+        elif key_type == KeyType.ED25519:
+            if not PYNACL_AVAILABLE:
+                raise ImportError("PyNaCl required for Ed25519")
+            
             # Ed25519 key generation
             private_key = nacl.signing.SigningKey.generate()
             public_key = private_key.verify_key
@@ -710,37 +720,47 @@ class KeyManager:
         if isinstance(data, str):
             data = data.encode('utf-8')
         
-        # Load private key
-        private_key = load_pem_private_key(
-            private_key_pem.encode(),
-            password=None
-        )
-        
-        # Create signature
-        if isinstance(private_key, rsa.RSAPrivateKey):
-            # RSA signing
-            hasher = self._get_hash_algorithm(hash_algorithm)
-            
-            signature = private_key.sign(
-                data,
-                asym_padding.PSS(
-                    mgf=asym_padding.MGF1(hasher),
-                    salt_length=asym_padding.PSS.MAX_LENGTH
-                ),
-                hasher()
+        # Check if this is an Ed25519 key (hex encoded)
+        if private_key_pem.startswith('-----BEGIN PRIVATE KEY-----'):
+            # Load RSA/ECDSA private key
+            private_key = load_pem_private_key(
+                private_key_pem.encode(),
+                password=None
             )
-        
-        elif isinstance(private_key, ec.EllipticCurvePrivateKey):
-            # ECDSA signing
-            hasher = self._get_hash_algorithm(hash_algorithm)
             
-            signature = private_key.sign(
-                data,
-                ec.ECDSA(hasher())
-            )
+            # Create signature
+            if isinstance(private_key, rsa.RSAPrivateKey):
+                # RSA signing
+                hasher = self._get_hash_algorithm(hash_algorithm)
+                
+                signature = private_key.sign(
+                    data,
+                    asym_padding.PSS(
+                        mgf=asym_padding.MGF1(hasher),
+                        salt_length=asym_padding.PSS.MAX_LENGTH
+                    ),
+                    hasher()
+                )
+            
+            elif isinstance(private_key, ec.EllipticCurvePrivateKey):
+                # ECDSA signing
+                hasher = self._get_hash_algorithm(hash_algorithm)
+                
+                signature = private_key.sign(
+                    data,
+                    ec.ECDSA(hasher())
+                )
+            
+            else:
+                raise ValueError("Unsupported private key type")
         
         else:
-            raise ValueError("Unsupported private key type")
+            # Assume Ed25519 (hex encoded)
+            if not PYNACL_AVAILABLE:
+                raise ImportError("PyNaCl required for Ed25519")
+            
+            signing_key = nacl.signing.SigningKey(bytes.fromhex(private_key_pem))
+            signature = signing_key.sign(data).signature
         
         return signature
     
@@ -764,40 +784,50 @@ class KeyManager:
             data = data.encode('utf-8')
         
         try:
-            # Load public key
-            public_key = load_pem_public_key(public_key_pem.encode())
-            
-            # Verify signature
-            if isinstance(public_key, rsa.RSAPublicKey):
-                # RSA verification
-                hasher = self._get_hash_algorithm(hash_algorithm)
+            # Check if this is an Ed25519 key (hex encoded)
+            if public_key_pem.startswith('-----BEGIN PUBLIC KEY-----'):
+                # Load RSA/ECDSA public key
+                public_key = load_pem_public_key(public_key_pem.encode())
                 
-                public_key.verify(
-                    signature,
-                    data,
-                    asym_padding.PSS(
-                        mgf=asym_padding.MGF1(hasher),
-                        salt_length=asym_padding.PSS.MAX_LENGTH
-                    ),
-                    hasher()
-                )
-            
-            elif isinstance(public_key, ec.EllipticCurvePublicKey):
-                # ECDSA verification
-                hasher = self._get_hash_algorithm(hash_algorithm)
+                # Verify signature
+                if isinstance(public_key, rsa.RSAPublicKey):
+                    # RSA verification
+                    hasher = self._get_hash_algorithm(hash_algorithm)
+                    
+                    public_key.verify(
+                        signature,
+                        data,
+                        asym_padding.PSS(
+                            mgf=asym_padding.MGF1(hasher),
+                            salt_length=asym_padding.PSS.MAX_LENGTH
+                        ),
+                        hasher()
+                    )
                 
-                public_key.verify(
-                    signature,
-                    data,
-                    ec.ECDSA(hasher())
-                )
+                elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                    # ECDSA verification
+                    hasher = self._get_hash_algorithm(hash_algorithm)
+                    
+                    public_key.verify(
+                        signature,
+                        data,
+                        ec.ECDSA(hasher())
+                    )
+                
+                else:
+                    return False
             
             else:
-                return False
+                # Assume Ed25519 (hex encoded)
+                if not PYNACL_AVAILABLE:
+                    raise ImportError("PyNaCl required for Ed25519")
+                
+                verify_key = nacl.signing.VerifyKey(bytes.fromhex(public_key_pem))
+                verify_key.verify(data, signature)
             
             return True
         
-        except InvalidSignature:
+        except (InvalidSignature, nacl.exceptions.BadSignatureError):
             return False
         except Exception:
             return False
@@ -870,6 +900,8 @@ def encrypt_data(plaintext: Union[str, bytes], **kwargs) -> Union[EncryptionResu
     if kwargs.get('return_string', False):
         return manager.encrypt_string(plaintext, **kwargs)
     else:
+        # Remove return_string from kwargs before passing to encrypt
+        kwargs.pop('return_string', None)
         return manager.encrypt(plaintext, **kwargs)
 
 
@@ -930,7 +962,8 @@ def sign_data(data: Union[str, bytes],
         Base64-encoded signature
     """
     manager = get_key_manager()
-    signature = manager.sign_data(data, private_key_pem, **kwargs)
+    hash_algo = kwargs.get('hash_algorithm', HashAlgorithm.SHA256)
+    signature = manager.sign_data(data, private_key_pem, hash_algo)
     return base64.b64encode(signature).decode()
 
 
@@ -952,7 +985,8 @@ def verify_signature(data: Union[str, bytes],
     """
     manager = get_key_manager()
     signature = base64.b64decode(signature_b64)
-    return manager.verify_signature(data, signature, public_key_pem, **kwargs)
+    hash_algo = kwargs.get('hash_algorithm', HashAlgorithm.SHA256)
+    return manager.verify_signature(data, signature, public_key_pem, hash_algo)
 
 
 def generate_hmac(data: Union[str, bytes], **kwargs) -> str:
@@ -967,7 +1001,8 @@ def generate_hmac(data: Union[str, bytes], **kwargs) -> str:
         Hex-encoded HMAC
     """
     manager = get_crypto_manager()
-    return manager.generate_hmac(data, **kwargs)
+    key_context = kwargs.get('key_context', 'hmac')
+    return manager.generate_hmac(data, key_context)
 
 
 def verify_hmac(data: Union[str, bytes], hmac_value: str, **kwargs) -> bool:
@@ -983,7 +1018,8 @@ def verify_hmac(data: Union[str, bytes], hmac_value: str, **kwargs) -> bool:
         True if HMAC is valid
     """
     manager = get_crypto_manager()
-    return manager.verify_hmac(data, hmac_value, **kwargs)
+    key_context = kwargs.get('key_context', 'hmac')
+    return manager.verify_hmac(data, hmac_value, key_context)
 
 
 def generate_csrf_token(session_id: str, expiry_minutes: int = 30) -> str:
@@ -998,7 +1034,7 @@ def generate_csrf_token(session_id: str, expiry_minutes: int = 30) -> str:
         CSRF token
     """
     # Create token data
-    timestamp = int(time.time())
+    timestamp = int(time.time())  # Use imported time module
     expiry = timestamp + (expiry_minutes * 60)
     
     token_data = f"{session_id}:{expiry}:{secrets.token_hex(16)}"
